@@ -1,0 +1,28 @@
+namespace GbaMultiMenuBuilder.Models;
+
+public sealed record SavedGameEntry(
+    bool Enabled,
+    string Title,
+    string GameTitle,
+    string RomPath,
+    bool MetadataIdentified,
+    string SaveSlot,
+    string HiddenKeys,
+    bool? ApplySramPatch,
+    bool? ApplyBatterylessPatch,
+    bool SramAlreadyPatched,
+    bool BatterylessAlreadyPatched,
+    bool BatterylessHasPayloadSpace,
+    bool BatterylessCanExpand,
+    bool Map256m,
+    int TitleFont,
+    long FileLength,
+    long LastWriteUtcTicks,
+    bool? GbcDedicatedSaveAllocationOverride,
+    DetectedSaveTypeKind SaveTypeKind,
+    string SaveTypeIdentifier,
+    string SramPatchTargetIdentifier,
+    string? CoverPath = null,
+    bool CoverCleared = false,
+    Md.MdRomCandidate? MdRom = null,
+    Services.ArchiveRomSource? OtherRom = null);

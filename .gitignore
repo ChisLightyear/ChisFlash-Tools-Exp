@@ -1,0 +1,42 @@
+# ---- .NET 构建产物 ----
+bin/
+obj/
+*.user
+*.suo
+*.lscache
+.vs/
+
+# ---- 发布与打包产物 ----
+publish/
+publish_*/
+_dist_publish_*/
+*.zip
+*.pdb
+*.cache
+
+# ---- 临时构建/验证目录 ----
+_build_*/
+_verify_*/
+_codex_build_*/
+_codex_probe_*/
+build_probe*/
+build_chm1*/
+build-records/
+backups/
+
+# ---- 运行时生成 ----
+# 仅忽略项目根目录下的临时 gba，保留 Assets/ 内的菜单资源
+/*.gba
+/*/*.gba
+!*/Assets/*.gba
+config.ini
+save_type_overrides.ini
+
+# ---- 封面图库（单独分发，不入库）----
+covers/
+ChisFlashWaterClient/covers/
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store

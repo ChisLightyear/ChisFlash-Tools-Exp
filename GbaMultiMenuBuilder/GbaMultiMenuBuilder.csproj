@@ -1,0 +1,96 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Chis合卡制作器</AssemblyName>
+    <RootNamespace>GbaMultiMenuBuilder</RootNamespace>
+    <Product>Chis合卡制作器</Product>
+    <AssemblyTitle>Chis合卡制作器</AssemblyTitle>
+    <Version>0.90.0</Version>
+    <AssemblyVersion>0.90.0.0</AssemblyVersion>
+    <FileVersion>0.90.0.0</FileVersion>
+    <InformationalVersion>0.90.0 MIX</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 菜单 ROM：优先取同级 rom_builder 的最新产物；仓库独立分发时回落到自带的 Assets\ 副本 -->
+    <None Include="..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba"
+          Link="Assets\lk_multimenu.gba"
+          Condition="Exists('..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba')"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba"
+          Link="Assets\lk_multimenu_wl.gba"
+          Condition="Exists('..\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba')"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba"
+          Link="Assets\universal_menu.gba"
+          Condition="Exists('..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba')"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba"
+          Link="Assets\simplified_ns_menu.gba"
+          Condition="Exists('..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba')"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\GBA_MultiMenu_extended_NEW\rom_builder\covers\cover_index.csv;..\GBA_MultiMenu_extended_NEW\rom_builder\covers\cover_overrides.csv"
+          Condition="'$(ExcludeCoverCatalog)' != 'true' And Exists('..\GBA_MultiMenu_extended_NEW\rom_builder\covers\cover_index.csv')"
+          Link="covers\%(Filename)%(Extension)"
+          CopyToOutputDirectory="Always"
+          CopyToPublishDirectory="Always" />
+    <None Include="..\GBA_MultiMenu_extended_NEW\rom_builder\covers\original\*.png"
+          Condition="'$(ExcludeCoverCatalog)' != 'true' And Exists('..\GBA_MultiMenu_extended_NEW\rom_builder\covers\original')"
+          Link="covers\original\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <!-- 独立分发时回落到自带的菜单副本 -->
+    <None Include="Assets\lk_multimenu.gba;Assets\lk_multimenu_wl.gba;Assets\universal_menu.gba;Assets\simplified_ns_menu.gba"
+          Condition="!Exists('..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba')"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\menu_zh.gb"
+          Link="Assets\menu_zh.gb"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\menu_en.gb"
+          Link="Assets\menu_en.gb"
+          CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Languages\*.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\batteryless_payload_flash4_compat.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\batteryless_payload.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Fonts\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="..\..\ChisFlash_MBCX\xiaodianzhen-pixel-font-master\build\outputs\xiaodianzhen-8px.bdf"
+             Condition="Exists('..\..\ChisFlash_MBCX\xiaodianzhen-pixel-font-master\build\outputs\xiaodianzhen-8px.bdf')"
+             Link="Assets\xiaodianzhen-8px.bdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\ChisFlash_MBCX\zpix-pixel-font\dist\zpix.bdf"
+             Condition="Exists('..\..\ChisFlash_MBCX\zpix-pixel-font\dist\zpix.bdf')"
+             Link="Assets\zpix.bdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="CHANGELOG.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="save_types.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="save_type_overrides.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Fc\MesenNesDB.csv" LogicalName="ChisFlash.Fc.MesenNesDB" />
+  </ItemGroup>
+</Project>
