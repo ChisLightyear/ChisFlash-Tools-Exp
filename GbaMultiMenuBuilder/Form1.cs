@@ -14,7 +14,7 @@ public partial class Form1 : DpiAwareForm
 {
     private const string SequenceColumnName = "sequence";
     private const string DefaultOutputFileName = "LK_MULTIMENU_OUTPUT.gba";
-    private const string AppVersion = "v0.90 MIX";
+    private const string AppVersion = "v0.91 MIX";
     private const string AppAuthor = "chisflash@mori";
     private const long BytesPerMiB = 1024L * 1024L;
     private static readonly Size DefaultWindowSize = new(1184, 761);
@@ -294,10 +294,10 @@ public partial class Form1 : DpiAwareForm
     new FlashCartModeOption(T("ui", "flashcart_chm1", "GBA | 01G/02G Fragment Management (Battery / FRAM)"), FlashCartMode.Chm1),
     new FlashCartModeOption(T("ui", "flashcart_chm1_no_battery", "GBA | 01G/02G Fragment Management (Batteryless)"), FlashCartMode.Chm1NoBattery),
     ..(includeWaterline
-        ? [new FlashCartModeOption(T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual FRAM)"), FlashCartMode.WaterlineVirtualIron)]
+        ? [new FlashCartModeOption(T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual Iron)"), FlashCartMode.WaterlineVirtualIron)]
         : Array.Empty<FlashCartModeOption>()),
     new FlashCartModeOption(T("ui", "flashcart_gbc_max_mbcx_512k", "GBC | MAX/MBCX (512K)"), FlashCartMode.GbcMaxMbcx512K),
-    new FlashCartModeOption(T("fc", "mode", "MIX | FC + MD / CHISBOY Cartridge (MBCX)"), FlashCartMode.FcMbcx),
+    new FlashCartModeOption(T("fc", "mode", "MIX | NES + MD / CHISBOY Cartridge (MBCX)"), FlashCartMode.FcMbcx),
     ..(includeCustom
         ? [new FlashCartModeOption(T("ui", "flashcart_custom", "Custom"), FlashCartMode.Custom)]
         : Array.Empty<FlashCartModeOption>()),
@@ -2203,7 +2203,7 @@ private void BindUiDataSources()
             "Chinese Font",
             "build_settings_tooltip",
             "gbc_font_source",
-            "Selects the built-in 8px or 12px pixel font used for GBC Chinese glyph generation and preview.");
+            "Requires a 12px font for GBC Chinese glyph generation and preview. 8px fonts are not supported.");
         layout.Controls.Add(_labelGbcFont, 0, 2);
         layout.Controls.Add(_comboBoxGbcFont, 1, 2);
         _buttonOpenGbcFontFolder = MakeBuildSettingsButton(
@@ -2951,7 +2951,7 @@ private void BindUiDataSources()
         _buttonBrowseBackgroundOrFont.Text = T("ui", "browse_button", "Browse");
         _buildSettingsToolTip.SetToolTip(_buttonBrowseBackgroundOrFont, backgroundToolTip);
 
-        var fontToolTip = T("build_settings_tooltip", "gbc_font_source", "Selects the built-in 8px or 12px pixel font used for GBC Chinese glyph generation and preview.");
+        var fontToolTip = T("build_settings_tooltip", "gbc_font_source", "Requires a 12px font for GBC Chinese glyph generation and preview. 8px fonts are not supported.");
         _labelGbcFont.Text = T("ui", "gbc_font_source", "Chinese Font");
         _buildSettingsToolTip.SetToolTip(_labelGbcFont, fontToolTip);
         _buildSettingsToolTip.SetToolTip(_comboBoxGbcFont, fontToolTip);
@@ -3182,7 +3182,7 @@ private void BindUiDataSources()
                 FlashCartMode.NoBattery => T("ui", "flashcart_no_battery", "GBA | No Battery"),
                 FlashCartMode.WithBattery => T("ui", "flashcart_with_battery", "GBA | With Battery / FRAM"),
                 FlashCartMode.Ferroelectric => T("ui", "flashcart_with_battery", "GBA | With Battery / FRAM"),
-                FlashCartMode.WaterlineVirtualIron => T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual FRAM)"),
+                FlashCartMode.WaterlineVirtualIron => T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual Iron)"),
                 FlashCartMode.Chm1 => T("ui", "flashcart_chm1", "GBA | 01G/02G Fragment Management (Battery / FRAM)"),
                 FlashCartMode.Chm1NoBattery => T("ui", "flashcart_chm1_no_battery", "GBA | 01G/02G Fragment Management (Batteryless)"),
                 FlashCartMode.GbcMaxMbcx512K => T("ui", "flashcart_gbc_max_mbcx_512k", "GBC | MAX/MBCX (512K)"),

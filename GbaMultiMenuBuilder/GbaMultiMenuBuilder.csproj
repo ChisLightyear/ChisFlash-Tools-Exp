@@ -11,10 +11,10 @@
     <RootNamespace>GbaMultiMenuBuilder</RootNamespace>
     <Product>Chis合卡制作器</Product>
     <AssemblyTitle>Chis合卡制作器</AssemblyTitle>
-    <Version>0.90.0</Version>
-    <AssemblyVersion>0.90.0.0</AssemblyVersion>
-    <FileVersion>0.90.0.0</FileVersion>
-    <InformationalVersion>0.90.0 MIX</InformationalVersion>
+    <Version>0.91.0</Version>
+    <AssemblyVersion>0.91.0.0</AssemblyVersion>
+    <FileVersion>0.91.0.0</FileVersion>
+    <InformationalVersion>0.91.0 MIX</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -83,9 +83,6 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="save_types.ini">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="save_type_overrides.ini">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

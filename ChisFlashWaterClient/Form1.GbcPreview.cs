@@ -5,9 +5,46 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    private static void DrawEnglishGbcPreview(Graphics graphics, GbaMultiMenuBuilder.Models.MenuPreviewModel preview, int scale, Brush selectedBrush)
+    {
+        var glyphs = GbcFontService.GetGbdkDefaultAsciiGlyphs();
+        void Draw(string text, int left, int top)
+        {
+            for (int index = 0; index < text.Length && left + index * 8 < 160; index++)
+            {
+                char character = text[index] < 128 ? text[index] : '?';
+                if (glyphs.TryGetValue(character, out byte[]? glyph))
+                    DrawGlyphBitmapExact(graphics, glyph, (left + index * 8) * scale, top * scale, 8, scale, 8);
+            }
+        }
+        int pages = preview.Entries.Count == 0 ? 0 : preview.Entries.Max(entry => entry.PageIndex) + 1;
+        Draw("MORI MENU EX", 32, 0);
+        Draw("Ver1.04", 8, 136);
+        Draw(pages == 0 ? "00/00" : $"01/{pages:D2}", 112, 136);
+        if (pages == 0)
+        {
+            Draw("No Game Found!", 24, 64);
+            Draw("Check ChisMBCX", 24, 72);
+            return;
+        }
+        foreach (var entry in preview.Entries.Where(entry => entry.PageIndex == 0).OrderBy(entry => entry.RowIndex))
+        {
+            int rowTop = 8 + entry.RowIndex * 8;
+            if (entry.Selected) graphics.FillRectangle(selectedBrush, 0, rowTop * scale, 160 * scale, 8 * scale);
+            Draw($"{entry.Index + 1:D2}.", 16, rowTop);
+            Draw(entry.DisplayTitle.Length > 15 ? entry.DisplayTitle[..15] : entry.DisplayTitle, 40, rowTop);
+        }
+    }
+
     private void ShowGbcMenuPreviewDialog()
     {
-        using var dialog = new DpiAwareForm
+        using var dialog = CreateGbcMenuPreviewDialog();
+        dialog.ShowDialog(this);
+    }
+
+    private Form CreateGbcMenuPreviewDialog()
+    {
+        var dialog = new DpiAwareForm
         {
             Text = T("ui", "gbc_menu_preview", "GBC Menu Preview"),
             StartPosition = FormStartPosition.CenterParent,
@@ -101,8 +138,8 @@ public partial class Form1
                 RefreshPreview();
             }
         };
-        dialog.FormClosed += (_, _) => picture.Image?.Dispose();
+        dialog.Disposed += (_, _) => picture.Image?.Dispose();
         RefreshPreview();
-        dialog.ShowDialog(this);
+        return dialog;
     }
 }

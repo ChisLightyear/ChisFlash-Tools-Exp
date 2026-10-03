@@ -112,7 +112,7 @@ public static class NesRomHeaderService
                 cram=c<0?(chr==0?(mapper is 176 or 268?262144:8192):mapper is 74 or 253?2048:mapper is 165 or 195?4096:mapper is 176 or 199?8192:0):c;
                 if(mapper==195 || mapper==198&&battery)work=Math.Max(work,12288-save);
             }
-            // FC-001/FS304/cy2000 boards have fixed external work RAM even in
+            // NES-001/FS304/cy2000 boards have fixed external work RAM even in
             // incomplete NES2 dumps that leave both RAM size nibbles at zero.
             if(mapper is 162 or 163 or 164 && work+save==0)
             {if(battery)save=8192;else work=8192;source+=" / fixed board WRAM";}
@@ -120,7 +120,7 @@ public static class NesRomHeaderService
             if((h[6]&4)!=0 && work+save<4608)
             { if(battery)save=Math.Max(save,8192-work);else work=Math.Max(work,8192-save); }
             if((h[7]&3)!=0)throw new InvalidDataException("02 supports NTSC/PAL/Dendy NES/Famicom; special consoles are not supported.");
-            if(!SupportsMapper(mapper,sub))throw new InvalidDataException($"Unsupported mapper/submapper: {mapper}/{sub}. Install the matching FC core for newly supported boards.");
+            if(!SupportsMapper(mapper,sub))throw new InvalidDataException($"Unsupported mapper/submapper: {mapper}/{sub}. Install the matching NES core for newly supported boards.");
             // This tool stores the complete file. Runtime RAM/ROM limits belong to
             // the installed core, not to the cartridge-image parser.
             if(prg<=0)throw new InvalidDataException("NES ROM declares no PRG data.");

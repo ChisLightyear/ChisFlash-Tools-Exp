@@ -81,6 +81,9 @@ public partial class Form1 : DpiAwareForm
         public bool IsLoadingPlaceholder { get; init; }
         public string DisplayTitle { get; set; } = string.Empty;
         public string HeaderTitle { get; init; } = string.Empty;
+        public string GbaGameCode { get; init; } = string.Empty;
+        public string? CoverPath { get; set; }
+        public bool CoverCleared { get; set; }
         public long FileSizeBytes { get; init; }
         public DetectedSaveTypeInfo SaveTypeInfo { get; init; } = new(DetectedSaveTypeKind.Unknown, null);
         public byte? GameBoyCartridgeType { get; init; }
@@ -185,6 +188,7 @@ public partial class Form1 : DpiAwareForm
     private ToolStripMenuItem menuEraseEntireNor = null!;
     private ToolStripMenuItem menuUnlockPpb = null!;
     private ToolStripMenuItem menuAddRom = null!;
+    private ToolStripMenuItem menuPendingGbaCovers = null!;
     private ToolStripMenuItem menuRemoveSelectedRom = null!;
     private ToolStripMenuItem menuClearRomQueue = null!;
     private ToolStripMenuItem menuReplaceSelectedRom = null!;
@@ -501,17 +505,19 @@ public partial class Form1 : DpiAwareForm
 
     private void RefreshGbcFontSelectorVisibility()
     {
-        bool visible = IsGbcWorkspaceMode();
+        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive;
+        if (gbcMenuOptions is not null) gbcMenuOptions.Visible = visible;
         labelGbcMenuLanguageCaption.Visible = visible;
         comboBoxGbcMenuLanguage.Visible = visible;
         comboBoxGbcMenuLanguage.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
         if (checkBoxWaitcntPatch is not null)
         {
-            checkBoxWaitcntPatch.Visible = !visible;
-            checkBoxWaitcntPatch.Enabled = !visible && !isBusy && !isAnalyzingQueueImports;
+            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive;
+            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !isBusy && !isAnalyzingQueueImports;
         }
 
-        bool gbaVisible = !visible;
+        bool gbaVisible = !visible && !IsFcWorkspaceActive;
+        if (gbaMenuOptions is not null) gbaMenuOptions.Visible = gbaVisible;
         if (labelGbaMenuCaption is not null)
         {
             labelGbaMenuCaption.Visible = gbaVisible;
@@ -523,6 +529,7 @@ public partial class Form1 : DpiAwareForm
             comboBoxGbaMenu.Visible = gbaVisible;
             comboBoxGbaMenu.Enabled = gbaVisible && !isBusy && !isAnalyzingQueueImports;
         }
+        UpdateAdaptiveLayout();
     }
 
     private string FormatSectorSummary(NorGeometryInfo geometry)
@@ -736,7 +743,7 @@ public partial class Form1 : DpiAwareForm
 
     private string FormatPendingPatchDisplay(PendingRomImportItem item)
     {
-        if(item.FcRom is not null)return item.FcRom.Supported?$"FC · Mapper {item.FcRom.Mapper}，请选择FC模式":"FC · "+item.FcRom.Error;
+        if(item.FcRom is not null)return item.FcRom.Supported?$"NES · Mapper {item.FcRom.Mapper}，请选择NES模式":"NES · "+item.FcRom.Error;
         if(item.MdRom is not null)return GbaMultiMenuBuilder.Md.MdRomImportService.ImportStatus(item.MdRom,item.MdReadError);
         BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);

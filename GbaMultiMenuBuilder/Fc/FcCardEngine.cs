@@ -17,11 +17,11 @@ public static class FcCardEngine
         Validate(io);progress.Report(new("Reading MBCX directory",0));
         byte[] prefix=io.Read(0,FcMbcxCodec.PrefixBytes,ct);bool fc=FcMbcxCodec.IsFcPrefix(prefix);
         List<FcGame> games=[];string? warning=!fc&&FcMbcxCodec.HasFcIdentity(prefix.AsSpan(FcMbcxCodec.ConfigOffset,64))?
-            "Unsupported FC card format; import the ROMs again and rebuild with the current PC tool.":null;
+            "Unsupported NES card format; import the ROMs again and rebuild with the current PC tool.":null;
         if(fc)try{games=FcMbcxCodec.Read(prefix,io.Capacity,(a,n)=>io.Read(a,n,ct),ct);}
-        catch(InvalidDataException ex){fc=false;warning="Damaged FC directory; explicit conversion/rebuild required: "+ex.Message;}
+        catch(InvalidDataException ex){fc=false;warning="Damaged NES directory; explicit conversion/rebuild required: "+ex.Message;}
 
-        progress.Report(new(fc?$"FC: {games.Count} ROMs":"Non-FC card: conversion requires confirmation",100));
+        progress.Report(new(fc?$"NES: {games.Count} ROMs":"Non-NES card: conversion requires confirmation",100));
         return new(io.DeviceId,Math.Min(io.Capacity,FcMbcxCodec.CapacityBytes),io.SectorBytes,prefix,games,fc,io.Writable,warning);
     }
     private static void Validate(IFcCardIo io)
@@ -35,7 +35,7 @@ public static class FcCardEngine
         if(!io.Writable||!expected.Writable)throw new InvalidOperationException("Card is write-protected or its capacity is unavailable.");
         if(io.DeviceId!=expected.DeviceId||Math.Min(io.Capacity,FcMbcxCodec.CapacityBytes)!=expected.Capacity||io.SectorBytes!=expected.SectorBytes)
             throw new InvalidOperationException("The selected programmer/card changed; scan again.");
-        if(!expected.IsFc&&!convert)throw new InvalidOperationException("Explicit FC conversion confirmation is required.");
+        if(!expected.IsFc&&!convert)throw new InvalidOperationException("Explicit NES conversion confirmation is required.");
         if(!io.Read(0,FcMbcxCodec.PrefixBytes,ct).AsSpan().SequenceEqual(expected.Prefix))throw new InvalidOperationException("Card directory changed; scan again before writing.");
         var layout=FcMbcxCodec.Plan(games,expected.Capacity,expected.IsFc);
         foreach(var p in layout.Entries.Where(p=>p.Game.Md is null))
@@ -45,7 +45,7 @@ public static class FcCardEngine
             NesConfiguration.Validate(old,p.Game.Info);
             if(old.Info.Battery&&old.OriginalSaveMap.Length>0&&
                 !p.SaveMap.Take(old.OriginalSaveMap.Length).SequenceEqual(old.OriginalSaveMap))
-                throw new InvalidDataException("Configuration update would move an existing FC save.");
+                throw new InvalidDataException("Configuration update would move an existing NES save.");
         }
         Dictionary<int,byte[]> sectors=[];
         foreach(var p in layout.Entries)
@@ -92,10 +92,10 @@ public static class FcCardEngine
         }
         // Both readers are hidden before any payload/SRAM changes. Header
         // sectors are committed last, after all directories and bitmaps.
-        Prefix(invalidPrefix,"Invalidate FC/MD directories");
+        Prefix(invalidPrefix,"Invalidate NES/MD directories");
         int index=0;
         foreach(var pair in sectors.OrderBy(p=>p.Key))
-        {ct.ThrowIfCancellationRequested();Rewrite(pair.Key,pair.Value);progress.Report(new("Writing FC / MD ROM data",++index*100/sectors.Count));}
+        {ct.ThrowIfCancellationRequested();Rewrite(pair.Key,pair.Value);progress.Report(new("Writing NES / MD ROM data",++index*100/sectors.Count));}
         foreach(var p in layout.Entries.Where(p=>p.Game.Md is null&&p.Game.Info.Battery))
         {
             var old=expected.Games.FirstOrDefault(g=>g.Id==p.Game.Id&&g.Info.Battery);
@@ -105,7 +105,7 @@ public static class FcCardEngine
                 io.InitializeSave(p.SaveMap[oldBytes/8192]*8192+oldBytes%8192,
                     Math.Min(p.Game.Info.StoredRamBytes-oldBytes,8192-oldBytes%8192),0,ct);
             // Only appended banks are initialized. Existing save bytes and all
-            // other FC/MD SRAM allocations remain untouched.
+            // other NES/MD SRAM allocations remain untouched.
             foreach(byte bank in p.SaveMap.Skip(old.OriginalSaveMap.Length))
                 io.InitializeSave(bank*8192,8192,0,ct);
         }
@@ -116,9 +116,9 @@ public static class FcCardEngine
             if(!preserve)io.InitializeSave(p.SaveMap[0]*8192,p.Game.Md!.SaveBytes,(p.Game.Md.Flags&8)!=0?(byte)0:(byte)255,ct);
         }
         ct.ThrowIfCancellationRequested();Prefix(finalPrefix,"Commit MIX directories");
-        progress.Report(new("FC directory committed",100));
+        progress.Report(new("NES directory committed",100));
         // Use the verified committed plan as the new snapshot. Existing saves
-        // remain untouched; only added FC RAM and new MD saves are initialized.
+        // remain untouched; only added NES RAM and new MD saves are initialized.
         var committed=layout.Entries.Select(p=>new FcGame {Name=p.Game.Name,Data=p.Game.Data,Info=p.Game.Info,Md=p.Game.Md,OriginalOffset=p.Offset,
             OriginalAllocated=p.AllocatedBytes,OriginalSaveMap=p.SaveMap,OriginalBattery=p.Game.Info.Battery,OriginalStoredRamBytes=p.Game.Info.StoredRamBytes}).ToList();
         return new(io.DeviceId,expected.Capacity,io.SectorBytes,current,committed,true,true);

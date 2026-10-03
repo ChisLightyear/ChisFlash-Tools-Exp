@@ -1,3 +1,10 @@
+# 0.91 — NES naming and GBC 12px fonts
+
+- Display NES consistently across the interface while retaining existing cartridge formats.
+- Require user-supplied 12px fonts for Chinese GBC menus; reject 8px and unspecified TTF/OTF font sizes.
+- Use 16 entries per page for English GBC menus.
+- Synchronize the bundled menu kernels. External fonts are no longer bundled.
+
 # 0.90 — MIX FC configuration correction
 
 MIX can review and rebuild FC runtime configurations directly from games already on the card. Known content fingerprints and validated database entries identify legacy mapper mistakes; unknown boards remain marked for review. The FC configuration editor supports manual mapper/RAM settings without changing original ROM bytes. Overrides and RAM splits persist in MIX images and subsequent card scans.

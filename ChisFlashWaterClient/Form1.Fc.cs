@@ -3,44 +3,23 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private FcWorkspaceControl? fcWorkspace;
-    private float fcInfoRowHeight;
     private readonly Func<IFcCardBackend>? fcBackendOverride;
-    private readonly HashSet<string> queuedFcSources=new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> queuedFcSources = new(StringComparer.OrdinalIgnoreCase);
+
     private async Task<bool> OpenDetectedFcCardAsync(WaterCartScanResult result)
     {
-        if(!result.IsFcMbcxContent)return false;
+        if (!result.IsFcMbcxContent && !result.IsMdMbcxContent) return false;
         ResetCurrentCartAnalysisView();
-        SetBusy(false,T("fc","detected","FC data card detected; opening the MIX workspace."));
-        ShowFcWorkspace();
-        if(fcWorkspace is not null)await fcWorkspace.ScanAsync();
+        SetBusy(false, T("fc", "ready", "MIX ready"));
+        await ActivateFcWorkspaceAsync();
+        fcHardwareInfo = result;
+        if (IsFcWorkspaceActive) await fcWorkspace!.ScanAsync();
         return true;
     }
+
     private async void ShowFcWorkspace()
     {
-        if(isBusy||isAnalyzingQueueImports||fcWorkspace?.Visible==true)return;
-        fcInfoRowHeight=rootLayout.RowStyles[1].Height;
-        // Restore the original selector behind this embedded FC surface.
-        burnProfileModeSelectionInitialized=false;
-        comboBoxBurnProfileMode.SelectedItem=burnProfileModeOptions.FirstOrDefault(o=>o.Mode==BurnProfileMode.BeggarMaxSram);
-        burnProfileModeSelectionInitialized=true;
-        if(fcWorkspace is null||fcWorkspace.IsDisposed)
-        {
-            fcWorkspace=new FcWorkspaceControl((k,f)=>T("fc",k,f),CreateFcBackend);
-            fcWorkspace.BusyChanged+=busy=>SetBusy(busy,T("fc",busy?"working":"ready",busy?"FC operation in progress":"FC ready"));
-            fcWorkspace.ExitRequested+=()=>{
-                fcWorkspace.Visible=false;rootLayout.Controls.Remove(fcWorkspace);rootLayout.Controls.Add(splitContainerContent,0,2);
-                groupBoxInfo.Visible=true;splitContainerContent.Visible=true;rootLayout.RowStyles[1].Height=fcInfoRowHeight;mainMenuStrip.Visible=true;
-                // FC may have converted/written the card; no stale GB scan may survive.
-                ResetCurrentCartAnalysisView();RebuildWorkspaceRows();
-            };
-
-        }
-        groupBoxInfo.Visible=false;splitContainerContent.Visible=false;rootLayout.Controls.Remove(splitContainerContent);
-        if(fcWorkspace.Parent!=rootLayout)rootLayout.Controls.Add(fcWorkspace,0,2);
-        rootLayout.RowStyles[1].Height=0;mainMenuStrip.Visible=false;
-        fcWorkspace.RefreshLanguage();fcWorkspace.Visible=true;fcWorkspace.BringToFront();
-        var queued=pendingImportItems.Where(item=>(item.FcRom is not null||item.MdRom is not null)&&queuedFcSources.Add(item.MdRom?.SourcePath??item.SourceImportKey??item.FilePath)).Select(item=>item.MdRom?.SourcePath??item.SourceImportKey??item.FilePath).ToArray();
-        if(queued.Length>0)await fcWorkspace.ImportAsync(queued);
+        await RunUiActionSafelyAsync(ActivateFcWorkspaceAsync);
     }
     private IFcCardBackend CreateFcBackend()
     {
@@ -75,6 +54,7 @@ public partial class Form1
                 if(!WaterCartScanner.TryScanBeggarMaxGbc(protocol,owner.AppendLog,out var detected,scanContent:false))
                     throw new InvalidOperationException("MBCX NOR probe failed.");
                 device=detected;DeviceId=port+"|"+detected.RawNorIdHex;
+                owner.UpdateFcHardwareInfo(device);
             }
             catch{protocol.Dispose();throw;}
         }
@@ -86,7 +66,7 @@ public partial class Form1
             {
                 ct.ThrowIfCancellationRequested();int absolute=address+offset,bank=absolute>>14,within=absolute&0x3fff;
                 int size=Math.Min(4096,Math.Min(length-offset,16384-within));var chunk=new byte[size];
-                if(!TrySwitchBeggarMaxRomBank(protocol,bank)||!protocol.TryReadGbc((uint)(GetBeggarMaxBankBaseAddress(bank)+within),chunk,3000))throw new IOException("FC MBCX read failed.");
+                if(!TrySwitchBeggarMaxRomBank(protocol,bank)||!protocol.TryReadGbc((uint)(GetBeggarMaxBankBaseAddress(bank)+within),chunk,3000))throw new IOException("NES MBCX read failed.");
                 chunk.CopyTo(data,offset);offset+=size;
             }
             return data;
@@ -94,10 +74,10 @@ public partial class Form1
         public void RewriteSector(int address,byte[] data,CancellationToken ct)
         {
             if(!Writable||address<0||address%SectorBytes!=0||data.Length!=SectorBytes||address>Math.Min(Capacity,FcMbcxCodec.CapacityBytes)-SectorBytes)
-                throw new InvalidOperationException("Invalid/protected FC sector write.");
+                throw new InvalidOperationException("Invalid/protected NES sector write.");
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(120));
-            try{owner.RewriteBeggarMaxSector(protocol,address,data,device.Geometry,"FC MBCX",deadline.Token);}
-            catch(OperationCanceledException)when(!ct.IsCancellationRequested){throw new TimeoutException("FC sector write timed out; rescan before retrying.");}
+            try{owner.RewriteBeggarMaxSector(protocol,address,data,device.Geometry,"NES MBCX",deadline.Token);}
+            catch(OperationCanceledException)when(!ct.IsCancellationRequested){throw new TimeoutException("NES sector write timed out; rescan before retrying.");}
         }
         public void InitializeSave(int start,int size,byte fill,CancellationToken ct)
         {

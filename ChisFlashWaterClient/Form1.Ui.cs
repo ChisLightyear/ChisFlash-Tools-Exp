@@ -12,13 +12,11 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private const int HeaderActionButtonWidth = 104;
-    private const int HeaderActionButtonColumnWidth = HeaderActionButtonWidth + 12;
-    private const int HeaderProgrammerModeColumnWidth = 132;
-    private const int HeaderRadioTopMargin = 15;
     private const int ContentSplitPanel1MinSize = 220;
-    private const int ContentSplitPanel2MinSize = 170;
-    private const int ContentSplitPreferredDistance = 380;
-    private const int MenuBackgroundPreviewColumnWidth = 276;
+    private const int ContentSplitPanel2MinSize = 120;
+    private const int ContentSplitPreferredLogHeight = 148;
+    private const int MenuBackgroundPreviewColumnWidth = 144;
+    private ToolTip infoValueToolTip = null!;
     private const int MenuBackgroundPreviewCaptionMinHeight = 24;
     private const int MenuBackgroundPreviewDialogDefaultWidth = 960;
     private const int MenuBackgroundPreviewDialogMinWidth = 540;
@@ -133,41 +131,41 @@ public partial class Form1
             RowCount = 4,
             Padding = new Padding(12),
         };
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 204F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 132F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
 
         var headerPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 8,
             RowCount = 1,
             Margin = new Padding(0, 0, 0, 4),
         };
-        headerPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48F));
+        headerPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, HeaderActionButtonColumnWidth));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, HeaderActionButtonColumnWidth));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68F));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, HeaderProgrammerModeColumnWidth));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54F));
-        headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 148F));
+        for (int column = 2; column < 8; column++)
+            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         labelPortCaption = CreateHeaderLabel();
         labelBeggarCartModeCaption = CreateHeaderLabel();
         comboBoxPorts = new ComboBox
         {
+            AutoSize = true,
             DropDownStyle = ComboBoxStyle.DropDownList,
             IntegralHeight = false,
             Anchor = AnchorStyles.Left | AnchorStyles.Right,
-            Margin = new Padding(6, 7, 6, 7),
+            Margin = new Padding(4),
         };
         comboBoxPorts.DropDown += (_, _) => AdjustPortDropDownWidth();
         comboBoxPorts.SelectedIndexChanged += (_, _) =>
         {
             RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
+            InvalidateFcDevice();
             if (dataGridViewRoms is not null && !dataGridViewRoms.IsDisposed && dataGridViewRoms.Columns.Count > 0)
             {
                 int selectedIndex = dataGridViewRoms.SelectedRows.Count > 0
@@ -181,20 +179,23 @@ public partial class Form1
         radioButtonBeggarCartModeGba = new RadioButton
         {
             AutoSize = true,
-            Margin = new Padding(0, HeaderRadioTopMargin, 10, 0),
+            Anchor = AnchorStyles.None,
+            Margin = new Padding(4),
             Checked = true,
         };
         radioButtonBeggarCartModeGb = new RadioButton
         {
             AutoSize = true,
-            Margin = new Padding(0, HeaderRadioTopMargin, 0, 0),
+            Anchor = AnchorStyles.None,
+            Margin = new Padding(4),
         };
         radioButtonBeggarCartModeGba.CheckedChanged += (_, _) => HandleBeggarCartModeSelectionChanged();
         radioButtonBeggarCartModeGb.CheckedChanged += (_, _) => HandleBeggarCartModeSelectionChanged();
 
         panelBeggarCartMode = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Margin = new Padding(0),
@@ -206,7 +207,9 @@ public partial class Form1
 
         panelProgrammerModeHost = new Panel
         {
-            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Anchor = AnchorStyles.None,
             Margin = new Padding(0),
             Padding = new Padding(0),
         };
@@ -225,7 +228,7 @@ public partial class Form1
             DropDownStyle = ComboBoxStyle.DropDownList,
             IntegralHeight = false,
             Anchor = AnchorStyles.Left | AnchorStyles.Right,
-            Margin = new Padding(6, 7, 6, 7),
+            Margin = new Padding(4),
             DataSource = availableLanguages.ToList(),
         };
         comboBoxLanguage.SelectedIndexChanged += comboBoxLanguage_SelectedIndexChanged;
@@ -264,6 +267,7 @@ public partial class Form1
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Horizontal,
+            FixedPanel = FixedPanel.Panel2,
             Margin = new Padding(0, 3, 0, 0),
             SplitterWidth = 8,
         };
@@ -355,6 +359,8 @@ public partial class Form1
 
         menuAddRom = new ToolStripMenuItem();
         menuAddRom.Click += async (_, _) => await RunUiActionSafelyAsync(SelectRomFilesForQueueAsync);
+        menuPendingGbaCovers = new ToolStripMenuItem();
+        menuPendingGbaCovers.Click += (_, _) => ShowPendingGbaCoverEditor();
         menuRemoveSelectedRom = new ToolStripMenuItem();
         menuRemoveSelectedRom.Click += (_, _) => RemoveSelectedQueuedRom();
         menuClearRomQueue = new ToolStripMenuItem();
@@ -370,6 +376,7 @@ public partial class Form1
         menuRom.DropDownItems.AddRange(
         [
             menuAddRom,
+            menuPendingGbaCovers,
             menuRemoveSelectedRom,
             menuClearRomQueue,
             new ToolStripSeparator(),
@@ -409,14 +416,16 @@ public partial class Form1
         menuRom.DropDownOpening += (_, _) => UpdateActionButtons(isBusy);
         menuSave.DropDownOpening += (_, _) => UpdateActionButtons(isBusy);
         mainMenuStrip.Items.AddRange([menuDevice, menuCartridge, menuRom, menuSave]);
+        BuildFcMenus();
     }
 
     private void BuildInfoGroup()
     {
+        infoValueToolTip = new ToolTip(components);
         groupBoxInfo = new GroupBox
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12, 14, 12, 12),
+            Padding = new Padding(8, 6, 8, 6),
             Margin = new Padding(3, 4, 3, 3),
         };
 
@@ -433,17 +442,15 @@ public partial class Form1
         var infoTable = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 4,
-            RowCount = 5,
+            ColumnCount = 6,
+            RowCount = 3,
             Margin = new Padding(0, 0, 12, 0),
         };
-        infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
-        infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
-        infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-        for (int i = 0; i < 5; i++)
+        for (int column = 0; column < 3; column++)
         {
-            infoTable.RowStyles.Add(new RowStyle(SizeType.Percent, 20F));
+            infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            infoTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / 3));
+            infoTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3));
         }
 
         labelNorIdCaption = CreateInfoLabel(string.Empty);
@@ -485,7 +492,11 @@ public partial class Form1
         };
         labelMenuBackgroundPreviewPlaceholder.Click += (_, _) =>
         {
-            if (IsGbcWorkspaceMode())
+            if (CanEditPendingGbaCovers())
+            {
+                ShowPendingGbaCoverEditor();
+            }
+            else if (IsGbcWorkspaceMode())
             {
                 ShowGbcMenuPreviewDialog();
             }
@@ -513,25 +524,24 @@ public partial class Form1
         tableLayoutMenuBackgroundPreview.Controls.Add(panelMenuBackgroundPreviewHost, 0, 0);
 
         infoTable.Controls.Add(labelNorIdCaption, 0, 0);
-        infoTable.Controls.Add(labelChipNameCaption, 0, 1);
-        infoTable.Controls.Add(labelCapacityCaption, 0, 2);
-        infoTable.Controls.Add(labelScanMethodCaption, 0, 3);
-        infoTable.Controls.Add(labelSectorInfoCaption, 2, 0);
-        infoTable.Controls.Add(labelRomCountCaption, 2, 1);
-        infoTable.Controls.Add(labelMenuConfigCaption, 2, 2);
-        infoTable.Controls.Add(labelMenuItemCountCaption, 2, 3);
-        infoTable.Controls.Add(labelMenuTitleCaption, 0, 4);
+        infoTable.Controls.Add(labelChipNameCaption, 2, 0);
+        infoTable.Controls.Add(labelCapacityCaption, 4, 0);
+        infoTable.Controls.Add(labelSectorInfoCaption, 0, 1);
+        infoTable.Controls.Add(labelScanMethodCaption, 2, 1);
+        infoTable.Controls.Add(labelMenuConfigCaption, 4, 1);
+        infoTable.Controls.Add(labelRomCountCaption, 0, 2);
+        infoTable.Controls.Add(labelMenuItemCountCaption, 2, 2);
+        infoTable.Controls.Add(labelMenuTitleCaption, 4, 2);
 
         infoTable.Controls.Add(labelNorIdValue, 1, 0);
-        infoTable.Controls.Add(labelChipNameValue, 1, 1);
-        infoTable.Controls.Add(labelCapacityValue, 1, 2);
-        infoTable.Controls.Add(labelScanMethodValue, 1, 3);
-        infoTable.Controls.Add(labelSectorInfoValue, 3, 0);
-        infoTable.Controls.Add(labelRomCountValue, 3, 1);
-        infoTable.Controls.Add(labelMenuConfigValue, 3, 2);
-        infoTable.Controls.Add(labelMenuItemCountValue, 3, 3);
-        infoTable.Controls.Add(labelMenuTitleValue, 1, 4);
-        infoTable.SetColumnSpan(labelMenuTitleValue, 3);
+        infoTable.Controls.Add(labelChipNameValue, 3, 0);
+        infoTable.Controls.Add(labelCapacityValue, 5, 0);
+        infoTable.Controls.Add(labelSectorInfoValue, 1, 1);
+        infoTable.Controls.Add(labelScanMethodValue, 3, 1);
+        infoTable.Controls.Add(labelMenuConfigValue, 5, 1);
+        infoTable.Controls.Add(labelRomCountValue, 1, 2);
+        infoTable.Controls.Add(labelMenuItemCountValue, 3, 2);
+        infoTable.Controls.Add(labelMenuTitleValue, 5, 2);
 
         infoRoot.Controls.Add(infoTable, 0, 0);
         infoRoot.Controls.Add(tableLayoutMenuBackgroundPreview, 1, 0);
@@ -554,6 +564,7 @@ public partial class Form1
         };
         listLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         listLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        workspaceLayout = listLayout;
 
         var settingsPanel = new FlowLayoutPanel
         {
@@ -603,6 +614,7 @@ public partial class Form1
             }
 
             if(GetSelectedBurnProfileMode()==BurnProfileMode.FcMbcx){ShowFcWorkspace();return;}
+            HideFcWorkspace();
             int selectedIndex = dataGridViewRoms.SelectedRows.Count > 0
                 ? dataGridViewRoms.SelectedRows[0].Index
                 : -1;
@@ -640,17 +652,23 @@ public partial class Form1
         checkBoxWaitcntPatch.CheckedChanged += (_, _) =>
             ClientAppConfigService.SaveWaitcntPatchEnabled(checkBoxWaitcntPatch.Checked);
 
-        settingsPanel.Controls.Add(labelBurnProfileModeCaption);
-        settingsPanel.Controls.Add(comboBoxBurnProfileMode);
+        settingsPanel.Controls.Add(CreateToolbarPair(labelBurnProfileModeCaption, comboBoxBurnProfileMode));
         settingsPanel.Controls.Add(buttonQueueAdd);
         settingsPanel.Controls.Add(buttonQueueRemove);
         settingsPanel.Controls.Add(buttonQueueClear);
         settingsPanel.Controls.Add(buttonQueueBurn);
-        settingsPanel.Controls.Add(labelGbcMenuLanguageCaption);
-        settingsPanel.Controls.Add(comboBoxGbcMenuLanguage);
-        settingsPanel.Controls.Add(labelGbaMenuCaption);
-        settingsPanel.Controls.Add(comboBoxGbaMenu);
+        gbcMenuOptions = CreateToolbarPair(labelGbcMenuLanguageCaption, comboBoxGbcMenuLanguage);
+        gbaMenuOptions = CreateToolbarPair(labelGbaMenuCaption, comboBoxGbaMenu);
+        settingsPanel.Controls.Add(gbcMenuOptions);
+        settingsPanel.Controls.Add(gbaMenuOptions);
+        checkBoxWaitcntPatch.Anchor = AnchorStyles.None;
+        checkBoxWaitcntPatch.Margin = new Padding(6, 4, 4, 4);
         settingsPanel.Controls.Add(checkBoxWaitcntPatch);
+        foreach (var selector in new[] { comboBoxBurnProfileMode, comboBoxGbaMenu, comboBoxGbcMenuLanguage })
+        {
+            selector.DataSourceChanged += (_, _) => UpdateAdaptiveLayout();
+            selector.SelectedIndexChanged += (_, _) => UpdateAdaptiveLayout();
+        }
 
         BuildWorkspaceGrid();
 
@@ -678,6 +696,7 @@ public partial class Form1
             AllowDrop = true,
             EditMode = DataGridViewEditMode.EditProgrammatically,
         };
+        components.Add(dataGridViewRoms);
         dataGridViewRoms.SelectionChanged += (_, _) => UpdateActionButtons(isBusy);
         dataGridViewRoms.CellMouseDown += DataGridViewRoms_CellMouseDown;
         dataGridViewRoms.CellContentClick += DataGridViewRoms_CellContentClick;
@@ -868,6 +887,7 @@ public partial class Form1
         menuDevice.Text = T("ui", "menu_device", "Device");
         menuCartridge.Text = T("ui", "menu_cartridge", "Cartridge");
         menuRom.Text = T("ui", "menu_rom", "ROM");
+        menuPendingGbaCovers.Text = T("ui", "pending_gba_covers", "Queued ROM Covers");
         menuSave.Text = T("ui", "menu_save", "Save");
         menuRefreshPorts.Text = T("ui", "refresh", "Refresh");
         menuScan.Text = T("ui", "scan_roms", "Analyze Cart");
@@ -918,7 +938,7 @@ public partial class Form1
         labelMenuItemCountCaption.Text = T("ui", "menu_item_count", "Menu Items");
         labelMenuTitleCaption.Text = T("ui", "menu_title", "Menu Title");
         labelMenuBackgroundPreviewCaption.Text = T("ui", "menu_background_preview", "Background Preview");
-        UpdateMenuBackgroundPreviewLayout();
+        UpdateAdaptiveLayout();
 
         RefreshGridHeaders();
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
@@ -967,6 +987,7 @@ public partial class Form1
         lastSelectedBeggarCartMode = selectedMode;
 
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
+        InvalidateFcDevice();
         RefreshGbcFontSelectorVisibility();
 
         if (currentScanResult is not null)
@@ -1084,7 +1105,7 @@ public partial class Form1
 
         string fontPath = ResolveSelectedGbcFontPath()
             ?? GbcFontService.FindFontPath(null)
-            ?? throw new InvalidOperationException("No GBC preview font was found.");
+            ?? throw new InvalidOperationException(T("error", "gbc_layer_font_required", "A 12px Chinese font is required. 8px fonts are not supported."));
         GbcFontGlyphCacheResult glyphResult = GbcFontService.BuildGlyphCacheDetailed(
             CollectGbcPreviewCodepoints(),
             fontPath);
@@ -1142,7 +1163,7 @@ public partial class Form1
             CompilationFamily.Gbc,
             "en_US",
             8,
-            15,
+            16,
             0,
             entries);
     }
@@ -1166,6 +1187,12 @@ public partial class Form1
         graphics.FillRectangle(backgroundBrush, screenRect);
         graphics.DrawRectangle(Pens.Black, 0, 0, bitmap.Width - 1, bitmap.Height - 1);
 
+        if (string.Equals(preview.LanguageCode, "en_US", StringComparison.OrdinalIgnoreCase))
+        {
+            DrawEnglishGbcPreview(graphics, preview, scale, selectedBrush);
+            return bitmap;
+        }
+
         int pageCount = preview.Entries.Count == 0 ? 1 : preview.Entries.Max(entry => entry.PageIndex) + 1;
         IReadOnlyDictionary<ushort, byte[]>? previewGlyphs = preview.Entries.FirstOrDefault()?.GlyphBitmaps;
         string versionText = GbcMenuLayerBuilder.PreviewVersionText;
@@ -1173,8 +1200,7 @@ public partial class Form1
         int versionX = GbcPreviewScreenWidth - 8 - MeasureGbcCompactTextWidth(previewGlyphs, preview.FontSizePx, versionText);
         int pageTextX = GbcPreviewScreenWidth - 8 - MeasureGbcCompactTextWidth(previewGlyphs, preview.FontSizePx, pageText);
 
-        bool englishPreview = string.Equals(preview.LanguageCode, "en_US", StringComparison.OrdinalIgnoreCase);
-        int footerY = englishPreview ? 136 : 132;
+        int footerY = 132;
         DrawGbcCompactText(graphics, previewGlyphs, preview.FontSizePx, GbcMenuLayerBuilder.PreviewHeaderText, 8 * scale, 2 * scale, scale, asciiFontBold, textBrush);
         DrawGbcCompactText(graphics, previewGlyphs, preview.FontSizePx, versionText, versionX * scale, 2 * scale, scale, asciiFont, mutedBrush);
         DrawGbcCompactText(graphics, previewGlyphs, preview.FontSizePx, GbcMenuLayerBuilder.PreviewFooterText, 8 * scale, footerY * scale, scale, asciiFont, mutedBrush);
@@ -1190,12 +1216,9 @@ public partial class Form1
             return bitmap;
         }
 
-        int rowTopStartPx = englishPreview ? 12 : 24;
-        int rowStepPx = englishPreview ? 8 : 12;
-        if (!englishPreview)
-        {
-            DrawGbcArrow(graphics, screenRect, 0, rowTopStartPx, rowStepPx, scale, textBrush);
-        }
+        int rowTopStartPx = 24;
+        int rowStepPx = 12;
+        DrawGbcArrow(graphics, screenRect, 0, rowTopStartPx, rowStepPx, scale, textBrush);
 
         foreach (MenuPreviewEntry entry in entries)
         {
@@ -1979,11 +2002,11 @@ public partial class Form1
         }
 
         int previewInnerWidth = Math.Max(1, MenuBackgroundPreviewColumnWidth - panelMenuBackgroundPreviewHost.Padding.Horizontal);
-        // Keep every analyzed mode aligned to the compact GBA first-screen layout.
         int previewHeight = (int)Math.Ceiling(
-                previewInnerWidth * BackgroundImageEncoder.Height / (double)BackgroundImageEncoder.Width)
+                previewInnerWidth * DeviceDpi / 96d * BackgroundImageEncoder.Height / BackgroundImageEncoder.Width)
             + panelMenuBackgroundPreviewHost.Padding.Vertical;
-        float desiredInfoGroupHeight = previewHeight
+        float desiredInfoGroupHeight = Math.Max(previewHeight, 3 * (Font.Height + 8))
+            + Font.Height
             + groupBoxInfo.Padding.Vertical
             + groupBoxInfo.Margin.Vertical;
 
@@ -1995,6 +2018,11 @@ public partial class Form1
 
     private void ShowMenuBackgroundPreviewDialog()
     {
+        if (CanEditPendingGbaCovers())
+        {
+            ShowPendingGbaCoverEditor();
+            return;
+        }
         if (currentPreviewUsesGbcListMode || IsGbcWorkspaceMode())
         {
             ShowGbcMenuPreviewDialog();
@@ -3154,34 +3182,40 @@ public partial class Form1
 
     private static Label CreateHeaderLabel()
     {
-        return new Label
+        return new SingleLineLabel
         {
-            Dock = DockStyle.Fill,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(4),
             TextAlign = ContentAlignment.MiddleLeft,
         };
     }
 
     private static Label CreateInfoLabel(string text)
     {
-        return new Label
+        return new SingleLineLabel
         {
-            Dock = DockStyle.Fill,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
             Text = text,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(70, 70, 70),
         };
     }
 
-    private static Label CreateInfoValueLabel(string text)
+    private Label CreateInfoValueLabel(string text)
     {
-        return new Label
+        var label = new SingleLineLabel
         {
             Dock = DockStyle.Fill,
             Text = text,
+            UseMnemonic = false,
+            AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft,
-            Font = new Font("Consolas", 9F, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = Color.FromArgb(20, 20, 20),
         };
+        label.TextChanged += (_, _) => infoValueToolTip.SetToolTip(label, label.Text);
+        return label;
     }
 
     private static DataGridViewTextBoxColumn CreateTextColumn(string name, string header, int minimumWidth, float fillWeight)
@@ -3239,24 +3273,26 @@ public partial class Form1
         return new Button
         {
             Text = text,
-            AutoSize = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Size = new Size(width, 38),
             MinimumSize = new Size(width, 38),
             Anchor = AnchorStyles.None,
-            Margin = new Padding(6, 4, 6, 4),
+            Margin = new Padding(4),
+            Padding = new Padding(4, 0, 4, 0),
             UseVisualStyleBackColor = true,
-            Font = SystemFonts.MessageBoxFont,
             TextAlign = ContentAlignment.MiddleCenter,
         };
     }
 
     private static Label CreateToolbarLabel()
     {
-        return new Label
+        return new SingleLineLabel
         {
             AutoSize = true,
+            Anchor = AnchorStyles.None,
             TextAlign = ContentAlignment.MiddleLeft,
-            Margin = new Padding(12, 11, 0, 0),
+            Margin = new Padding(4),
         };
     }
 
@@ -3288,9 +3324,9 @@ public partial class Form1
 
         int currentDistance = contentSplitterInitialized
             ? splitContainerContent.SplitterDistance
-            : ContentSplitPreferredDistance;
+            : availableHeight - splitContainerContent.SplitterWidth - ContentSplitPreferredLogHeight;
         int targetDistance = currentDistance <= 0
-            ? ContentSplitPreferredDistance
+            ? maxDistance
             : currentDistance;
         targetDistance = Math.Clamp(targetDistance, minDistance, maxDistance);
 

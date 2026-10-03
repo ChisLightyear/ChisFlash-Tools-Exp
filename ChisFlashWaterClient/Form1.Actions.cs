@@ -182,6 +182,7 @@ public partial class Form1
         }
 
         int plannedRomLengthBytes = GetEstimatedPreparedRomLengthBytes(replacementItem, replacementItem.FileSizeBytes, burnProfileMode);
+        MatchPendingGbaCovers([replacementItem]);
         int requiredAllocatedSizeBytes = EstimateWorkspaceAllocatedSizeBytes(replacementItem, plannedRomLengthBytes, burnProfileMode);
         int targetAllocatedSizeBytes = GetCartEntryAllocatedSizeBytes(entry);
         if (currentScanResult?.IsBeggarMaxGbcMode != true &&
@@ -216,13 +217,19 @@ public partial class Form1
 
     private async Task HandlePrimaryQueueActionAsync()
     {
+        if (IsFcWorkspaceActive)
+        {
+            if (fcWorkspace!.IsBusy) fcWorkspace.Cancel();
+            else if (CanUseFcDevice) await fcWorkspace.BurnAsync();
+            return;
+        }
         if (activeBurnCancellation is not null)
         {
             RequestActiveBurnCancellation();
             return;
         }
 
-        if(CanWriteMdQueue){ShowFcWorkspace();return;}
+        if(CanWriteMdQueue){await ActivateFcWorkspaceAsync();return;}
         if(HasUnreadyPlatformImports(workspaceRows)){AppendLog("列表含其他平台或尚未开放的核心，请选择对应模式后烧录。");return;}
 
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
@@ -277,6 +284,7 @@ public partial class Form1
 
     private async Task ExportSelectedEntryRomAsync()
     {
+        if (IsFcWorkspaceActive) { await fcWorkspace!.ExportSelectedRomAsync(); return; }
         if (!TryResolveSelectedRomExportTarget(out SelectedRomExportTargetInfo? target, out string reason) || target is null)
         {
             AppendLog(reason);

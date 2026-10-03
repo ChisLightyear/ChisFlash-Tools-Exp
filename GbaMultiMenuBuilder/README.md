@@ -13,7 +13,7 @@ ChisFlash 系列 GBA/GB/GBC 烧录卡的合卡器（Multicart Builder）—— *
 - 可选替换菜单背景（`240x160` PNG）
 - 直接构建出最终合卡 ROM
 - 按 32 MiB 分卷输出
-- 支持 FC(NES) / MD 合卡（MIX 模式）
+- 支持 NES / MD 合卡（MIX 模式）
 
 容量下拉框**有意只保留两项**：`128MiB (01G)` 与 `256MiB (02G)` —— 对应硬件流程中实际支持的 NOR 家族。
 
@@ -100,7 +100,7 @@ dotnet publish GbaMultiMenuBuilder.csproj -c Release -r win-x64 --no-self-contai
 - 问题不能单纯用卡带—Flash 配置映射解释；`S29GL01GS -> Flash4` 在合卡器里仍是正确映射。
 - 实际现象是旧的 `extended` 载荷族在该卡带上不可靠，而集成式 `compat-auto-detect` 可靠。
 
-## FC (NES) 模式
+## NES 模式
 
 支持 `NES | CHISBOY专用卡（MBCX）`：NES/ZIP、BIN 导入导出，Mesen RAM/电池补全，
 8 KiB 独立/共享存档映射。详见 [FC_MODE.md](FC_MODE.md) 与
@@ -134,7 +134,7 @@ The Builder (Multicart Builder) for ChisFlash GBA/GB/GBC flash cartridges — **
 - Optionally replace the menu background with a `240x160` PNG
 - Build the final multicart ROM directly
 - Split output into 32 MiB parts
-- FC (NES) / MD multicarts supported (MIX mode)
+- NES / MD multicarts supported (MIX mode)
 
 The capacity selector is **intentionally limited to two options**: `128MiB (01G)` and `256MiB (02G)` — the NOR families actually supported in our hardware workflow.
 
@@ -220,7 +220,7 @@ Conclusion:
 - The failure is not explained by the cartridge-to-flash-profile mapping alone; `S29GL01GS -> Flash4` is still the correct mapping in the builder.
 - In practice, the old `extended` payload family is unreliable on this cartridge, while the integrated `compat-auto-detect` payload is reliable.
 
-## FC (NES) Mode
+## NES Mode
 
 Supports `NES | CHISBOY-dedicated cart (MBCX)`: NES/ZIP and BIN import/export, Mesen RAM/battery completion, and 8 KiB independent/shared save mapping. See [FC_MODE.md](FC_MODE.md) and [NOR payload alignment](FC_NOR_ALIGNMENT_20260927.md).
 

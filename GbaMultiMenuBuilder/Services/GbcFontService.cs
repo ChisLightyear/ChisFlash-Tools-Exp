@@ -42,11 +42,6 @@ internal static class GbcFontService
     [
         "mplus_hzk_12.ttf",
         "fusion-pixel-12px-proportional.ttf",
-        "fusion-pixel-8px-proportional.ttf",
-        "fusion-pixel-8px-proportional.otf",
-        "fusion-pixel-8px-monospaced.ttf",
-        "fusion-pixel-8px-monospaced.otf",
-        "GuanZhi_8px.ttf",
     ];
 
     private static readonly string[] FontSearchPaths =
@@ -153,7 +148,7 @@ internal static class GbcFontService
         var directory = GetBuiltInFontsDirectory();
         var options = Directory
             .EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
-            .Where(static path => IsSupportedBuiltInFontFileName(Path.GetFileName(path)))
+            .Where(IsSupportedChineseFont)
             .Select(path => new GbcBuiltInFontOption(
                 Path.GetFileName(path),
                 GetBuiltInFontDisplayName(Path.GetFileName(path)),
@@ -182,16 +177,18 @@ internal static class GbcFontService
             {
                 if (File.Exists(candidate))
                 {
-                    return candidate;
+                    return IsSupportedChineseFont(candidate) ? candidate : null;
                 }
             }
+
+            return null;
         }
 
         foreach (var basePath in EnumerateSearchBasePaths())
         {
             foreach (var fontPath in EnumerateFontCandidates(basePath))
             {
-                if (File.Exists(fontPath))
+                if (File.Exists(fontPath) && IsSupportedChineseFont(fontPath))
                 {
                     return fontPath;
                 }
@@ -208,6 +205,10 @@ internal static class GbcFontService
     public static GbcFontBitmapFormat DetectBitmapFormat(string fontPath)
     {
         var glyphSizePx = DetectGlyphSizePx(fontPath);
+        if (!IsSupportedBuiltInFontFileName(Path.GetFileName(fontPath)) || glyphSizePx != LargeGlyphSize)
+        {
+            throw new InvalidOperationException("GBC Chinese menus require a 12px font. 8px and unspecified font sizes are not supported.");
+        }
         var rowBytes = (glyphSizePx + 7) / 8;
         return new GbcFontBitmapFormat(glyphSizePx, glyphSizePx * rowBytes);
     }
@@ -368,7 +369,7 @@ internal static class GbcFontService
         {
             foreach (var path in Directory.EnumerateFiles(basePath, "*", SearchOption.TopDirectoryOnly))
             {
-                if (IsSupportedBuiltInFontFileName(Path.GetFileName(path)))
+                if (IsSupportedChineseFont(path))
                 {
                     yield return path;
                 }
@@ -399,16 +400,32 @@ internal static class GbcFontService
             string.Equals(extension, ".bdf", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsSupportedChineseFont(string path)
+    {
+        if (!IsSupportedBuiltInFontFileName(Path.GetFileName(path)))
+        {
+            return false;
+        }
+
+        try
+        {
+            return DetectGlyphSizePx(path) == LargeGlyphSize;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     private static string GetBuiltInFontDisplayName(string fileName) =>
         fileName.ToLowerInvariant() switch
         {
             "mplus_hzk_12.ttf" => "M+ HZK 12px",
             "fusion-pixel-12px-proportional.ttf" => "Fusion Pixel 12px Proportional",
-            "fusion-pixel-8px-proportional.ttf" => "Fusion Pixel 8px Proportional",
-            "fusion-pixel-8px-proportional.otf" => "Fusion Pixel 8px Proportional",
-            "fusion-pixel-8px-monospaced.ttf" => "Fusion Pixel 8px Monospaced",
-            "fusion-pixel-8px-monospaced.otf" => "Fusion Pixel 8px Monospaced",
-            "guanzhi_8px.ttf" => "GuanZhi 8px",
             _ => Path.GetFileNameWithoutExtension(fileName),
         };
 
@@ -417,11 +434,6 @@ internal static class GbcFontService
         {
             "mplus_hzk_12.ttf" => 0,
             "fusion-pixel-12px-proportional.ttf" => 1,
-            "fusion-pixel-8px-proportional.ttf" => 2,
-            "fusion-pixel-8px-proportional.otf" => 3,
-            "fusion-pixel-8px-monospaced.ttf" => 4,
-            "fusion-pixel-8px-monospaced.otf" => 5,
-            "guanzhi_8px.ttf" => 6,
             _ => 100,
         };
 
@@ -451,19 +463,19 @@ internal static class GbcFontService
 
     private static int DetectGlyphSizePx(string fontPath)
     {
-        var fromName = TryDetectGlyphSizePx(Path.GetFileNameWithoutExtension(fontPath));
-        if (fromName.HasValue)
-        {
-            return fromName.Value;
-        }
-
         if (!string.IsNullOrWhiteSpace(fontPath) &&
             fontPath.EndsWith(".bdf", StringComparison.OrdinalIgnoreCase))
         {
             return DetectBdfGlyphSizePx(fontPath);
         }
 
-        return LegacyGlyphSize;
+        var fromName = TryDetectGlyphSizePx(Path.GetFileNameWithoutExtension(fontPath));
+        if (fromName.HasValue)
+        {
+            return fromName.Value;
+        }
+
+        return 0;
     }
 
     private static int DetectBdfGlyphSizePx(string fontPath)
@@ -490,9 +502,7 @@ internal static class GbcFontService
                 continue;
             }
 
-            return Math.Max(width, height) > LegacyGlyphSize
-                ? LargeGlyphSize
-                : LegacyGlyphSize;
+            return Math.Max(width, height);
         }
 
         return LegacyGlyphSize;

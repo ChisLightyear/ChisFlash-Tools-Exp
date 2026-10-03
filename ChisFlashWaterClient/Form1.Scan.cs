@@ -19,6 +19,7 @@ public partial class Form1
 
     private void RefreshPorts(bool allowFallbackSelection = true, bool resetAnalysisState = false)
     {
+        InvalidateFcDevice();
         if (resetAnalysisState)
         {
             ResetCurrentCartAnalysisView();
@@ -90,7 +91,7 @@ public partial class Form1
 
     private async Task ScanSelectedPortAsync()
     {
-        if(fcWorkspace?.Visible==true){await fcWorkspace.ScanAsync();return;}
+        if(IsFcWorkspaceActive){if(CanUseFcDevice)await fcWorkspace!.ScanAsync();return;}
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
@@ -1316,7 +1317,7 @@ public partial class Form1
                         new BurnProfileModeOption(
                             T("value", "burn_profile_beggar_max_sram", "Beggar MAX (SRAM)"),
                             BurnProfileMode.BeggarMaxSram),
-                        new BurnProfileModeOption(T("fc","mode","MIX | FC + MD / CHISBOY Cartridge (MBCX)"),BurnProfileMode.FcMbcx),
+                        new BurnProfileModeOption(T("fc","mode","MIX | NES + MD / CHISBOY Cartridge (MBCX)"),BurnProfileMode.FcMbcx),
                     ]
                     : [
                         new BurnProfileModeOption(

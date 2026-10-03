@@ -18,7 +18,7 @@ public static class MdCartridgePolicy
     internal const int PrefixBytes = 512 + 16384;
     private const string MdRouteRequired = "请在主窗口仅选择MD游戏，使用MD合卡通道。Select only MD games in the main window to build an MD cartridge.";
 
-    // These files may enter the inspection path, never the existing GBA/GB/FC builder.
+    // These files may enter the inspection path, never the existing GBA/GB/NES builder.
     public static bool IsDiagnosticExtension(string extension) => extension.ToLowerInvariant() is
         ".md" or ".gen" or ".smd" or ".32x" or ".bin" or ".iso" or ".cue";
 

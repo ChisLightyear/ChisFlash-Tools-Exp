@@ -31,7 +31,9 @@ public partial class Form1
     private sealed class WorkspaceMetadataPlan
     {
         public WaterMenuConfigInfo MenuConfig { get; init; } = new();
-        public byte[] ItemListSector { get; init; } = [];
+        public byte[] ItemListSector { get; set; } = [];
+        public List<(uint Address, byte[] Data, string Label)> CoverSectors { get; set; } = [];
+        public byte[]? CoverMenuArea { get; set; }
         public byte[]? StatusSector { get; init; }
         public WaterWlMappingInfo? WlMapping { get; init; }
         public byte[]? MappingSector { get; init; }
@@ -138,6 +140,12 @@ public partial class Form1
     {
         if (isBusy)
         {
+            return;
+        }
+
+        if (IsFcWorkspaceActive)
+        {
+            await fcWorkspace!.ImportAsync(filePaths);
             return;
         }
 
@@ -287,6 +295,7 @@ public partial class Form1
                     result.Error?.Message ?? T("value", "unknown", "Unknown")));
             }
 
+            MatchPendingGbaCovers(newItems);
             RefreshWorkspaceGrid(GetSafeSelectionIndex(selectionIndex, workspaceRows.Count));
 
             if (newItems.Count == 0)
@@ -494,7 +503,7 @@ public partial class Form1
                     {
                         var info=GbaMultiMenuBuilder.Fc.NesRomHeaderService.Parse(File.ReadAllBytes(actual));
                         imported.Add(new PendingRomImportItem{ImportedPlatform=RomPlatform.Fc,FcRom=info,FilePath=actual,SourceImportKey=filePath,
-                            FileName=source.EntryName,DisplayTitle=source.Title,HeaderTitle="FC",FileSizeBytes=source.Length});
+                            FileName=source.EntryName,DisplayTitle=source.Title,HeaderTitle="NES",FileSizeBytes=source.Length});
                     }
                     else imported.Add(CreatePendingRomImportItem(actual,filePath,source.Title,isGbcWorkspaceModeOverride:source.Platform==RomPlatform.Gbc));
                     continue;
@@ -509,7 +518,7 @@ public partial class Form1
             return (imported,[]);
         }
         if(Path.GetExtension(filePath).Equals(".zip",StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("ZIP中没有可识别的GBA、GB/GBC、FC或MD游戏。");
+            throw new InvalidDataException("ZIP中没有可识别的GBA、GB/GBC、NES或MD游戏。");
         WaterMulticartImportAnalysis? multicartAnalysis = WaterMulticartRomAnalyzer.TryAnalyze(filePath);
         if (multicartAnalysis is null)
         {
@@ -611,6 +620,7 @@ public partial class Form1
             FileName = fileName,
             DisplayTitle = displayTitle,
             HeaderTitle = headerTitle,
+            GbaGameCode = isGbcImport ? string.Empty : WaterCartScanner.DecodeGbaHeaderGameCode(romBytes),
             FileSizeBytes = info.Length,
             SaveTypeInfo = saveTypeInfo,
             GameBoyCartridgeType = gameBoyMetadata?.CartridgeType,
@@ -735,7 +745,7 @@ public partial class Form1
                     : entry?.SourceText ?? string.Empty,
                 isLoadingPlaceholder
                     ? string.Empty
-                    : pending?.ImportedPlatform is { } platform ? platform.ToString().ToUpperInvariant() : isPending
+                    : pending?.ImportedPlatform is { } platform ? (platform == RomPlatform.Fc ? "NES" : platform.ToString().ToUpperInvariant()) : isPending
                     ? T("value", "kind_game", "Game")
                     : entry?.KindText ?? string.Empty,
                 isLoadingPlaceholder
@@ -1127,6 +1137,7 @@ public partial class Form1
 
     private void RemoveSelectedQueuedRom()
     {
+        if (IsFcWorkspaceActive) { fcWorkspace!.RemoveSelected(); return; }
         if (isBusy)
         {
             return;
@@ -1163,6 +1174,7 @@ public partial class Form1
 
     private void ClearQueuedRoms()
     {
+        if (IsFcWorkspaceActive) { fcWorkspace!.ClearGames(); return; }
         if (isBusy)
         {
             return;
@@ -1580,6 +1592,7 @@ public partial class Form1
         WorkspaceMetadataPlan metadataPlan = BuildWorkspaceMetadataPlan(initialScan, workspaceSnapshot, plannedImports, burnProfileMode);
         WorkspaceHeadAreaRewritePlan? headAreaRewritePlan =
             BuildWorkspaceHeadAreaRewritePlan(initialScan, plannedImports, metadataPlan, burnProfileMode, gbaMenuSelection);
+        PrepareWorkspaceGbaCovers(protocol, programmerKind, initialScan, workspaceSnapshot, metadataPlan, headAreaRewritePlan);
         ProgramWorkspaceImportBatch(
             protocol,
             programmerKind,
@@ -1856,11 +1869,14 @@ public partial class Form1
         if (headAreaRewritePlan is not null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            PreserveCurrentGbaMenuCovers(
-                protocol,
-                programmerKind,
-                scanResult,
-                headAreaRewritePlan.HeadAreaImage);
+            if (metadataPlan.CoverMenuArea is null)
+            {
+                PreserveCurrentGbaMenuCovers(
+                    protocol,
+                    programmerKind,
+                    scanResult,
+                    headAreaRewritePlan.HeadAreaImage);
+            }
             AppendLog(Tf(
                 "log",
                 headAreaRewritePlan.UsesWlMode ? "use_magic_menu_rom" : "use_legacy_menu_rom",
@@ -1909,7 +1925,7 @@ public partial class Form1
 
     private List<(uint Address, byte[] Data, string Label)> BuildWorkspaceMetadataSectorBatch(WorkspaceMetadataPlan metadataPlan)
     {
-        List<(uint Address, byte[] Data, string Label)> metadataSectors = [];
+        List<(uint Address, byte[] Data, string Label)> metadataSectors = metadataPlan.CoverSectors.ToList();
         if (metadataPlan.StatusSector is not null)
         {
             metadataSectors.Add((
@@ -2325,6 +2341,11 @@ public partial class Form1
                 headAreaRewritePlan.HeadAreaImage,
                 metadataPlan.MenuConfig.Items,
                 headAreaRewritePlan.UsesWlMode);
+        }
+        else if (metadataPlan.CoverMenuArea is not null)
+        {
+            rebuilt.GbaMenuFirstScreenPreview = GbaMenuFirstScreenPreviewCodec.Decode(
+                metadataPlan.CoverMenuArea, metadataPlan.MenuConfig.Items);
         }
 
         return rebuilt;

@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.30</Version>
-    <AssemblyVersion>2.0.30.0</AssemblyVersion>
-    <FileVersion>2.0.30.0</FileVersion>
-    <InformationalVersion>2.030 MIX</InformationalVersion>
+    <Version>2.0.31</Version>
+    <AssemblyVersion>2.0.31.0</AssemblyVersion>
+    <FileVersion>2.0.31.0</FileVersion>
+    <InformationalVersion>2.031 MIX</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -39,6 +39,9 @@
 
   <ItemGroup>
     <Compile Include="..\GbaMultiMenuBuilder\Models\AppSettings.cs" Link="BuilderImported\Models\AppSettings.cs" />
+    <Compile Include="..\GbaMultiMenuBuilder\Models\GameEntryModel.cs" Link="BuilderImported\Models\GameEntryModel.cs" />
+    <Compile Include="..\GbaMultiMenuBuilder\DpiAwareForm.cs" Link="BuilderImported\DpiAwareForm.cs" />
+    <Compile Include="..\GbaMultiMenuBuilder\GbaMenuCoverEditorDialog.cs" Link="BuilderImported\GbaMenuCoverEditorDialog.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Models\BuildGameEntry.cs" Link="BuilderImported\Models\BuildGameEntry.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Models\BuildLayoutEstimate.cs" Link="BuilderImported\Models\BuildLayoutEstimate.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Models\BuildProgressInfo.cs" Link="BuilderImported\Models\BuildProgressInfo.cs" />

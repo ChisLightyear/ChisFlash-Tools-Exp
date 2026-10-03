@@ -287,14 +287,14 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 
 ### 2. 需要自己准备的文件
 
-程序**只提供软件本身**，不含任何游戏和素材。核心只有一样是必需的：
+程序提供工具和菜单内核，不含游戏、封面图库或外部中文字库。请按用途准备：
 
 | 项目 | 是否必需 | 说明 |
 |---|---|---|
 | **游戏 ROM** | ✅ 必需 | `.gba` 游戏文件（或 `.zip`）。没有替代品，必须自备 |
 | **基础菜单** | ⚙️ 可省 | 合卡器 `Assets/` 自带默认菜单，自动选用 |
 | **封面 / 背景图** | ⭕ 可选 | 让菜单好看，缺了照样能构建、能烧录 |
-| **中文字库** | ⭕ 可选 | 仅 GBC 中文菜单需要 |
+| **中文字库** | 中文菜单必需 | 自备 12px 字库；8px 不支持。放入工具的 `Assets/Fonts/`，重新打开工具后选择 |
 
 ### 3. 识别设备
 
@@ -312,7 +312,9 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 
 ### 1. 上位机界面区域
 
-![上位机主界面](docs/images/client_01_main.png)
+截图使用假 ROM 和模拟卡带数据，未连接或烧录真实卡带。
+
+![上位机主界面](docs/images/zh-CN/client_01_main.png)
 
 | 区域 | 内容 |
 |---|---|
@@ -354,7 +356,7 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 
 启动后主要分三块：
 
-![合卡器主界面](docs/images/builder_01_main.png)
+![合卡器主界面](docs/images/zh-CN/builder_01_main.png)
 
 | 区域 | 内容 |
 |---|---|
@@ -372,7 +374,7 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 | **基础菜单** | ⚙️ 可省 | 菜单内核 ROM（`.gba`） | 程序**目录下的 `Assets\` 文件夹**，详见下方说明 |
 | **封面目录** | ⭕ 可选 | `cover_index.csv` + 封面图片 | 用「封面目录」的「浏览」指定目录 |
 | **自定义背景** | ⭕ 可选 | 指定尺寸的背景图 | 用「自定义背景」的「浏览」选图片 |
-| **中文字库** | ⭕ 可选 | GBC 中文点阵字库 | 用「中文字库」的「浏览」选（GBA 流程一般不需要） |
+| **中文字库** | 中文菜单必需 | 自备 12px 中文字库 | 放入 `Assets/Fonts/`，重新打开工具，在中文字库列表中选择 |
 
 **基础菜单的位置**：程序所在目录下的 **`Assets\` 文件夹**，文件名固定，按「菜单类型 + 烧录卡选型」自动选用：
 
@@ -402,13 +404,12 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 - 点 **添加 ROM**，或把 `.gba` **拖进**列表；支持多选、整个文件夹、`.zip` 自动解压
 - 用 **上移 / 下移** 调菜单显示顺序，**删除所选** 移除，**自动分配存档槽** 自动分 SRAM
 
-![添加 ROM 文件对话框](docs/images/builder_04_addrom_dialog.png)
 
 **③ 开始构建**
 
 - 点 **开始构建**，看 **构建日志** 到成功，**打开目录** 定位输出文件
 
-![ROM 列表已填充](docs/images/builder_02_romlist.png)
+![ROM 列表已填充](docs/images/zh-CN/builder_02_romlist.png)
 
 **④（可选）设置封面**（⬅️ 需自己准备封面图和 `cover_index.csv`）
 
@@ -498,7 +499,7 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 | 基础菜单 ROM | ⚙️ 可省 | ✅ 行，用 `Assets/` 自带的 |
 | 封面图 + `cover_index.csv` | ⭕ 可选 | ✅ 行，只是菜单没封面 |
 | 自定义背景图 | ⭕ 可选 | ✅ 行，用默认背景 |
-| GBC 中文字库 | ⭕ 可选 | ✅ 行（GBA 流程本就不需要） |
+| GBC 中文字库 | 中文菜单必需 | GBA 和 GBC 英文菜单无需外部字库；中文必须有 12px 字库 |
 
 ### 两条路线速查
 
@@ -543,7 +544,7 @@ ChisFlash-Tools-Exp/
 │   └── covers/                   封面库（未随仓库提供）
 └── GbaMultiMenuBuilder/          合卡器
     ├── GbaMultiMenuBuilder.sln
-    ├── Fc/                        FC(NES) 卡带支持
+    ├── Fc/                        NES 卡带支持
     ├── Md/                        MD 卡带支持
     ├── Languages/                界面语言
     └── Assets/                   ★ 合卡器的菜单 ROM（自带）

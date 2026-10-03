@@ -86,7 +86,7 @@ public partial class Form1
         if(currentScanResult?.IsMdMbcxContent == true){reason="此卡包含MD游戏，请使用MD合卡写入；GB菜单操作已禁用。";return false;}
         if(currentScanResult?.IsFcMbcxContent == true)
         {
-            reason=T("fc","use_nes_workspace","This card contains FC games. Use the MIX workspace; GB menu actions are disabled.");
+            reason=T("fc","use_nes_workspace","This card contains NES games. Use the MIX workspace; GB menu actions are disabled.");
             return false;
         }
         if (!EnsureCurrentScanCapacityValid(out reason))
@@ -956,6 +956,14 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        if (IsFcWorkspaceActive)
+        {
+            UpdateFcActionButtons(busy);
+            return;
+        }
+        if (menuFcTools is not null) menuFcTools.Visible = false;
+        menuCartridge.Enabled = true;
+        menuSave.Enabled = true;
         bool workspaceUiBusy = busy;
         bool hasMdImports = pendingImportItems.Any(item=>item.MdRom is not null);
         bool hasActiveScan = HasActiveScanResult();
@@ -996,6 +1004,7 @@ public partial class Form1
             !string.IsNullOrWhiteSpace(GetSelectedPortName()) &&
             TryGetSelectedKnownProgrammerKind(out _, out _);
         menuRefreshPorts.Enabled = !workspaceUiBusy;
+        menuPendingGbaCovers.Enabled = CanEditPendingGbaCovers();
         menuScan.Enabled = buttonScan.Enabled;
         menuExit.Enabled = !workspaceUiBusy;
         menuFragmentTest.Enabled = !workspaceUiBusy && canRunFragmentTest;
@@ -1054,7 +1063,7 @@ public partial class Form1
             menuImportSelectedSave.Enabled=menuItemImportSave.Enabled=false;
             menuReplaceSelectedRom.Enabled=menuItemReplaceRom.Enabled=false;
         }
-        if(CanWriteMdQueue&&!workspaceUiBusy&&!isAnalyzingQueueImports){buttonQueueBurn.Enabled=true;menuStartBurn.Enabled=true;buttonQueueBurn.Text=menuStartBurn.Text="MIX · FC / MD";}
+        if(CanWriteMdQueue&&!workspaceUiBusy&&!isAnalyzingQueueImports){buttonQueueBurn.Enabled=true;menuStartBurn.Enabled=true;buttonQueueBurn.Text=menuStartBurn.Text="MIX · NES / MD";}
         bool canToggleProgrammerMode = !workspaceUiBusy && !isAnalyzingQueueImports;
         UpdateProgrammerModeSelectorUi(canToggleProgrammerMode);
         // Mode selection is local navigation, not authorization to write a card.

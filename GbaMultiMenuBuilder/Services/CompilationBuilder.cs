@@ -36,7 +36,7 @@ public sealed class CompilationBuilder
     private const int GbcFontHeaderSize = 64;
     private const byte GbcMenuFontSizePx = 12;
     private const int GbcChineseMenuGamesPerPage = 8;
-    private const int GbcEnglishMenuGamesPerPage = 15;
+    private const int GbcEnglishMenuGamesPerPage = 16;
     private const string GbcFontSignature = "MBCXFNT";
     private const string GbcBackgroundSignature = "MBCXBG1";
     private const int GbcMaxGames = 99;
@@ -169,7 +169,7 @@ public sealed class CompilationBuilder
                     textResolver,
                     "error",
                     "gbc_layer_font_required",
-                    "A valid built-in 8px/12px GBC font is required for layered MBCX menu generation."));
+                    "A valid 12px GBC font is required for layered MBCX menu generation. 8px fonts are not supported."));
         }
         if (usedRomBytes <= 0)
         {
@@ -1108,7 +1108,7 @@ public sealed class CompilationBuilder
         foreach(var game in request.Games.Where(g=>g.Enabled))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if(new FileInfo(game.RomPath).Length>FcMbcxCodec.CapacityBytes)throw new InvalidDataException("FC ROM exceeds card capacity.");
+            if(new FileInfo(game.RomPath).Length>FcMbcxCodec.CapacityBytes)throw new InvalidDataException("NES ROM exceeds card capacity.");
             byte[] data=File.ReadAllBytes(game.RomPath);
             result.Add(new FcGame{Name=game.Title,Data=data,Info=NesRomHeaderService.Parse(data)});
         }
@@ -1126,7 +1126,7 @@ public sealed class CompilationBuilder
             var games=PrepareFcGames(request,cancellationToken);
             var layout=FcMbcxCodec.Plan(games,request.Cartridge.FlashSize,false);
             FcMbcxCodec.Export(request.OutputPath,games,cancellationToken,new Progress<FcProgress>(p=>progress?.Report(new(p.Percent,p.Message))));
-            return new(request.OutputPath,"FC02",layout.EndBytes,[],"FC/MBCX: 16 KiB ROM banks, 8 KiB SRAM banks");
+            return new(request.OutputPath,"FC02",layout.EndBytes,[],"NES/MBCX: 16 KiB ROM banks, 8 KiB SRAM banks");
         }
         if (IsGbcMaxBuild(request))
         {
@@ -2249,7 +2249,7 @@ public sealed class CompilationBuilder
         if (string.IsNullOrWhiteSpace(fontPath) || !File.Exists(fontPath))
         {
             throw new InvalidOperationException(
-                $"Required GBC font source was not found. Expected an 8px/12px BDF/TTF/OTF font for {orderedCodepoints.Count} glyphs.");
+                $"Required GBC font source was not found. Expected a 12px BDF/TTF/OTF font for {orderedCodepoints.Count} glyphs.");
         }
 
         var glyphCache = GbcFontService.BuildGlyphCacheDetailed(orderedCodepoints.Select(static codepoint => (int)codepoint), fontPath);
@@ -3697,7 +3697,7 @@ public sealed class CompilationBuilder
         var fontPath = GbcFontService.FindFontPath(explicitFontPath);
         if (string.IsNullOrWhiteSpace(fontPath) || !File.Exists(fontPath))
         {
-            throw new InvalidOperationException("Unable to resolve the required 8px/12px GBC font for layered MBCX menu generation.");
+            throw new InvalidOperationException("Unable to resolve the required 12px GBC font for layered MBCX menu generation.");
         }
 
         return fontPath;

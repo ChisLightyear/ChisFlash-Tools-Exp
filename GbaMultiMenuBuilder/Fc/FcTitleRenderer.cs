@@ -39,9 +39,9 @@ public static class FcTitleRenderer
             {
                 string path=Path.Combine(AppContext.BaseDirectory,"Assets","Fonts",FontFileName);
                 if(!File.Exists(path))path=Path.Combine(Directory.GetCurrentDirectory(),"Assets","Fonts",FontFileName);
-                if(!File.Exists(path))throw new FileNotFoundException("FC requires the GBC 12px font.",path);
+                if(!File.Exists(path))throw new FileNotFoundException("NES requires the GBC 12px font.",path);
                 var rendered=GbcFontService.BuildGlyphCacheDetailed(needed,path);
-                if(rendered.Format.GlyphSizePx!=12||rendered.Format.GlyphBytes!=24)throw new InvalidDataException("FC titles require 12px glyphs.");
+                if(rendered.Format.GlyphSizePx!=12||rendered.Format.GlyphBytes!=24)throw new InvalidDataException("NES titles require 12px glyphs.");
                 GbcMenuLayerBuilder.ApplyMenuPunctuationOverrides(rendered.Glyphs,rendered.Format);
                 // M+ HZK has no U+00B7. Supply the literal centered punctuation
                 // used in Chinese game names, without relying on a system font.

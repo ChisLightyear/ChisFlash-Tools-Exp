@@ -288,14 +288,14 @@ The trade-off is size — it grows past 100 MB, so it is generally not recommend
 
 ### 2. Files you must supply yourself
 
-The repository ships **the software only** — no games and no artwork. Only one item is strictly required:
+The repository ships the tools and menu kernels. Games, cover libraries and external Chinese fonts must be supplied separately where required:
 
 | Item | Required? | Notes |
 |---|---|---|
 | **Game ROMs** | ✅ Yes | `.gba` game files (or `.zip`). No substitute — you must have these |
 | **Base menu** | ⚙️ Optional | The Builder bundles default menus under `Assets/` and selects one automatically |
 | **Covers / background** | ⭕ Optional | Cosmetic only — the cart still builds and flashes without them |
-| **CJK font** | ⭕ Optional | Needed only for GBC Chinese menus |
+| **CJK font** | Required for Chinese menus | Supply a 12px font in `Assets/Fonts/`, reopen the tool and select it. 8px fonts are not supported |
 
 ### 3. Detecting the device
 
@@ -313,6 +313,8 @@ Talk to the cartridge directly — **no multicart file needed first**. Once the 
 type is set, patches, mapping and save slots are all handled automatically.
 
 ### 1. Client interface areas
+
+Screenshots use synthetic ROMs and simulated cartridge data. No physical cartridge was connected or programmed.
 
 ![Client main window](docs/images/client_01_main.png)
 
@@ -375,7 +377,7 @@ The repository ships **the program only** — no games, covers, or menu artwork.
 | **Base menu** | ⚙️ Optional | Menu kernel ROM (`.gba`) | The **`Assets\` folder next to the program** — see below |
 | **Cover directory** | ⭕ Optional | `cover_index.csv` + cover images | Pick the folder via **Browse** next to **Cover directory** |
 | **Custom background** | ⭕ Optional | A background image of the required size | Pick the image via **Browse** next to **Custom background** |
-| **CJK font** | ⭕ Optional | GBC Chinese bitmap font | Pick it via **Browse** next to **CJK font** (usually not needed for GBA) |
+| **CJK font** | Required for Chinese menus | User-supplied 12px Chinese font | Copy into `Assets/Fonts/`, reopen the tool and select it from the font list |
 
 **Where the base menu goes**: the **`Assets\` folder next to the program**, with fixed file names — picked automatically from the *menu type* + *flashcart type*:
 
@@ -405,7 +407,6 @@ The shipped package already contains all four — **nothing to prepare**. Only r
 - Click **Add ROMs**, or **drag and drop** `.gba` files in; multi-select, whole folders, and `.zip` extraction all work
 - Use **Move up / Move down** to reorder the menu, **Remove selected** to drop games, **Auto save slots** to assign SRAM
 
-![Add ROMs file dialog](docs/images/builder_04_addrom_dialog.png)
 
 **③ Build**
 
@@ -502,7 +503,7 @@ These live under the **Cartridge** / **ROM** / **Save** menus. **They carry risk
 | Base menu ROM | ⚙️ Optional | ✅ Yes — the bundled one under `Assets/` is used |
 | Covers + `cover_index.csv` | ⭕ Optional | ✅ Yes — the menu simply has no covers |
 | Custom background image | ⭕ Optional | ✅ Yes — the default background is used |
-| GBC CJK font | ⭕ Optional | ✅ Yes (the GBA flow never needs it) |
+| GBC CJK font | Required for Chinese menus | GBA and English GBC menus need no external font; Chinese requires a 12px font |
 
 ### Two routes at a glance
 
@@ -548,7 +549,7 @@ ChisFlash-Tools-Exp/
 │   └── covers/                   cover library (not shipped)
 └── GbaMultiMenuBuilder/          Builder
     ├── GbaMultiMenuBuilder.sln
-    ├── Fc/                       FC (NES) cartridge support
+    ├── Fc/                       NES cartridge support
     ├── Md/                       MD cartridge support
     ├── Languages/                UI languages
     └── Assets/                   ★ the Builder's menu ROMs (bundled)

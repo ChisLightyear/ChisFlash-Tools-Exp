@@ -1070,7 +1070,7 @@ public static class WaterCartScanner
             return true;
         }
 
-        if (isFcContent || isMdContent) return false; // Recognized FC data is not a GB directory failure.
+        if (isFcContent || isMdContent) return false; // Recognized NES data is not a GB directory failure.
         games = [];
         entries = [];
         log?.Invoke(T(
@@ -1202,7 +1202,7 @@ public static class WaterCartScanner
         if(GbaMultiMenuBuilder.Fc.FcMbcxCodec.HasFcIdentity(configHeader))
         {
             isFcContent = true;
-            log?.Invoke(T("fc","detected","FC data card detected; opening the NES workspace."));
+            log?.Invoke(T("fc","detected","NES data card detected; opening the NES workspace."));
             return false;
         }
 

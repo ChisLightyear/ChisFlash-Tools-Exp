@@ -58,7 +58,7 @@ public static class RomArchiveImportService
         return Path.GetExtension(name).ToLowerInvariant() switch { ".gba" or ".agb"=>RomPlatform.Gba,".gb" or ".gbc"=>RomPlatform.Gbc,".nes"=>RomPlatform.Fc,_=>RomPlatform.Md };
     }
 
-    // Existing GB/GBA/FC analyzers consume ordinary files. Cache only the
+    // Existing GB/GBA/NES analyzers consume ordinary files. Cache only the
     // selected member under an application-owned name; never use ZIP paths.
     public static string Materialize(ArchiveRomSource source)
     {

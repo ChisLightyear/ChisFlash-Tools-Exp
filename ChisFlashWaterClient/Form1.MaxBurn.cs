@@ -698,7 +698,7 @@ public partial class Form1
         if(fcConfig.AsSpan(0,4).SequenceEqual("MD02"u8))
             throw new InvalidOperationException("MD data card: use the MD cartridge writer instead of the GB menu writer.");
         if(GbaMultiMenuBuilder.Fc.FcMbcxCodec.HasFcIdentity(fcConfig))
-            throw new InvalidOperationException("FC data card: use the FC workspace instead of the GB menu writer.");
+            throw new InvalidOperationException("NES data card: use the NES workspace instead of the GB menu writer.");
         cancellationToken.ThrowIfCancellationRequested();
         UpdateIndeterminateProgress(
             T("value", "gbc_progress_reading_existing", "Reading existing GBC/MAX flash content..."));

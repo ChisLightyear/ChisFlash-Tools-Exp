@@ -4,7 +4,7 @@ using GbaMultiMenuBuilder.Md;
 
 namespace GbaMultiMenuBuilder.Fc;
 
-// MIX uses the existing FC v7 reader plus a disjoint MD directory. Both
+// MIX uses the existing NES v7 reader plus a disjoint MD directory. Both
 // platforms share the same 16 KiB ROM allocator and dedicated SRAM pool.
 public static class MixDirectory
 {
@@ -74,6 +74,6 @@ public static class MixDirectory
         }
         var dedicated=games.Where(g=>g.Info.Battery).SelectMany(g=>g.OriginalSaveMap).ToArray();
         if(dedicated.Any(x=>x>=60)||dedicated.Distinct().Count()!=dedicated.Length)
-            throw new InvalidDataException("FC/MD battery saves overlap.");
+            throw new InvalidDataException("NES/MD battery saves overlap.");
     }
 }

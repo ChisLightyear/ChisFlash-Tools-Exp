@@ -14,7 +14,7 @@ public sealed class FcConfigurationDialog : Form
     public FcConfigurationDialog(FcGame game,Func<string,string,string> text)
     {
         this.game=game;this.text=text;
-        Text=L("edit_config","修正 FC 配置");StartPosition=FormStartPosition.CenterParent;
+        Text=L("edit_config","修正 NES 配置");StartPosition=FormStartPosition.CenterParent;
         AutoSize=true;AutoSizeMode=AutoSizeMode.GrowAndShrink;MaximizeBox=false;MinimizeBox=false;
         var layout=new TableLayoutPanel(){AutoSize=true,ColumnCount=2,Padding=new Padding(16),Dock=DockStyle.Fill};
         Controls.Add(layout);

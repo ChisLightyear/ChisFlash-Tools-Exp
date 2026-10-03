@@ -24,7 +24,20 @@ public sealed class FcWorkspaceControl : UserControl
     private FcCardSnapshot? snapshot;
     private bool refreshing;
     private bool imageReplacement;
+    private readonly bool integrated;
+    private readonly ToolTip summaryToolTip = new();
     public bool IsBusy=>operation is not null;
+    public bool CanBurn => burn.Enabled;
+    public bool HasGames => games.Count > 0;
+    public bool HasSelection => grid.CurrentRow?.DataBoundItem is FcGame;
+    public bool CanExportSelection => grid.CurrentRow?.DataBoundItem is FcGame { Data.Length: > 0 };
+    public bool CanEditConfiguration => grid.CurrentRow?.DataBoundItem is FcGame { Md: null };
+    public int GameCount => games.Count;
+    public FcCardSnapshot? Snapshot => snapshot;
+    public string StatusText => status.Text;
+    public event Action? StateChanged;
+    public event Action<string>? StatusChanged;
+    public event Action<FcProgress>? ProgressChanged;
     // Imported files are not a card snapshot. They may initiate a read-only
     // preflight; edits to previously scanned entries must first be rescanned.
     private bool CanScanBeforeBurn=>games.Any(g=>g.Enabled)&&games.All(g=>g.OriginalOffset<0);
@@ -32,24 +45,24 @@ public sealed class FcWorkspaceControl : UserControl
     public event Action<bool>? BusyChanged;
     public void Cancel()=>operation?.Cancel();
     private string L(string key,string fallback)=>text(key,fallback);
-    public FcWorkspaceControl(Func<string,string,string> localize,Func<IFcCardBackend>? backend=null)
+    public FcWorkspaceControl(Func<string,string,string> localize,Func<IFcCardBackend>? backend=null,bool integrated=false)
     {
-        text=localize;backendFactory=backend;Dock=DockStyle.Fill;Padding=new Padding(12);AllowDrop=true;
+        text=localize;backendFactory=backend;this.integrated=integrated;Dock=DockStyle.Fill;Padding=integrated?Padding.Empty:new Padding(12);AllowDrop=true;
         var layout=new TableLayoutPanel(){Dock=DockStyle.Fill,ColumnCount=1,RowCount=6};
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute,20));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var title=new Label(){Text=L("mode","MIX | FC + MD (MBCX)"),Font=new Font(Font.FontFamily,13,FontStyle.Bold),AutoSize=true,Padding=new Padding(2,2,2,10)};
-        labels.Add((title,"mode","MIX | FC + MD (MBCX)"));
+        var title=new Label(){Text=L("mode","MIX | NES + MD (MBCX)"),Font=new Font(Font.FontFamily,13,FontStyle.Bold),AutoSize=true,Padding=new Padding(2,2,2,10)};
+        labels.Add((title,"mode","MIX | NES + MD (MBCX)"));
         layout.Controls.Add(title,0,0);layout.Controls.Add(actions,0,1);layout.Controls.Add(grid,0,2);layout.Controls.Add(summary,0,3);layout.Controls.Add(progress,0,4);layout.Controls.Add(status,0,5);Controls.Add(layout);
         AddButton("back","Other modes",(_,_)=>ExitRequested?.Invoke());
-        AddButton("add","Add FC / MD / ZIP",async(_,_)=>{using var d=new OpenFileDialog(){Multiselect=true,Filter="FC / MD / ZIP (*.nes;*.md;*.gen;*.smd;*.bin;*.zip)|*.nes;*.md;*.gen;*.smd;*.bin;*.zip"};if(d.ShowDialog(this)==DialogResult.OK)await ImportAsync(d.FileNames);});
-        AddButton("remove","Remove",(_,_)=>{foreach(var r in grid.SelectedRows.Cast<DataGridViewRow>().Select(r=>r.DataBoundItem).OfType<FcGame>().ToList())games.Remove(r);RefreshSummary();});
-        AddButton("clear","Clear",(_,_)=>{if(games.Count==0||MessageBox.Show(this,L("clear_confirm","Clear this workspace list? The card is not written until Burn."),L("mode","MIX | FC + MD (MBCX)"),MessageBoxButtons.YesNo)==DialogResult.Yes){games.Clear();imageReplacement=false;RefreshSummary();}});
+        AddButton("add","Add NES / MD / ZIP",async(_,_)=>{using var d=new OpenFileDialog(){Multiselect=true,Filter="NES / MD / ZIP (*.nes;*.md;*.gen;*.smd;*.bin;*.zip)|*.nes;*.md;*.gen;*.smd;*.bin;*.zip"};if(d.ShowDialog(this)==DialogResult.OK)await ImportAsync(d.FileNames);});
+        AddButton("remove","Remove",(_,_)=>RemoveSelected());
+        AddButton("clear","Clear",(_,_)=>ClearGames());
         AddButton("up","Up",(_,_)=>MoveRow(-1));AddButton("down","Down",(_,_)=>MoveRow(1));
         AddButton("title_preview","12px title preview",(_,_)=>PreviewTitle());
-        AddButton("rebuild_config","检查 / 重建 FC 配置",(_,_)=>RebuildConfigurations());
-        AddButton("edit_config","修正 FC 配置",(_,_)=>EditConfiguration());
+        AddButton("rebuild_config","检查 / 重建 NES 配置",(_,_)=>RebuildConfigurations());
+        AddButton("edit_config","修正 NES 配置",(_,_)=>EditConfiguration());
         AddButton("import_image","Open MIX .bin",async(_,_)=>await ImportImageAsync());
         AddButton("export","Build .bin",async(_,_)=>await ExportAsync());
         scan.Text=L("scan","Scan MIX card");scan.Visible=backend is not null;scan.Click+=async(_,_)=>await ScanAsync();actions.Controls.Add(scan);
@@ -65,6 +78,8 @@ public sealed class FcWorkspaceControl : UserControl
         Column(nameof(FcGame.Compatibility),"compatibility","Import check",320);
         Column(nameof(FcGame.Snapshot),"snapshot","Snapshot",130);
         grid.DataSource=games;
+        grid.SelectionChanged+=(_,_)=>StateChanged?.Invoke();
+        status.TextChanged+=(_,_)=>StatusChanged?.Invoke(status.Text);
         grid.CurrentCellDirtyStateChanged+=(_,_)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
         grid.CellValueChanged+=(_,_)=>RefreshSummary();grid.DataError+=(_,e)=>{e.ThrowException=false;};
         grid.CellFormatting+=(_,e)=>{
@@ -75,7 +90,63 @@ public sealed class FcWorkspaceControl : UserControl
         DragDrop+=async(_,e)=>{if(!IsBusy&&e.Data?.GetData(DataFormats.FileDrop) is string[] paths)await ImportAsync(paths);};
         grid.AllowDrop=true;grid.DragEnter+=(_,e)=>e.Effect=!IsBusy&&e.Data?.GetDataPresent(DataFormats.FileDrop)==true?DragDropEffects.Copy:DragDropEffects.None;
         grid.DragDrop+=async(_,e)=>{if(!IsBusy&&e.Data?.GetData(DataFormats.FileDrop) is string[] paths)await ImportAsync(paths);};
+        if(integrated)
+        {
+            layout.Controls.Clear();
+            layout.RowStyles.Clear();
+            layout.RowCount=2;
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute,28));
+            summary.AutoSize=false;
+            summary.AutoEllipsis=true;
+            layout.Controls.Add(grid,0,0);
+            layout.Controls.Add(summary,0,1);
+            grid.BackgroundColor=Color.White;
+            grid.BorderStyle=BorderStyle.None;
+            grid.AllowUserToResizeRows=false;
+            grid.RowTemplate.Height=26;
+            title.Dispose();
+            actions.Visible=false;
+        }
         status.Text=L("notice","ROM banks: 16 KiB. SRAM banks: 8 KiB; battery-backed areas are dedicated and non-battery areas are shared.");RefreshSummary();
+    }
+    public void InvalidateSnapshot()
+    {
+        if(IsBusy)return;
+        snapshot=null;
+        RefreshSummary();
+    }
+    public void RemoveSelected()
+    {
+        if(IsBusy)return;
+        foreach(var game in grid.SelectedRows.Cast<DataGridViewRow>().Select(row=>row.DataBoundItem).OfType<FcGame>().ToList())games.Remove(game);
+        RefreshSummary();
+    }
+    public void ClearGames()
+    {
+        if(IsBusy)return;
+        if(games.Count>0&&MessageBox.Show(this,L("clear_confirm","Clear this workspace list? The card is not written until Burn."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        games.Clear();imageReplacement=false;RefreshSummary();
+    }
+    public async Task ExportSelectedRomAsync()
+    {
+        if(IsBusy||grid.CurrentRow?.DataBoundItem is not FcGame game||game.Data.Length==0)return;
+        string name=string.Concat(game.Name.Select(character=>Path.GetInvalidFileNameChars().Contains(character)?'_':character));
+        string extension=game.Md is null?"nes":"md";
+        using var dialog=new SaveFileDialog{FileName=name+"."+extension,Filter=$"ROM (*.{extension})|*.{extension}",DefaultExt=extension,AddExtension=true,OverwritePrompt=true};
+        if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+        byte[] data=game.Data.ToArray();
+        await RunAsync(async(ct,reporter)=>{await File.WriteAllBytesAsync(dialog.FileName,data,ct);status.Text=L("rom_exported","ROM exported.");});
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if(disposing)
+        {
+            operation?.Cancel();
+            summaryToolTip.Dispose();
+            if(integrated){actions.Dispose();status.Dispose();progress.Dispose();}
+        }
+        base.Dispose(disposing);
     }
     private void Column(string property,string key,string fallback,int width,bool readOnly=true)=>grid.Columns.Add(new DataGridViewTextBoxColumn(){DataPropertyName=property,HeaderText=L(key,fallback),Tag=(key,fallback),Width=width,ReadOnly=readOnly});
     private void AddButton(string key,string fallback,EventHandler handler){var b=new Button(){Text=L(key,fallback),AutoSize=true};b.Click+=handler;labels.Add((b,key,fallback));idleButtons.Add(b);actions.Controls.Add(b);}
@@ -85,7 +156,7 @@ public sealed class FcWorkspaceControl : UserControl
         foreach(DataGridViewColumn column in grid.Columns)if(column.Tag is ValueTuple<string,string> tag)column.HeaderText=L(tag.Item1,tag.Item2);
         grid.Invalidate();RefreshSummary();
     }
-    private void PreviewTitle()
+    public void PreviewTitle()
     {
         grid.EndEdit();
         if(grid.CurrentRow?.DataBoundItem is not FcGame game)return;
@@ -106,12 +177,12 @@ public sealed class FcWorkspaceControl : UserControl
         }
         catch(Exception ex){MessageBox.Show(this,ex.Message,L("title_preview","12px title preview"),MessageBoxButtons.OK,MessageBoxIcon.Error);}
     }
-    private void MoveRow(int delta)
+    public void MoveRow(int delta)
     {
         if(grid.CurrentRow?.DataBoundItem is not FcGame item)return;int from=games.IndexOf(item),to=from+delta;if(to<0||to>=games.Count)return;
         games.RemoveAt(from);games.Insert(to,item);grid.ClearSelection();grid.Rows[to].Selected=true;grid.CurrentCell=grid.Rows[to].Cells[1];RefreshSummary();
     }
-    private void EditConfiguration()
+    public void EditConfiguration()
     {
         grid.EndEdit();if(grid.CurrentRow?.DataBoundItem is not FcGame game||game.Md is not null)return;
         try{
@@ -120,9 +191,9 @@ public sealed class FcWorkspaceControl : UserControl
             var staged=games.Select(g=>g.Copy()).ToList();staged.Single(g=>g.Id==game.Id).Info=dialog.Result;
             FcMbcxCodec.Plan(staged,snapshot?.Capacity??FcMbcxCodec.CapacityBytes,snapshot?.IsFc==true);
             game.Info=dialog.Result;games.ResetBindings();RefreshSummary();status.Text=L("config_staged","配置已更新到列表；点击“烧录 MIX 卡”写入。ROM 内容不变。");
-        }catch(Exception ex){MessageBox.Show(this,ex.Message,L("edit_config","修正 FC 配置"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        }catch(Exception ex){MessageBox.Show(this,ex.Message,L("edit_config","修正 NES 配置"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
     }
-    private void RebuildConfigurations()
+    public void RebuildConfigurations()
     {
         grid.EndEdit();var staged=games.Select(g=>g.Copy()).ToList();var lines=new List<string>();
         try{
@@ -134,8 +205,8 @@ public sealed class FcWorkspaceControl : UserControl
             }
             if(lines.Count==0)return;
             FcMbcxCodec.Plan(staged,snapshot?.Capacity??FcMbcxCodec.CapacityBytes,snapshot?.IsFc==true);
-            using var dialog=new Form(){Text=L("rebuild_config","检查 / 重建 FC 配置"),StartPosition=FormStartPosition.CenterParent,Size=new Size(800,540),MinimizeBox=false};
-            var preview=new TextBox(){ReadOnly=true,Multiline=true,ScrollBars=ScrollBars.Both,Dock=DockStyle.Fill,Text=L("rebuild_explain","检查所有勾选的 FC 游戏；保留手动修正。未确定的板型不会猜测。下面只更新列表，尚不写卡。")+"\r\n\r\n"+string.Join("\r\n\r\n",lines)};
+            using var dialog=new Form(){Text=L("rebuild_config","检查 / 重建 NES 配置"),StartPosition=FormStartPosition.CenterParent,Size=new Size(800,540),MinimizeBox=false};
+            var preview=new TextBox(){ReadOnly=true,Multiline=true,ScrollBars=ScrollBars.Both,Dock=DockStyle.Fill,Text=L("rebuild_explain","检查所有勾选的 NES 游戏；保留手动修正。未确定的板型不会猜测。下面只更新列表，尚不写卡。")+"\r\n\r\n"+string.Join("\r\n\r\n",lines)};
             var apply=new Button(){Text=L("apply_config","应用到列表"),AutoSize=true,DialogResult=DialogResult.OK};
             var cancel=new Button(){Text=L("cancel","取消"),AutoSize=true,DialogResult=DialogResult.Cancel};
             var buttons=new FlowLayoutPanel(){Dock=DockStyle.Bottom,AutoSize=true};buttons.Controls.AddRange([apply,cancel]);dialog.Controls.Add(preview);dialog.Controls.Add(buttons);dialog.AcceptButton=apply;dialog.CancelButton=cancel;
@@ -143,7 +214,7 @@ public sealed class FcWorkspaceControl : UserControl
             if(dialog.ShowDialog(this)!=DialogResult.OK)return;
             foreach(var g in games){var next=staged.Single(s=>s.Id==g.Id);g.Info=next.Info;}
             games.ResetBindings();RefreshSummary();status.Text=L("config_staged","配置已更新到列表；点击“烧录 MIX 卡”写入。ROM 内容不变。");
-        }catch(Exception ex){MessageBox.Show(this,ex.Message,L("rebuild_config","检查 / 重建 FC 配置"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        }catch(Exception ex){MessageBox.Show(this,ex.Message,L("rebuild_config","检查 / 重建 NES 配置"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
     }
     private void RefreshSummary()
     {
@@ -157,7 +228,7 @@ public sealed class FcWorkspaceControl : UserControl
             grid.Invalidate();
             summary.Text=string.Format(L("summary","{0}/198 ROMs (99 per core) | occupied end {1:F2}/{2:F0} MiB | dedicated SRAM {3}/60 x 8 KiB | shared {4}/4 x 8 KiB"),
                 plan.Entries.Count,plan.EndBytes/1048576d,(snapshot?.Capacity??FcMbcxCodec.CapacityBytes)/1048576d,plan.DedicatedBanks,plan.SharedBanks);
-            summary.Text+=Environment.NewLine+L("core_support_notice","FC and MD share this card; select slot 3 for FC or slot 4 for MD. Requires the paired MIX MCU firmware.");
+            summary.Text+=Environment.NewLine+L("core_support_notice","NES and MD share this card; select slot 3 for NES or slot 4 for MD. Requires the paired MIX MCU firmware.");
             summary.Text+=Environment.NewLine+string.Format(L("correction_counts","自动识别/纠错 {0}｜手动修正 {1}｜待核对 {2}；扫描原卡后可检查 / 重建配置。"),
                 games.Count(g=>g.Md is null&&g.Info.CorrectionKind is 1 or 2),games.Count(g=>g.Md is null&&g.Info.CorrectionKind==3),games.Count(g=>g.Md is null&&g.Info.Warning is not null&&g.Info.CorrectionKind==0));
             int unselected=games.Count(g=>!g.Enabled),unsupported=games.Count(g=>!g.Info.Supported);
@@ -175,16 +246,24 @@ public sealed class FcWorkspaceControl : UserControl
                 (snapshot is {Writable:true} || snapshot is null&&CanScanBeforeBurn);
         }
         catch(Exception ex){summary.Text=ex.Message;burn.Enabled=false;}
-        finally {refreshing=false;scan.Enabled=!IsBusy;}
+        finally
+        {
+            if(integrated)
+            {
+                summaryToolTip.SetToolTip(summary,summary.Text);
+                summary.Text=summary.Text.Split(Environment.NewLine)[0];
+            }
+            refreshing=false;scan.Enabled=!IsBusy;StateChanged?.Invoke();
+        }
     }
     private async Task RunAsync(Func<CancellationToken,IProgress<FcProgress>,Task> work)
     {
         if(IsBusy)return;grid.EndEdit();operation=new();var activeOperation=operation;var token=operation.Token;
         foreach(var b in idleButtons)b.Enabled=false;grid.Enabled=false;scan.Enabled=false;burn.Enabled=false;cancel.Enabled=true;BusyChanged?.Invoke(true);
-        var reporter=new Progress<FcProgress>(p=>{if(ReferenceEquals(operation,activeOperation)&&!token.IsCancellationRequested&&!IsDisposed){status.Text=p.Message;progress.Value=Math.Clamp(p.Percent,0,100);}});
+        var reporter=new Progress<FcProgress>(p=>{if(ReferenceEquals(operation,activeOperation)&&!token.IsCancellationRequested&&!IsDisposed){status.Text=p.Message;progress.Value=Math.Clamp(p.Percent,0,100);ProgressChanged?.Invoke(p);}});
         try{await work(token,reporter);}
         catch(OperationCanceledException){status.Text=L("cancelled","Cancelled; rescan the card after an interrupted write.");}
-        catch(Exception ex){status.Text=ex.Message;MessageBox.Show(this,ex.Message,L("mode","MIX | FC + MD (MBCX)"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        catch(Exception ex){status.Text=ex.Message;MessageBox.Show(this,ex.Message,L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
         finally{operation.Dispose();operation=null;foreach(var b in idleButtons)b.Enabled=true;grid.Enabled=true;cancel.Enabled=false;BusyChanged?.Invoke(false);RefreshSummary();}
     }
     public Task ImportAsync(IEnumerable<string> paths)=>RunAsync(async(ct,p)=>{
@@ -201,24 +280,24 @@ public sealed class FcWorkspaceControl : UserControl
                     else imported.Add(new FcGame{Name=source.Title,Data=[],Enabled=false,Md=new(0,0),
                         Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,"MD header",md.Assessment.Message)});
                 }else if(source.Platform==Services.RomPlatform.Fc){
-                    if(source.Length>FcMbcxCodec.CapacityBytes)throw new InvalidDataException("FC file exceeds card capacity.");
+                    if(source.Length>FcMbcxCodec.CapacityBytes)throw new InvalidDataException("NES file exceeds card capacity.");
                     byte[] data;
                     if(source.EntryIndex is int index){using var zip=Md.MdZipFile.OpenRead(source.SourcePath);using var input=zip.Entries[index].Open();data=new byte[checked((int)source.Length)];input.ReadExactly(data);}
                     else data=File.ReadAllBytes(source.SourcePath);
                     var info=NesRomHeaderService.Parse(data);imported.Add(new FcGame{Name=source.Title,Data=data,Info=info,Enabled=info.Supported});
                 }else imported.Add(new FcGame{Name=source.Title,Data=[],Enabled=false,
-                    Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,source.Platform.ToString(),"MIX supports FC / MD only")});
+                    Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,source.Platform.ToString(),"MIX supports NES / MD only")});
             }
             return imported;
         },ct);
         ct.ThrowIfCancellationRequested();foreach(var game in list)games.Add(game);
         status.Text=string.Format(L("import_counts","Import complete: {0} checked, {1} unchecked (including {2} incompatible). Unchecked games are not included."),games.Count(g=>g.Enabled),games.Count(g=>!g.Enabled),games.Count(g=>!g.Info.Supported));
     });
-    private async Task ImportImageAsync()
+    public async Task ImportImageAsync()
     {
         using var d=new OpenFileDialog(){Filter="MIX MBCX image (*.bin)|*.bin"};
         if(d.ShowDialog(this)!=DialogResult.OK)return;
-        if(games.Count>0&&MessageBox.Show(this,L("image_confirm","Replace this workspace list with the MIX image? The card is not written yet."),L("mode","MIX | FC + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        if(games.Count>0&&MessageBox.Show(this,L("image_confirm","Replace this workspace list with the MIX image? The card is not written yet."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
         await RunAsync(async(ct,p)=>{
             var loaded=await Task.Run(()=>{
                 using var file=File.OpenRead(d.FileName);
@@ -232,7 +311,7 @@ public sealed class FcWorkspaceControl : UserControl
             status.Text=L("image_loaded","MIX image loaded; choose Burn to write it to the scanned card.");
         });
     }
-    private async Task ExportAsync()
+    public async Task ExportAsync()
     {
         using var d=new SaveFileDialog(){FileName="MIX_MBCX.bin",Filter="MIX card image (*.bin)|*.bin",DefaultExt="bin",AddExtension=true,OverwritePrompt=true};
         if(d.ShowDialog(this)!=DialogResult.OK)return;
@@ -240,7 +319,7 @@ public sealed class FcWorkspaceControl : UserControl
     }
     public Task ScanAsync()=>RunAsync(async(ct,p)=>{
         if(backendFactory is null)return;
-        if(games.Count>0&&MessageBox.Show(this,L("scan_confirm","Rescan card entries and keep imported files? Unwritten edits to card entries will be replaced."),L("mode","MIX | FC + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        if(games.Count>0&&MessageBox.Show(this,L("scan_confirm","Rescan card entries and keep imported files? Unwritten edits to card entries will be replaced."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
         await ReadCardAsync(ct,p);
     });
     private async Task ReadCardAsync(CancellationToken ct,IProgress<FcProgress> p)
@@ -269,12 +348,12 @@ public sealed class FcWorkspaceControl : UserControl
         FcMbcxCodec.Plan(games.Select(g=>g.Copy()).ToList(),snapshot.Capacity,snapshot.IsFc);
         RefreshSummary();
     }
-    private Task BurnAsync()=>RunAsync(async(ct,p)=>{
+    public Task BurnAsync()=>RunAsync(async(ct,p)=>{
         await PrepareBurnAsync(ct,p);
         bool convert=!snapshot!.IsFc;
         string prompt=convert?L("convert_confirm","Replace this card's existing GB/GBC/unknown directory with a dedicated MIX image? Existing games will no longer be listed."):
-            L("burn_confirm","Apply this FC / MD list to the card? Deleted entries release space. Existing saves are preserved; new MD save areas are initialized.");
-        if(MessageBox.Show(this,prompt,L("mode","MIX | FC + MD (MBCX)"),MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+            L("burn_confirm","Apply this NES / MD list to the card? Deleted entries release space. Existing saves are preserved; new MD save areas are initialized.");
+        if(MessageBox.Show(this,prompt,L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         var copy=games.Select(g=>g.Copy()).ToList();var expected=snapshot;var backend=backendFactory!();
         // A failure invalidates the snapshot: stale metadata can never be reused.
         snapshot=null;
