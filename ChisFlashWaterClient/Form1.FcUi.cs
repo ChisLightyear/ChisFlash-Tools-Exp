@@ -33,7 +33,7 @@ public partial class Form1
             return item;
         }
         Task Local(Action action) { action(); return Task.CompletedTask; }
-        menuFcTools = new ToolStripMenuItem("MIX · NES / MD / SNES 导入预览") { Visible = false };
+        menuFcTools = new ToolStripMenuItem("MIX · NES / MD / SNES") { Visible = false };
         menuFcUp = Add("up", "Up", () => Local(() => fcWorkspace!.MoveRow(-1)));
         menuFcDown = Add("down", "Down", () => Local(() => fcWorkspace!.MoveRow(1)));
         menuFcPreview = Add("title_preview", "12px title preview", () => Local(() => fcWorkspace!.PreviewTitle()));
@@ -55,7 +55,7 @@ public partial class Form1
         burnProfileModeSelectionInitialized = false;
         if (!burnProfileModeOptions.Any(option => option.Mode == BurnProfileMode.FcMbcx))
         {
-            burnProfileModeOptions.Add(new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD (MBCX)"), BurnProfileMode.FcMbcx));
+            burnProfileModeOptions.Add(new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), BurnProfileMode.FcMbcx));
             comboBoxBurnProfileMode.DataSource = burnProfileModeOptions.ToList();
         }
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.First(option => option.Mode == BurnProfileMode.FcMbcx);
@@ -160,9 +160,9 @@ public partial class Form1
         labelRomCountValue.Text = fcWorkspace.GameCount.ToString();
         labelMenuConfigValue.Text = snapshot?.IsFc == true ? "MIX / MBCX" : T("ui", "not_detected", "Not Detected");
         labelMenuItemCountValue.Text = (snapshot?.Games.Count ?? 0).ToString();
-        labelMenuTitleValue.Text = "NES / MD";
+        labelMenuTitleValue.Text = "NES / MD / SNES";
         labelScanMethodValue.Text = "MBCX";
-        groupBoxList.Text = T("ui", "rom_workspace", "ROM Workspace") + " · NES / MD · SNES导入预览";
+        groupBoxList.Text = T("ui", "rom_workspace", "ROM Workspace") + " · NES / MD / SNES";
     }
 
     private void UpdateFcActionButtons(bool busy)

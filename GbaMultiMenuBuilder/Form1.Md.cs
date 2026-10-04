@@ -80,7 +80,7 @@ public partial class Form1
                 var old=_games.FirstOrDefault(g=>g.OtherRom?.SourcePath==source.SourcePath&&g.OtherRom.EntryIndex==source.EntryIndex);
                 if(old is null)_games.Add(model);else _games[_games.IndexOf(old)]=model;
             }
-            if(batch.items.Count>0){EnsureMdColumn();AppendLog($"已解析 {batch.items.Count} 个MD游戏，已加入主列表；请选择 MIX 模式，可与 NES 游戏一起合卡。");}
+            if(batch.items.Count>0){EnsureMdColumn();AppendLog($"已解析 {batch.items.Count} 个MD游戏，已加入主列表；请选择 MIX 模式，可与 NES / SNES 游戏一起合卡，需配套 MIX v2 核心。");}
             if(batch.others.Count>0)EnsureMdColumn();
             return batch.remaining;
         }

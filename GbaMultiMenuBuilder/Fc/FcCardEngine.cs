@@ -93,11 +93,11 @@ public static class FcCardEngine
         if(!io.Writable||!expected.Writable)throw new InvalidOperationException("Card is write-protected or its capacity is unavailable.");
         if(io.DeviceId!=expected.DeviceId||Math.Min(io.Capacity,FcMbcxCodec.CapacityBytes)!=expected.Capacity||io.SectorBytes!=expected.SectorBytes)
             throw new InvalidOperationException("The selected programmer/card changed; scan again.");
-        if(!expected.IsFc&&!convert)throw new InvalidOperationException("Explicit NES conversion confirmation is required.");
+        if(!expected.IsFc&&!convert)throw new InvalidOperationException("Explicit MIX v2 replacement confirmation is required.");
         ValidateSnapshot(io,expected,ct,false);
         var loaded=games.Any(game=>game.Enabled&&!game.HasRomData)?LoadGames(io,expected,games.Where(game=>game.Enabled).ToArray(),ct,progress):games;
         games=loaded;
-        var originals=expected.Games.Select(original=>{var match=loaded.FirstOrDefault(game=>game.Id==original.Id&&game.HasRomData);return match is null?original:original.WithData(match.Data,match.DirectoryIdentity,original.Md is null&&original.OriginalConfig.Length==128?FcMbcxCodec.ReadOriginalInfo(original,match.Data):original.Info);}).ToArray();
+        var originals=expected.Games.Select(original=>{var match=loaded.FirstOrDefault(game=>game.Id==original.Id&&game.HasRomData);return match is null?original:original.WithData(match.Data,match.DirectoryIdentity,original.IsNes&&original.OriginalConfig.Length==128?FcMbcxCodec.ReadOriginalInfo(original,match.Data):original.Info);}).ToArray();
         byte[] fullPrefix=io.Read(0,FcMbcxCodec.PrefixBytes,ct);
         if(fullPrefix.Length!=FcMbcxCodec.PrefixBytes)throw new EndOfStreamException("Incomplete MIX prefix read before rebuild.");
         foreach(var range in expected.MetadataRanges??new[]{new FcMetadataRange(0,FcMbcxCodec.PrefixBytes)})if(!fullPrefix.AsSpan(range.Address,range.Bytes).SequenceEqual(expected.Prefix.AsSpan(range.Address,range.Bytes)))throw new InvalidOperationException("Card directory changed during ROM loading; scan again before writing.");
@@ -105,14 +105,22 @@ public static class FcCardEngine
         var layout=FcMbcxCodec.Plan(games,expected.Capacity,expected.IsFc);
         if(configurationOnly&&(layout.Entries.Count!=expected.Games.Count||layout.Entries.Any(placement=>{var original=expected.Games.SingleOrDefault(game=>game.Id==placement.Game.Id);return original is null||placement.Offset!=original.OriginalOffset||placement.AllocatedBytes!=original.OriginalAllocated||placement.Game.Name!=original.Name||!placement.SaveMap.SequenceEqual(original.OriginalSaveMap)||!placement.Game.Data.AsSpan().SequenceEqual(original.Data)||placement.Game.Md!=original.Md||!NesConfiguration.SameGeometry(placement.Game.Info,original.Info); })))
             throw new InvalidOperationException("Configuration rebuild cannot change card games, ROM locations or save mappings.");
-        foreach(var p in layout.Entries.Where(p=>p.Game.Md is null))
+        foreach(var placement in layout.Entries)
+        {
+            var old=expected.Games.FirstOrDefault(game=>game.Id==placement.Game.Id);
+            if(old is null||!old.Info.Battery||old.OriginalSaveMap.Length==0)continue;
+            if(!placement.Game.Info.Battery||placement.Game.Info.StoredRamBytes<old.Info.StoredRamBytes||
+                !placement.SaveMap.Take(old.OriginalSaveMap.Length).SequenceEqual(old.OriginalSaveMap))
+                throw new InvalidDataException("MIX save type, size or existing bank prefix cannot change implicitly.");
+        }
+        foreach(var p in layout.Entries.Where(p=>p.Game.IsNes))
         {
             var old=expected.Games.FirstOrDefault(g=>g.Id==p.Game.Id);
             if(old is null)continue;
             NesConfiguration.Validate(old,p.Game.Info);
             if(old.Info.Battery&&old.OriginalSaveMap.Length>0&&
                 !p.SaveMap.Take(old.OriginalSaveMap.Length).SequenceEqual(old.OriginalSaveMap))
-                throw new InvalidDataException("Configuration update would move an existing NES save.");
+                throw new InvalidDataException("Configuration update would move an existing MIX save.");
         }
         Dictionary<int,byte[]> sectors=[];
         foreach(var p in layout.Entries)
@@ -136,7 +144,6 @@ public static class FcCardEngine
         {progress.Report(new("MIX configuration is already current; no writes",100));return expected;}
         byte[] invalidPrefix=(byte[])expected.Prefix.Clone();
         invalidPrefix.AsSpan(FcMbcxCodec.ConfigOffset,64).Fill(255);
-        invalidPrefix.AsSpan(Md.MdMbcxCodec.Config,64).Fill(255);
         byte[] current=(byte[])expected.Prefix.Clone();
         void Rewrite(int address,byte[] data)
         {
@@ -147,8 +154,7 @@ public static class FcCardEngine
         {
             var addresses=Enumerable.Range(0,FcMbcxCodec.PrefixBytes/io.SectorBytes).Select(i=>i*io.SectorBytes)
                 .Where(a=>!target.AsSpan(a,io.SectorBytes).SequenceEqual(current.AsSpan(a,io.SectorBytes)))
-                .OrderBy(a=>(a<=FcMbcxCodec.ConfigOffset&&a+io.SectorBytes>FcMbcxCodec.ConfigOffset)||
-                            (a<=Md.MdMbcxCodec.Config&&a+io.SectorBytes>Md.MdMbcxCodec.Config)?1:0).ToArray();
+                .OrderBy(address=>address<=FcMbcxCodec.ConfigOffset&&address+io.SectorBytes>FcMbcxCodec.ConfigOffset?1:0).ToArray();
             for(int i=0;i<addresses.Length;i++)
             {
                 ct.ThrowIfCancellationRequested();int a=addresses[i];
@@ -157,36 +163,25 @@ public static class FcCardEngine
                 progress.Report(new(phase,(i+1)*100/addresses.Length));
             }
         }
-        // Both readers are hidden before any payload/SRAM changes. Header
-        // sectors are committed last, after all directories and bitmaps.
-        Prefix(invalidPrefix,"Invalidate NES/MD directories");
+        Prefix(invalidPrefix,"Invalidate MIX v2 directory");
         int index=0;
         foreach(var pair in sectors.OrderBy(p=>p.Key))
-        {ct.ThrowIfCancellationRequested();Rewrite(pair.Key,pair.Value);progress.Report(new("Writing NES / MD ROM data",++index*100/sectors.Count));}
-        foreach(var p in layout.Entries.Where(p=>p.Game.Md is null&&p.Game.Info.Battery))
+        {ct.ThrowIfCancellationRequested();Rewrite(pair.Key,pair.Value);progress.Report(new("Writing NES / MD / SNES ROM data",++index*100/sectors.Count));}
+        foreach(var placement in layout.Entries.Where(placement=>placement.Game.Info.Battery))
         {
-            var old=expected.Games.FirstOrDefault(g=>g.Id==p.Game.Id&&g.Info.Battery);
-            if(old is null)continue;
-            int oldBytes=old.Info.StoredRamBytes;
-            if(p.Game.Info.StoredRamBytes>oldBytes&&oldBytes%8192!=0)
-                io.InitializeSave(p.SaveMap[oldBytes/8192]*8192+oldBytes%8192,
-                    Math.Min(p.Game.Info.StoredRamBytes-oldBytes,8192-oldBytes%8192),0,ct);
-            // Only appended banks are initialized. Existing save bytes and all
-            // other NES/MD SRAM allocations remain untouched.
-            foreach(byte bank in p.SaveMap.Skip(old.OriginalSaveMap.Length))
-                io.InitializeSave(bank*8192,8192,0,ct);
-        }
-        foreach(var p in layout.Entries.Where(p=>p.Game.Md is {SaveBytes:>0}))
-        {
-            bool preserve=expected.IsFc&&expected.Games.Any(g=>g.Id==p.Game.Id&&g.Md==p.Game.Md&&
-                g.Data.AsSpan().SequenceEqual(p.Game.Data)&&g.OriginalSaveMap.SequenceEqual(p.SaveMap));
-            if(!preserve)io.InitializeSave(p.SaveMap[0]*8192,p.Game.Md!.SaveBytes,(p.Game.Md.Flags&8)!=0?(byte)0:(byte)255,ct);
+            var old=expected.Games.FirstOrDefault(game=>game.Id==placement.Game.Id&&game.Info.Battery);
+            if(old is not null&&!placement.SaveMap.Take(old.OriginalSaveMap.Length).SequenceEqual(old.OriginalSaveMap))throw new InvalidDataException("Existing MIX save banks cannot be moved implicitly.");
+            int oldBytes=old?.Info.StoredRamBytes??0,newBytes=placement.Game.Info.StoredRamBytes;
+            byte fill=placement.Game.IsNes||(placement.Game.Md is not null&&(placement.Game.Md.Flags&8)!=0)?(byte)0:(byte)255;
+            for(int logical=oldBytes;logical<newBytes;)
+            {
+                ct.ThrowIfCancellationRequested();int within=logical%8192,bytes=Math.Min(newBytes-logical,8192-within);
+                io.InitializeSave(placement.SaveMap[logical/8192]*8192+within,bytes,fill,ct);logical+=bytes;
+            }
         }
         ct.ThrowIfCancellationRequested();Prefix(finalPrefix,"Commit MIX directories");
-        progress.Report(new("NES directory committed",100));
-        // Use the verified committed plan as the new snapshot. Existing saves
-        // remain untouched; only added NES RAM and new MD saves are initialized.
-        var committed=layout.Entries.Select(p=>new FcGame {Id=p.Game.Id,Name=p.Game.Name,Data=p.Game.Data,Info=p.Game.Info,Md=p.Game.Md,OriginalOffset=p.Offset,
+        progress.Report(new("MIX v2 directory committed",100));
+        var committed=layout.Entries.Select(p=>new FcGame {Id=p.Game.Id,Name=p.Game.Name,Data=p.Game.Data,Info=p.Game.Info,Md=p.Game.Md,Snes=p.Game.Snes,OriginalOffset=p.Offset,
             OriginalAllocated=p.AllocatedBytes,OriginalSaveMap=p.SaveMap,OriginalBattery=p.Game.Info.Battery,OriginalStoredRamBytes=p.Game.Info.StoredRamBytes}).ToList();
         return new(io.DeviceId,expected.Capacity,io.SectorBytes,current,committed,true,true);
     }

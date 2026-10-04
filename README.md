@@ -4,7 +4,7 @@ ChisFlash 系列 GBA/GB/GBC 烧录卡的工具集（实验/加强线）。本仓
 
 本仓库提供程序源码与菜单内核，不含游戏、封面图库或外部中文字库。游戏 ROM 需自备；封面和背景图可选；**GBC 中文菜单必须自备 12px 字库**，不支持 8px。详见 [未包含的内容](#未包含的内容)。
 
-当前源码：**上位机 2.037 / 合卡器 0.91.3**。[更新说明](docs/CHANGELOG-2.037-0.91.3.md)。新增 [SNES MIX导入预览](docs/SNES-MIX-IMPORT-PREVIEW.md)，尚未开放SNES合卡／写卡；[MBC5 8M五槽](docs/MBC5-8M-FIVE-SLOTS.md)保留。本版本仅保存本地，未推送远程，不替换既有下载包。
+当前源码：**上位机 2.038 / 合卡器 0.92.0**。[更新说明](docs/CHANGELOG-2.038-0.92.0.md)。MIX 正式接入 SNES 合卡、目录回读与存档管理；NES / MD / SNES 共用非连续 SRAM bank 表。**只读写 GLB2 v2 / LNC2，不兼容旧格式，需同步 MCU 与核心。** 见 [统一存储协议](docs/MIX-V2-STORAGE-CONTRACT.md)。可合卡不等于可运行；[MBC5 8M五槽](docs/MBC5-8M-FIVE-SLOTS.md)保留。
 
 **English version: [English](#english)**
 
@@ -20,11 +20,11 @@ ChisFlash 系列 GBA/GB/GBC 烧录卡的工具集（实验/加强线）。本仓
 | 目录 | 说明 |
 |---|---|
 | `ChisFlashWaterClient/` | 上位机（烧录客户端）。通过 CDC ACM 自定义协议与卡带通信，负责扫描、合卡生成、ROM 导入、存档读写、菜单重建等。WinForms / .NET 9 |
-| `GbaMultiMenuBuilder/` | 合卡器（Multicart Builder）。负责把多张 ROM 打包成合卡镜像、生成菜单、封面处理、NES/MD 卡带支持。WinForms / .NET 9 |
+| `GbaMultiMenuBuilder/` | 合卡器（Multicart Builder）。负责把多张 ROM 打包成合卡镜像、生成菜单、封面处理、NES/MD/SNES MIX v2 支持。WinForms / .NET 9 |
 
 ## 两者关系
 
-上位机引用合卡器的 `Models/`、`Services/`、`Fc/`、`Md/` 源码及共享界面组件，因此**两个目录必须放在同一父目录下**保持相对路径不变。单独移动或改名任一目录都会导致编译失败。
+上位机引用合卡器的 `Models/`、`Services/`、`Fc/`、`Md/`、`Snes/` 源码及共享界面组件，因此**两个目录必须放在同一父目录下**保持相对路径不变。单独移动或改名任一目录都会导致编译失败。
 
 ```
 ChisFlash-Tools-Exp/
@@ -73,7 +73,7 @@ Toolchain for ChisFlash GBA/GB/GBC flash cartridges (experimental / enhanced lin
 
 This repository includes program source and menu kernels. Games, cover libraries and external Chinese fonts are not included. Supply your own game ROMs; covers and backgrounds are optional. **Chinese GBC menus require a 12px font; 8px fonts are not supported.** See [Not included](#not-included).
 
-Current source: **Client 2.037 / Builder 0.91.3**. [Changes](docs/CHANGELOG-2.037-0.91.3.md). Adds the [SNES MIX import preview](docs/SNES-MIX-IMPORT-PREVIEW.md), not SNES packing/programming. The [MBC5 five-slot preview](docs/MBC5-8M-FIVE-SLOTS.md) remains available. This is a local source checkpoint, not pushed remotely and not a replacement of existing downloads.
+Current source: **Client 2.038 / Builder 0.92.0**. [Changes](docs/CHANGELOG-2.038-0.92.0.md). MIX now packs, reads and manages saves for NES / MD / SNES with one noncontiguous SRAM map. **GLB2 v2 / LNC2 only; no legacy migration. Updated MCU and cores are required.** See the [storage contract](docs/MIX-V2-STORAGE-CONTRACT.md). Packing is not gameplay compatibility. The [MBC5 five-slot mode](docs/MBC5-8M-FIVE-SLOTS.md) remains separate.
 
 **中文版：[中文](#chisflash-tools-exp)**
 
@@ -89,7 +89,7 @@ Full tutorials (build and usage):
 | Directory | Description |
 |---|---|
 | `ChisFlashWaterClient/` | Client (burning client). Talks to the cartridge over a custom CDC ACM protocol; handles scanning, multicart generation, ROM import, save read/write, menu rebuilding. WinForms / .NET 9 |
-| `GbaMultiMenuBuilder/` | Builder (Multicart Builder). Packs multiple ROMs into a multicart image, generates menus, handles covers, and supports NES / MD cartridges. WinForms / .NET 9 |
+| `GbaMultiMenuBuilder/` | Builder (Multicart Builder). Packs multiple ROMs into a multicart image, generates menus, handles covers, and supports NES / MD / SNES MIX v2 images. WinForms / .NET 9 |
 
 ## Relationship between the two
 

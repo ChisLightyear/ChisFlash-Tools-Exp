@@ -4,7 +4,7 @@ public sealed class FcConfigurationDialog : Form
 {
     private readonly FcGame game;
     private readonly Func<string,string,string> text;
-    private readonly NumericUpDown mapper=Number(4095),sub=Number(15),work=Number(32),save=Number(32),chr=Number(512),saveChr=Number(32);
+    private readonly NumericUpDown mapper=Number(4095),sub=Number(15),work=Number(480),save=Number(480),chr=Number(512),saveChr=Number(480);
     private readonly CheckBox battery=new(){AutoSize=true};
     private readonly Label description=new(){AutoSize=true,MaximumSize=new Size(630,0)};
     private NesRomInfo? automatic;

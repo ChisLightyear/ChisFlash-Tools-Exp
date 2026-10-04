@@ -121,18 +121,18 @@ public static class NesConfiguration
 
     public static void Validate(FcGame game,NesRomInfo info)
     {
-        if(game.Md is not null)throw new InvalidDataException("Choose an NES game.");
+        if(!game.IsNes)throw new InvalidDataException("Choose an NES game.");
         if(!info.Supported||!NesRomHeaderService.SupportsMapper(info.Mapper,info.Submapper))
             throw new InvalidDataException(info.Error??"Unsupported mapper/submapper.");
         int lead=16+((game.Data[6]&4)!=0?512:0);
         if(info.PrgBytes<=0||info.ChrBytes<0||(long)lead+info.PrgBytes+info.ChrBytes>game.Data.Length)
             throw new InvalidDataException("ROM layout exceeds the original file.");
         if(info.WorkRamBytes<0||info.SaveRamBytes<0||info.ChrRamBytes<0||info.SaveChrRamBytes<0||
-            (long)info.WorkRamBytes+info.SaveRamBytes+info.SaveChrRamBytes>32768||
+            (long)info.WorkRamBytes+info.SaveRamBytes+info.SaveChrRamBytes>60*8192||
             (long)info.ChrRamBytes+info.SaveChrRamBytes>524288||info.ChrBytes>524288||
             (info.ChrBytes==0&&info.ChrRamBytes+info.SaveChrRamBytes==0)||
             (!info.Battery&&(info.SaveRamBytes!=0||info.SaveChrRamBytes!=0)))
-            throw new InvalidDataException("Invalid RAM sizes or battery setting for the installed NES core.");
+            throw new InvalidDataException("Invalid RAM sizes or battery setting for the MIX SRAM pool.");
         // Save migration is deliberately not implicit in a configuration edit.
         if(game.OriginalOffset>=0&&game.OriginalSaveMap.Length>0&&
             (info.Battery!=game.OriginalBattery||info.StoredRamBytes<(game.OriginalStoredRamBytes>=0?game.OriginalStoredRamBytes:game.Info.StoredRamBytes)))

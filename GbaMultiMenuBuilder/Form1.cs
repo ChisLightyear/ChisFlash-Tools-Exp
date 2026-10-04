@@ -297,7 +297,7 @@ public partial class Form1 : DpiAwareForm
         ? [new FlashCartModeOption(T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual Iron)"), FlashCartMode.WaterlineVirtualIron)]
         : Array.Empty<FlashCartModeOption>()),
     new FlashCartModeOption(T("ui", "flashcart_gbc_max_mbcx_512k", "GBC | MAX/MBCX (512K)"), FlashCartMode.GbcMaxMbcx512K),
-    new FlashCartModeOption(T("fc", "mode", "MIX | NES + MD / CHISBOY Cartridge (MBCX)"), FlashCartMode.FcMbcx),
+    new FlashCartModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), FlashCartMode.FcMbcx),
     ..(includeCustom
         ? [new FlashCartModeOption(T("ui", "flashcart_custom", "Custom"), FlashCartMode.Custom)]
         : Array.Empty<FlashCartModeOption>()),

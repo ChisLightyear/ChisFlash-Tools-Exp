@@ -1326,7 +1326,7 @@ public partial class Form1
                         new BurnProfileModeOption(
                             T("value", "burn_profile_beggar_max_sram", "Beggar MAX (SRAM)"),
                             BurnProfileMode.BeggarMaxSram),
-                        new BurnProfileModeOption(T("fc","mode","MIX | NES + MD / CHISBOY Cartridge (MBCX)"),BurnProfileMode.FcMbcx),
+                        new BurnProfileModeOption(T("fc","mode","MIX | NES + MD + SNES (MBCX)"),BurnProfileMode.FcMbcx),
                     ]
                     : [
                         new BurnProfileModeOption(
@@ -1349,7 +1349,7 @@ public partial class Form1
                     BurnProfileMode.WaterLinkMultiNor),
             ],
             _ => [new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB),
-                new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD · SNES import preview (MBCX)"), BurnProfileMode.FcMbcx)],
+                new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), BurnProfileMode.FcMbcx)],
         };
 
         burnProfileModeSelectionInitialized = false;

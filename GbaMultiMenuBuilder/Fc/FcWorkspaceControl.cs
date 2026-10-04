@@ -54,8 +54,8 @@ public sealed class FcWorkspaceControl : UserControl
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute,20));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var title=new Label(){Text=L("mode","MIX | NES + MD (MBCX)"),Font=new Font(Font.FontFamily,13,FontStyle.Bold),AutoSize=true,Padding=new Padding(2,2,2,10)};
-        labels.Add((title,"mode","MIX | NES + MD (MBCX)"));
+        var title=new Label(){Text=L("mode","MIX | NES + MD + SNES (MBCX)"),Font=new Font(Font.FontFamily,13,FontStyle.Bold),AutoSize=true,Padding=new Padding(2,2,2,10)};
+        labels.Add((title,"mode","MIX | NES + MD + SNES (MBCX)"));
         layout.Controls.Add(title,0,0);layout.Controls.Add(actions,0,1);layout.Controls.Add(grid,0,2);layout.Controls.Add(summary,0,3);layout.Controls.Add(progress,0,4);layout.Controls.Add(status,0,5);Controls.Add(layout);
         AddButton("back","Other modes",(_,_)=>ExitRequested?.Invoke());
         AddButton("add","Add NES / MD / SNES / ZIP",async(_,_)=>{using var d=new OpenFileDialog(){Multiselect=true,Filter="NES / MD / SNES / ZIP (*.nes;*.md;*.gen;*.smd;*.bin;*.sfc;*.smc;*.zip)|*.nes;*.md;*.gen;*.smd;*.bin;*.sfc;*.smc;*.zip"};if(d.ShowDialog(this)==DialogResult.OK)await ImportAsync(d.FileNames);});
@@ -142,7 +142,7 @@ public sealed class FcWorkspaceControl : UserControl
     public void ClearGames()
     {
         if(IsBusy)return;
-        if(games.Count>0&&MessageBox.Show(this,L("clear_confirm","Clear this workspace list? The card is not written until Burn."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        if(games.Count>0&&MessageBox.Show(this,L("clear_confirm","Clear this workspace list? The card is not written until Burn."),L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
         games.Clear();imageReplacement=false;RefreshSummary();
     }
     public async Task ExportSelectedRomAsync()
@@ -224,7 +224,7 @@ public sealed class FcWorkspaceControl : UserControl
         for(int index=0;index<games.Count;index++){
             var staged=games[index];var original=expected.Games.FirstOrDefault(game=>game.Id==staged.Id);var rebuilt=result.Games.FirstOrDefault(game=>game.Id==staged.Id);
             if(original is null||rebuilt is null)continue;
-            games[index]=new FcGame{Id=staged.Id,Name=staged.Name,Enabled=staged.Enabled,Info=staged.Info==original.Info?rebuilt.Info:staged.Info,Md=staged.Md,Data=rebuilt.Data,OriginalRomBytes=rebuilt.RomBytes,OriginalOffset=rebuilt.OriginalOffset,OriginalAllocated=rebuilt.OriginalAllocated,OriginalConfig=rebuilt.OriginalConfig,DirectoryIdentity=rebuilt.DirectoryIdentity,OriginalSaveMap=rebuilt.OriginalSaveMap,OriginalBattery=rebuilt.OriginalBattery,OriginalStoredRamBytes=rebuilt.OriginalStoredRamBytes};
+            games[index]=new FcGame{Id=staged.Id,Name=staged.Name,Enabled=staged.Enabled,Info=staged.Info==original.Info?rebuilt.Info:staged.Info,Md=staged.Md,Snes=staged.Snes,Data=rebuilt.Data,OriginalRomBytes=rebuilt.RomBytes,OriginalOffset=rebuilt.OriginalOffset,OriginalAllocated=rebuilt.OriginalAllocated,OriginalConfig=rebuilt.OriginalConfig,DirectoryIdentity=rebuilt.DirectoryIdentity,OriginalSaveMap=rebuilt.OriginalSaveMap,OriginalBattery=rebuilt.OriginalBattery,OriginalStoredRamBytes=rebuilt.OriginalStoredRamBytes};
         }
         snapshot=result;games.ResetBindings();RefreshSummary();status.Text=L("rebuild_menu_done","MIX configuration rebuilt; ROM data and saves unchanged.");
     });
@@ -268,7 +268,7 @@ public sealed class FcWorkspaceControl : UserControl
             grid.Invalidate();
             summary.Text=string.Format(L("summary","{0} ROMs (metadata/card capacity) | occupied end {1:F2}/{2:F0} MiB | dedicated SRAM {3}/60 x 8 KiB | shared {4}/4 x 8 KiB"),
                 plan.Entries.Count,plan.EndBytes/1048576d,(snapshot?.Capacity??FcMbcxCodec.CapacityBytes)/1048576d,plan.DedicatedBanks,plan.SharedBanks);
-            summary.Text+=Environment.NewLine+L("core_support_notice","NES and MD share this card; select slot 3 for NES or slot 4 for MD. Requires the paired MIX MCU firmware.");
+            summary.Text+=Environment.NewLine+L("core_support_notice","MIX v2: NES / MD / SNES share ROM and SRAM pools. Requires updated MCU and cores; packing is not gameplay compatibility.");
             summary.Text+=Environment.NewLine+string.Format(L("correction_counts","自动识别/纠错 {0}｜手动修正 {1}｜待核对 {2}；扫描原卡后可检查 / 重建配置。"),
                 games.Count(g=>g.IsNes&&g.Info.CorrectionKind is 1 or 2),games.Count(g=>g.IsNes&&g.Info.CorrectionKind==3),games.Count(g=>g.IsNes&&g.Info.Warning is not null&&g.Info.CorrectionKind==0));
             int unselected=games.Count(g=>!g.Enabled),unsupported=games.Count(g=>!g.Info.Supported);
@@ -314,7 +314,7 @@ public sealed class FcWorkspaceControl : UserControl
         var reporter=new Progress<FcProgress>(p=>{if(ReferenceEquals(operation,activeOperation)&&!token.IsCancellationRequested&&!IsDisposed){status.Text=p.Message;progress.Value=Math.Clamp(p.Percent,0,100);ProgressChanged?.Invoke(p);}});
         try{await work(token,reporter);}
         catch(OperationCanceledException){status.Text=L("cancelled","Cancelled; rescan the card after an interrupted write.");}
-        catch(Exception ex){status.Text=ex.Message;MessageBox.Show(this,ex.Message,L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+        catch(Exception ex){status.Text=ex.Message;MessageBox.Show(this,ex.Message,L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.OK,MessageBoxIcon.Warning);}
         finally{operation.Dispose();operation=null;foreach(var b in idleButtons)b.Enabled=true;grid.Enabled=true;cancel.Enabled=false;BusyChanged?.Invoke(false);RefreshSummary();}
     }
     public Task ImportAsync(IEnumerable<string> paths)=>RunAsync(async(ct,p)=>{
@@ -344,7 +344,7 @@ public sealed class FcWorkspaceControl : UserControl
                     else data=File.ReadAllBytes(source.SourcePath);
                     var info=NesRomHeaderService.Parse(data);imported.Add(new FcGame{Name=source.Title,Data=data,Info=info,Enabled=info.Supported});
                 }else imported.Add(new FcGame{Name=source.Title,Data=[],Enabled=false,
-                    Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,source.Platform.ToString(),"MIX supports NES / MD only")});
+                    Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,source.Platform.ToString(),"MIX supports NES / MD / SNES")});
             }
             return imported;
         },ct);
@@ -355,7 +355,7 @@ public sealed class FcWorkspaceControl : UserControl
     {
         using var d=new OpenFileDialog(){Filter="MIX MBCX image (*.bin)|*.bin"};
         if(d.ShowDialog(this)!=DialogResult.OK)return;
-        if(games.Count>0&&MessageBox.Show(this,L("image_confirm","Replace this workspace list with the MIX image? The card is not written yet."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        if(games.Count>0&&MessageBox.Show(this,L("image_confirm","Replace this workspace list with the MIX image? The card is not written yet."),L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
         await RunAsync(async(ct,p)=>{
             var loaded=await Task.Run(()=>{
                 using var file=File.OpenRead(d.FileName);
@@ -365,7 +365,7 @@ public sealed class FcWorkspaceControl : UserControl
             },ct);
             ct.ThrowIfCancellationRequested();imageSnapshot=loaded.Select(game=>game.Copy()).ToArray();games.Clear();imageReplacement=true;
             // Offline image locations are not a snapshot of the connected card.
-            foreach(var g in loaded)games.Add(new FcGame{Name=g.Name,Data=g.Data,Info=g.Info,Md=g.Md,Enabled=g.Info.Supported});
+            foreach(var g in loaded)games.Add(new FcGame{Name=g.Name,Data=g.Data,Info=g.Info,Md=g.Md,Snes=g.Snes,Enabled=g.Info.Supported});
             status.Text=L("image_loaded","MIX image loaded; choose Burn to write it to the scanned card.");
         });
     }
@@ -402,7 +402,7 @@ public sealed class FcWorkspaceControl : UserControl
     }
     public Task ScanAsync()=>RunAsync(async(ct,p)=>{
         if(backendFactory is null)return;
-        if(games.Count>0&&MessageBox.Show(this,L("scan_confirm","Rescan card entries and keep imported files? Unwritten edits to card entries will be replaced."),L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+        if(games.Count>0&&MessageBox.Show(this,L("scan_confirm","Rescan card entries and keep imported files? Unwritten edits to card entries will be replaced."),L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
         await ReadCardAsync(ct,p);
     });
     private async Task ReadCardAsync(CancellationToken ct,IProgress<FcProgress> p)
@@ -435,12 +435,13 @@ public sealed class FcWorkspaceControl : UserControl
         await PrepareBurnAsync(ct,p);
         bool convert=!snapshot!.IsFc;
         string prompt=convert?L("convert_confirm","Replace this card's existing GB/GBC/unknown directory with a dedicated MIX image? Existing games will no longer be listed."):
-            L("burn_confirm","Apply this NES / MD list to the card? Deleted entries release space. Existing saves are preserved; new MD save areas are initialized.");
-        if(MessageBox.Show(this,prompt,L("mode","MIX | NES + MD (MBCX)"),MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+            L("burn_confirm","Apply this NES / MD / SNES MIX v2 list? Unchanged ROMs and existing saves are preserved; new RAM is initialized by bank.");
+        prompt+=Environment.NewLine+Environment.NewLine+L("protocol_confirm","Writes MIX GLB2 v2 / LNC2. Old firmware cannot launch it. Install the synchronized MCU and cores before gameplay. No legacy migration; back up ROMs and saves first.");
+        if(MessageBox.Show(this,prompt,L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         var copy=games.Select(g=>g.Copy()).ToList();var expected=snapshot;var backend=backendFactory!();
         // A failure invalidates the snapshot: stale metadata can never be reused.
         snapshot=null;
         var result=await Task.Run(()=>backend.Write(expected,copy,convert,ct,p),ct);
-        snapshot=result;imageReplacement=false;games.Clear();foreach(var g in result.Games)games.Add(g.Copy());status.Text=string.Format(L("burn_counts","MIX card directory updated: {0} games. {1} unchecked rows were excluded; existing saves preserved; new MD saves initialized."),result.Games.Count,copy.Count(g=>!g.Enabled));
+        snapshot=result;imageReplacement=false;games.Clear();foreach(var g in result.Games)games.Add(g.Copy());status.Text=string.Format(L("burn_counts","MIX card directory updated: {0} games. {1} unchecked rows were excluded; existing saves preserved; new RAM initialized by bank."),result.Games.Count,copy.Count(g=>!g.Enabled));
     });
 }

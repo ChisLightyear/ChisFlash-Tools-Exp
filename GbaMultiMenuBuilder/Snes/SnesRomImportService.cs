@@ -6,7 +6,7 @@ namespace GbaMultiMenuBuilder.Snes;
 
 public static class SnesRomImportService
 {
-    public const string LaunchUnavailable = "SNES已识别，待对接MIX启动协议；暂不可合卡或写卡。SNES recognized; MIX launch adapter is not confirmed. Packing/programming is disabled.";
+
 
     public static byte[] ReadRom(ArchiveRomSource source, CancellationToken cancellation = default)
     {
@@ -45,10 +45,10 @@ public static class SnesRomImportService
     {
         SnesRomInfo snes = SnesRomHeaderService.Parse(raw);
         byte[] data = snes.HasValidHeader && snes.HasCopierHeader ? raw.AsSpan(512).ToArray() : raw.ToArray();
-        string reason = snes.Error ?? LaunchUnavailable;
+        string? reason = snes.Error;
         var info = new NesRomInfo(-1, 0, data.Length, 0, snes.Battery ? 0 : snes.RamBytes,
             snes.Battery ? snes.RamBytes : 0, 0, 0, snes.Battery, false, 0,
-            $"SNES header · {snes.ChipDisplay}", reason) { Warning = snes.Warning };
-        return new FcGame { Name = title, Data = data, Snes = snes, Info = info, Enabled = false };
+            $"SNES header · {snes.ChipDisplay}", reason) { Warning = SnesMbcxCodec.CoreNotice + (snes.Warning is null ? "" : " " + snes.Warning) };
+        return new FcGame { Name = title, Data = data, Snes = snes, Info = info, Enabled = snes.HasValidHeader };
     }
 }
