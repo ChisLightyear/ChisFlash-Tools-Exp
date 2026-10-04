@@ -7,7 +7,7 @@ public sealed record NesRomInfo(int Mapper, int Submapper, int PrgBytes, int Chr
     int WorkRamBytes, int SaveRamBytes, int ChrRamBytes, int SaveChrRamBytes,
     bool Battery, bool Nes20, uint ContentCrc, string MetadataSource, string? Error)
 {
-    public bool Supported => Error is null;
+    public bool CanPack => Error is null;
     public byte CorrectionKind { get; init; } // 0=header/card, 1=known content, 2=database, 3=manual
     public string? Warning { get; init; }
     public int? SuggestedMapper { get; init; }
@@ -18,17 +18,7 @@ public sealed record NesRomInfo(int Mapper, int Submapper, int PrgBytes, int Chr
 
 public static class NesRomHeaderService
 {
-    public static bool SupportsMapper(int mapper, int sub) => mapper switch
-    {
-        0 => sub == 0,
-        1 => sub is >= 0 and <= 5,
-        2 or 3 => sub is >= 0 and <= 2,
-        4 => sub is >= 0 and <= 3,
-        15 or 19 or 52 or 74 or 162 or 163 or 164 or 165 or 176 or 178 or
-        195 or 198 or 199 or 227 or 240 or 241 or 242 or 245 or 249 or
-        252 or 253 or 268 or 519 => sub == 0,
-        _ => false
-    };
+    public static bool IsMapperRepresentable(int mapper,int sub)=>mapper is >=0 and <=4095&&sub is >=0 and <=15;
     private sealed record DbEntry(int Mapper,int Submapper,int Prg,int Chr,int ChrRam,int Work,int Save,bool Battery,bool Validated,string System);
     private static readonly Lazy<Dictionary<uint,DbEntry>> Database=new(LoadDatabase);
     private static Dictionary<uint,DbEntry> LoadDatabase()
@@ -67,7 +57,7 @@ public static class NesRomHeaderService
     private static NesRomInfo ParseHeader(ReadOnlySpan<byte> rom,bool identify)
     {
         int mapper=0,sub=0,prg=0,chr=0,work=0,save=0,cram=0,csave=0;
-        bool battery=false,nes2=false;uint crc=0;string source="Header";byte correction=0;
+        bool battery=false,nes2=false;uint crc=0;string source="Header";byte correction=0;string? warning=null;
         try
         {
             if(rom.Length<16||!rom[..4].SequenceEqual("NES\x1a"u8))throw new InvalidDataException("Missing NES header.");
@@ -92,7 +82,7 @@ public static class NesRomHeaderService
                 {
                     // A validated content match can correct an ambiguous legacy mapper,
                     // but never guess a different payload layout or override NES 2.0.
-                    if(identify&&db.Validated&&db.Prg==prg&&db.Chr==chr&&SupportsMapper(db.Mapper,db.Submapper))
+                    if(identify&&db.Validated&&db.Prg==prg&&db.Chr==chr&&IsMapperRepresentable(db.Mapper,db.Submapper))
                     {mapper=db.Mapper;sub=db.Submapper;correction=2;}
                     source=db.Validated?"Mesen DB (validated)":"Mesen DB + mapper fallback";
                     if(db.Validated||db.Work>0)w=db.Work;
@@ -104,7 +94,7 @@ public static class NesRomHeaderService
                     if(db.Mapper!=mapper||db.Prg!=prg||db.Chr!=chr||(db.Submapper!=sub && !(sub==0 && mapper is 2 or 3 && db.Submapper==2)))
                         { w=s=c=-1; battery=(h[6]&2)!=0; source="Header (Mesen geometry differs)"; }
                     if(db.System is "VsSystem" or "Playchoice")
-                        throw new InvalidDataException("Mesen database identifies an unsupported system/timing.");
+                        warning="Special NES console metadata retained; runtime handling belongs to the core.";
                 }
                 int declaredRam=h[8]==0?(mapper is 176 or 178?32768:mapper==198&&!battery?4096:8192):h[8]*8192;
                 work=w<0?(battery?0:declaredRam):w;
@@ -119,14 +109,14 @@ public static class NesRomHeaderService
             // A trainer needs its $7000-$71FF window even when database RAM metadata is absent.
             if((h[6]&4)!=0 && work+save<4608)
             { if(battery)save=Math.Max(save,8192-work);else work=Math.Max(work,8192-save); }
-            if((h[7]&3)!=0)throw new InvalidDataException("02 supports NTSC/PAL/Dendy NES/Famicom; special consoles are not supported.");
-            if(!SupportsMapper(mapper,sub))throw new InvalidDataException($"Unsupported mapper/submapper: {mapper}/{sub}. Install the matching NES core for newly supported boards.");
+            if((h[7]&3)!=0)warning="Special NES console metadata retained; runtime handling belongs to the core.";
+            if(!IsMapperRepresentable(mapper,sub))throw new InvalidDataException($"Mapper/submapper cannot be encoded in the MIX configuration: {mapper}/{sub}.");
             // This tool stores the complete file. Runtime RAM/ROM limits belong to
             // the installed core, not to the cartridge-image parser.
             if(prg<=0)throw new InvalidDataException("NES ROM declares no PRG data.");
             if((long)payload+prg+chr>rom.Length)throw new InvalidDataException("Truncated NES ROM.");
             if(chr==0&&cram+csave<=0)throw new InvalidDataException("NES ROM declares neither CHR-ROM nor CHR-RAM.");
-            return new(mapper,sub,prg,chr,work,save,cram,csave,battery,nes2,crc,source,null){CorrectionKind=correction};
+            return new(mapper,sub,prg,chr,work,save,cram,csave,battery,nes2,crc,source,null){CorrectionKind=correction,Warning=warning};
         }
         catch(Exception ex) when(ex is InvalidDataException or OverflowException)
         {return new(mapper,sub,prg,chr,work,save,cram,csave,battery,nes2,crc,source,ex.Message);}

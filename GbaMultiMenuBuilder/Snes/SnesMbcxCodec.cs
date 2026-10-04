@@ -6,7 +6,7 @@ namespace GbaMultiMenuBuilder.Snes;
 public static class SnesMbcxCodec
 {
     public const int ConfigBytes = 32;
-    public const string CoreNotice = "MIX v2 配套核心待同步；可合卡不等于可运行。Requires the paired MIX v2 core; packing is not gameplay compatibility.";
+    public const string CoreNotice = "MIX v2 合卡检查通过；游戏运行由核心处理。MIX v2 packing check; gameplay handling belongs to the core.";
 
     private static bool Same(SnesRomInfo expected, SnesRomInfo actual) =>
         expected.HasValidHeader && actual.HasValidHeader && expected.Mapping == actual.Mapping &&

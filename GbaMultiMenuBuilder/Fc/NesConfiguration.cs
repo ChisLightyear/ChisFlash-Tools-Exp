@@ -25,8 +25,8 @@ public static class NesConfiguration
             StartupCopiesToExpansionRam(rom,payload,info.PrgBytes))
             return info with {SuggestedMapper=198,Warning="Startup copies code to $5100 RAM: Mapper 198 candidate; confirmation required"};
         if(info.Error is null&&info.CorrectionKind==0&&!info.Nes20)
-            return info with {Warning=info.Mapper==4&&info.PrgBytes>524288?
-                "Legacy MMC3 over 512 KiB: check mapper":"Legacy header: board not independently confirmed"};
+            return info with {Warning=info.Warning??(info.Mapper==4&&info.PrgBytes>524288?
+                "Legacy MMC3 over 512 KiB: check mapper":"Legacy header: board not independently confirmed")};
         return info;
     }
 
@@ -84,7 +84,7 @@ public static class NesConfiguration
 
     public static NesRomInfo Defaults(byte[] data,int mapper,int sub)
     {
-        if(!NesRomHeaderService.SupportsMapper(mapper,sub))throw new InvalidDataException("Unsupported mapper/submapper.");
+        if(!NesRomHeaderService.IsMapperRepresentable(mapper,sub))throw new InvalidDataException("Mapper/submapper is outside the encodable range (0–4095 / 0–15).");
         if(data.Length<16||!data.AsSpan(0,4).SequenceEqual("NES\x1a"u8))throw new InvalidDataException("Missing NES header.");
         var copy=(byte[])data.Clone();bool nes2=(copy[7]&12)==8;int defaultWork=-1,defaultSave=0,defaultChr=0;
         copy[6]=(byte)((copy[6]&15)|((mapper&15)<<4));
@@ -122,14 +122,14 @@ public static class NesConfiguration
     public static void Validate(FcGame game,NesRomInfo info)
     {
         if(!game.IsNes)throw new InvalidDataException("Choose an NES game.");
-        if(!info.Supported||!NesRomHeaderService.SupportsMapper(info.Mapper,info.Submapper))
-            throw new InvalidDataException(info.Error??"Unsupported mapper/submapper.");
+        if(!info.CanPack||!NesRomHeaderService.IsMapperRepresentable(info.Mapper,info.Submapper))
+            throw new InvalidDataException(info.Error??"Mapper/submapper is outside the encodable range (0–4095 / 0–15).");
         int lead=16+((game.Data[6]&4)!=0?512:0);
         if(info.PrgBytes<=0||info.ChrBytes<0||(long)lead+info.PrgBytes+info.ChrBytes>game.Data.Length)
             throw new InvalidDataException("ROM layout exceeds the original file.");
         if(info.WorkRamBytes<0||info.SaveRamBytes<0||info.ChrRamBytes<0||info.SaveChrRamBytes<0||
             (long)info.WorkRamBytes+info.SaveRamBytes+info.SaveChrRamBytes>60*8192||
-            (long)info.ChrRamBytes+info.SaveChrRamBytes>524288||info.ChrBytes>524288||
+            (long)info.ChrRamBytes+info.SaveChrRamBytes>int.MaxValue||
             (info.ChrBytes==0&&info.ChrRamBytes+info.SaveChrRamBytes==0)||
             (!info.Battery&&(info.SaveRamBytes!=0||info.SaveChrRamBytes!=0)))
             throw new InvalidDataException("Invalid RAM sizes or battery setting for the MIX SRAM pool.");

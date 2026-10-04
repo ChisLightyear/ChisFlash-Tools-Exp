@@ -38,7 +38,7 @@ public static class GameLibraryDirectory
     }
     public static byte[] Write(IReadOnlyList<FcPlacement> entries)
     {
-        if(entries.Any(entry=>!entry.Game.HasRomData||!entry.Game.Info.Supported))throw new InvalidOperationException("Load valid ROM content before rebuilding the library.");
+        if(entries.Any(entry=>!entry.Game.HasRomData||!entry.Game.Info.CanPack))throw new InvalidOperationException("Load valid ROM content before rebuilding the library.");
         ValidateCapacity(entries.Select(entry=>entry.Game).ToArray());
         byte[] prefix=Enumerable.Repeat((byte)255,FcMbcxCodec.PrefixBytes).ToArray();
         var header=prefix.AsSpan(Base,HeaderBytes);header.Clear();"GLB2"u8.CopyTo(header);W16(header,4,Version);W16(header,6,RecordBytes);W16(header,8,entries.Count);

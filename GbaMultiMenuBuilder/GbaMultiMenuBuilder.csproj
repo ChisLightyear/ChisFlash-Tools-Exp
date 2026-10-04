@@ -11,10 +11,10 @@
     <RootNamespace>GbaMultiMenuBuilder</RootNamespace>
     <Product>Chis合卡制作器</Product>
     <AssemblyTitle>Chis合卡制作器</AssemblyTitle>
-    <Version>0.92.0</Version>
-    <AssemblyVersion>0.92.0.0</AssemblyVersion>
-    <FileVersion>0.92.0.0</FileVersion>
-    <InformationalVersion>0.92.0 MIX v2 unified SRAM</InformationalVersion>
+    <Version>0.92.1</Version>
+    <AssemblyVersion>0.92.1.0</AssemblyVersion>
+    <FileVersion>0.92.1.0</FileVersion>
+    <InformationalVersion>0.92.1 MIX packing without core whitelist</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

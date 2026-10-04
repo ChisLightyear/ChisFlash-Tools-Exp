@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.38</Version>
-    <AssemblyVersion>2.0.38.0</AssemblyVersion>
-    <FileVersion>2.0.38.0</FileVersion>
-    <InformationalVersion>2.038 MIX v2 unified SRAM</InformationalVersion>
+    <Version>2.0.39</Version>
+    <AssemblyVersion>2.0.39.0</AssemblyVersion>
+    <FileVersion>2.0.39.0</FileVersion>
+    <InformationalVersion>2.039 MIX packing without core whitelist</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>

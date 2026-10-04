@@ -30,7 +30,7 @@ public sealed class FcConfigurationDialog : Form
         battery.Text=L("battery","电池");Field("",battery);Wide(description);
         var buttons=new FlowLayoutPanel(){AutoSize=true,WrapContents=true,MaximumSize=new Size(660,0)};
         var detect=new Button(){Text=L("auto_identify","恢复自动识别"),AutoSize=true};
-        detect.Click+=(_,_)=>{try{var i=NesRomHeaderService.Parse(game.Data);if(!i.Supported)throw new InvalidDataException(i.Error);LoadInfo(i);automatic=i;}catch(Exception ex){ShowError(ex);}};
+        detect.Click+=(_,_)=>{try{var i=NesRomHeaderService.Parse(game.Data);if(!i.CanPack)throw new InvalidDataException(i.Error);LoadInfo(i);automatic=i;}catch(Exception ex){ShowError(ex);}};
         var defaults=new Button(){Text=L("mapper_defaults","按 Mapper 填写 RAM"),AutoSize=true};
         defaults.Click+=(_,_)=>{try{LoadInfo(NesConfiguration.Defaults(game.Data,(int)mapper.Value,(int)sub.Value));}catch(Exception ex){ShowError(ex);}};
         var detected=NesRomHeaderService.Parse(game.Data);

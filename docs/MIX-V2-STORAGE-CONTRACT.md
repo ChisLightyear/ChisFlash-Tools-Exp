@@ -1,6 +1,6 @@
 # MIX v2：统一存储与启动协议
 
-适用：上位机2.038、合卡器0.92.0。本文为桌面端已实现的数据合同，也是 MCU／FPGA 同步的依据。配套核心尚未在本轮更新；本轮不宣称实际运行、特殊芯片兼容或硬件写卡通过。
+适用：上位机2.039、合卡器0.92.1。本文为桌面端已实现的数据合同，也是 MCU／FPGA 的接口依据。NES、MD、SNES 均作为已接入平台；桌面端不检查已安装核心或核心 Mapper 白名单，不以 SNES 接入状态阻止合卡、BIN 导出或烧录。本轮只验证桌面与模拟卡流程，不宣称实际运行、特殊芯片兼容或硬件写卡通过。
 
 ## 1. 不再兼容旧格式
 
@@ -11,6 +11,14 @@
 - 旧卡不认作有效 MIX v2；界面需确认重建。只按用户当前导入列表重新建立，不自动迁移旧游戏／旧存档，不把旧格式当作空卡。
 - 存档归档中的稳定内容身份不变，但旧目录本身不再解析。先保留旧工具／备份，再从原始 ROM 重建。
 - 其他 GB/GBC/GBA 及 MBC5 模式不受本规则改变。
+
+## 合卡、导出与烧录资格
+
+- NES Mapper 0–4095、submapper 0–15 只检查格式可编码范围，不维护核心支持白名单。Mapper 191/0、未知但可编码的 Mapper/submapper 均可导入、导出与烧录。
+- 不要求用户安装或确认某个核心才能操作；不添加“SNES 待同步”的额外确认。游戏能否运行由运行核心处理，不用桌面合卡结果替代实机验证。
+- NES 特殊主机及 SNES 特殊芯片原始元数据保留，提示不作为核心兼容性拦截。手动 NES 配置同样不添加核心 CHR-ROM/CHR-RAM 上限。
+- 保留真实格式与安全检查：截断/损坏文件、不可编码字段、实际 NOR/SRAM 容量、独占 bank 冲突、卡带写保护、操作取消、写前确认与读回验证。
+- UI 的可打包状态与失败数仅表示格式/数据检查结果，不能命名为游戏“不兼容”或承诺所有游戏运行。
 
 ## 2. 统一空间和地址
 
@@ -167,7 +175,7 @@ CRC32使用反射多项式0xedb88320、初值0xffffffff、最终按位取反。�
 - MIX按变化扇区读改写／读回验证，先失效目录头，再写ROM及必要SRAM，最后提交有效目录头。不是全片擦除，也不承诺断电事务恢复旧卡。
 - SRAM恢复不是事务性，失败不能报告成功，可重新导入重试。
 
-## 7. 核心同步清单
+## 7. 运行端接口清单
 
 1. MCU只接受本文版本；读完整bank表及CRC，不截断为8项。
 2. 三核心采用相同逻辑→物理映射公式，检查实际RAM长度与表长。
@@ -187,8 +195,8 @@ CRC32使用反射多项式0xedb88320、初值0xffffffff、最终按位取反。�
 - FcCardEngine：模拟或实际传输后端的扫描、写前校验、逐bank初始化及目录提交。
 - tests/MixStorage：碎片化三平台分配、128 KiB、目录／ROM往返、CRC／越界／重复bank、旧版本拒绝、归档与模拟写卡。
 
-离线测试不访问串口、不烧录卡带、不证明游戏可运行。SNES运行端尚待同步。
+离线测试不访问串口、不烧录卡带、不证明游戏可运行。额外覆盖 Mapper 191/0、4095/15、未知 submapper、真实 BIN 文件导出/回读、默认勾选、集成烧录按钮、模拟写卡及写保护；这些流程不按核心白名单设门槛。
 
 ## English summary
 
-Client2.038 and Builder0.92.0 write/read GLB2 version2 and LNC2 version2 only. No legacy decoding, migration or downgrade. NES, MD and SNES use the same 8 KiB noncontiguous SRAM map, stored as a bounded per-record asset with its own CRC. Dedicated banks0–59 cannot overlap; shared working banks60–63 remain reserved. Map length follows RAM demand, so128 KiB uses16 entries. Preserve existing logical prefixes; initialize/restore by the full map, never by first-bank-plus-offset. Runtime MCU and cores must implement this contract before gameplay. SNES metadata and successful packing are not evidence of runtime or coprocessor compatibility.
+Client2.039 and Builder0.92.1 write/read GLB2 version2 and LNC2 version2 only. No legacy decoding, migration or downgrade. NES, MD and SNES use the same 8 KiB noncontiguous SRAM map, stored as a bounded per-record asset with its own CRC. Dedicated banks0–59 cannot overlap; shared working banks60–63 remain reserved. Map length follows RAM demand, so128 KiB uses16 entries. Preserve existing logical prefixes; initialize/restore by the full map, never by first-bank-plus-offset. NES, MD and SNES are integrated platforms. The desktop accepts encodable NES mapper/submapper values (0–4095 / 0–15) without checking installed cores or runtime support whitelists; no SNES synchronization gate is added to packing, export or programming. File validity, actual storage capacity, bank overlap and card write protection remain checked. Runtime implementations follow this contract; successful packing is not evidence of gameplay or coprocessor compatibility.

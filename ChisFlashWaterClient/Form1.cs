@@ -744,7 +744,7 @@ public partial class Form1 : DpiAwareForm
 
     private string FormatPendingPatchDisplay(PendingRomImportItem item)
     {
-        if(item.FcRom is not null)return item.FcRom.Supported?$"NES · Mapper {item.FcRom.Mapper}，请选择NES模式":"NES · "+item.FcRom.Error;
+        if(item.FcRom is not null)return item.FcRom.CanPack?$"NES · Mapper {item.FcRom.Mapper}，请选择NES模式":"NES · "+item.FcRom.Error;
         if(item.MdRom is not null)return GbaMultiMenuBuilder.Md.MdRomImportService.ImportStatus(item.MdRom,item.MdReadError);
         BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);

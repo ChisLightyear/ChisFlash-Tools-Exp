@@ -239,7 +239,7 @@ public sealed class FcWorkspaceControl : UserControl
         try{
             foreach(var g in staged.Where(g=>g.Enabled&&g.IsNes)){
                 var old=g.Info;var next=NesConfiguration.Reidentify(g);
-                if(!next.Supported){lines.Add(g.Name+": "+next.Error);continue;}
+                if(!next.CanPack){lines.Add(g.Name+": "+next.Error);continue;}
                 NesConfiguration.Validate(g,next);g.Info=next;
                 lines.Add(g.Name+"\r\n  "+NesConfiguration.Describe(old)+"\r\n  → "+NesConfiguration.Describe(next)+"\r\n  "+NesConfiguration.Localize(next.MetadataSource,text)+(next.Warning is null?"":"; "+NesConfiguration.Localize(next.Warning,text)));
             }
@@ -262,24 +262,24 @@ public sealed class FcWorkspaceControl : UserControl
         try
         {
             foreach(var g in games)g.SaveBankList="—";
-            var valid=games.Where(g=>g.Enabled&&g.Info.Supported).ToList();
+            var valid=games.Where(g=>g.Enabled&&g.Info.CanPack).ToList();
             var plan=FcMbcxCodec.Plan(valid,snapshot?.Capacity??FcMbcxCodec.CapacityBytes,snapshot?.IsFc==true);
             foreach(var entry in plan.Entries)entry.Game.SaveBankList=entry.SaveMap.Length==0?L("none","None"):string.Join(",",entry.SaveMap);
             grid.Invalidate();
             summary.Text=string.Format(L("summary","{0} ROMs (metadata/card capacity) | occupied end {1:F2}/{2:F0} MiB | dedicated SRAM {3}/60 x 8 KiB | shared {4}/4 x 8 KiB"),
                 plan.Entries.Count,plan.EndBytes/1048576d,(snapshot?.Capacity??FcMbcxCodec.CapacityBytes)/1048576d,plan.DedicatedBanks,plan.SharedBanks);
-            summary.Text+=Environment.NewLine+L("core_support_notice","MIX v2: NES / MD / SNES share ROM and SRAM pools. Requires updated MCU and cores; packing is not gameplay compatibility.");
+            summary.Text+=Environment.NewLine+L("core_support_notice","MIX v2: NES / MD / SNES integrated with shared ROM/SRAM pools. No core mapper whitelist gates packing, export or programming.");
             summary.Text+=Environment.NewLine+string.Format(L("correction_counts","自动识别/纠错 {0}｜手动修正 {1}｜待核对 {2}；扫描原卡后可检查 / 重建配置。"),
                 games.Count(g=>g.IsNes&&g.Info.CorrectionKind is 1 or 2),games.Count(g=>g.IsNes&&g.Info.CorrectionKind==3),games.Count(g=>g.IsNes&&g.Info.Warning is not null&&g.Info.CorrectionKind==0));
-            int unselected=games.Count(g=>!g.Enabled),unsupported=games.Count(g=>!g.Info.Supported);
-            summary.Text+=Environment.NewLine+string.Format(L("selection_counts","Imported {0} | checked {1} | unchecked {2} | incompatible {3}; unchecked games are not written."),games.Count,games.Count(g=>g.Enabled),unselected,unsupported);
-            if(unsupported>0)summary.Text+=Environment.NewLine+L("excluded_names","Incompatible:")+" "+string.Join("; ",games.Where(g=>!g.Info.Supported).Take(3).Select(g=>g.Name+": "+g.Info.Error))+(unsupported>3?" …":"");
-            int invalid=games.Count(g=>g.Enabled&&!g.Info.Supported);if(invalid>0)summary.Text+=$" | {invalid} "+L("unsupported","unsupported (uncheck or remove)");
+            int unselected=games.Count(g=>!g.Enabled),unsupported=games.Count(g=>!g.Info.CanPack);
+            summary.Text+=Environment.NewLine+string.Format(L("selection_counts","Imported {0} | checked {1} | unchecked {2} | invalid data {3}; unchecked games are not written."),games.Count,games.Count(g=>g.Enabled),unselected,unsupported);
+            if(unsupported>0)summary.Text+=Environment.NewLine+L("excluded_names","Invalid format/data:")+" "+string.Join("; ",games.Where(g=>!g.Info.CanPack).Take(3).Select(g=>g.Name+": "+g.Info.Error))+(unsupported>3?" …":"");
+            int invalid=games.Count(g=>g.Enabled&&!g.Info.CanPack);if(invalid>0)summary.Text+=$" | {invalid} "+L("unsupported","invalid format/data (uncheck or remove)");
             if(backendFactory is not null)
             {
                 if(snapshot is null)summary.Text+=Environment.NewLine+(CanScanBeforeBurn
                     ?L("burn_scan_first","Click Burn MIX card: the card will be read before write confirmation.")
-                    :L("scan_required","Scan MIX card, or import NES ROMs to start a new burn."));
+                    :L("scan_required","Scan MIX card, or import NES / MD / SNES ROMs to start a new burn."));
                 else if(!snapshot.Writable)summary.Text+=Environment.NewLine+L("write_locked","Burn disabled: NOR capacity is unavailable or the card is write-protected. Check the scan result and scan again.");
             }
             burn.Enabled=!IsBusy&&backendFactory is not null&&invalid==0&&
@@ -342,14 +342,14 @@ public sealed class FcWorkspaceControl : UserControl
                     byte[] data;
                     if(source.EntryIndex is int index){using var zip=Md.MdZipFile.OpenRead(source.SourcePath);using var input=zip.Entries[index].Open();data=new byte[checked((int)source.Length)];input.ReadExactly(data);}
                     else data=File.ReadAllBytes(source.SourcePath);
-                    var info=NesRomHeaderService.Parse(data);imported.Add(new FcGame{Name=source.Title,Data=data,Info=info,Enabled=info.Supported});
+                    var info=NesRomHeaderService.Parse(data);imported.Add(new FcGame{Name=source.Title,Data=data,Info=info,Enabled=info.CanPack});
                 }else imported.Add(new FcGame{Name=source.Title,Data=[],Enabled=false,
                     Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,source.Platform.ToString(),"MIX supports NES / MD / SNES")});
             }
             return imported;
         },ct);
         ct.ThrowIfCancellationRequested();foreach(var game in list)games.Add(game);
-        status.Text=string.Format(L("import_counts","Import complete: {0} checked, {1} unchecked (including {2} incompatible). Unchecked games are not included."),games.Count(g=>g.Enabled),games.Count(g=>!g.Enabled),games.Count(g=>!g.Info.Supported));
+        status.Text=string.Format(L("import_counts","Import complete: {0} checked, {1} unchecked (including {2} invalid data). Unchecked games are not included."),games.Count(g=>g.Enabled),games.Count(g=>!g.Enabled),games.Count(g=>!g.Info.CanPack));
     });
     public async Task ImportImageAsync()
     {
@@ -365,7 +365,7 @@ public sealed class FcWorkspaceControl : UserControl
             },ct);
             ct.ThrowIfCancellationRequested();imageSnapshot=loaded.Select(game=>game.Copy()).ToArray();games.Clear();imageReplacement=true;
             // Offline image locations are not a snapshot of the connected card.
-            foreach(var g in loaded)games.Add(new FcGame{Name=g.Name,Data=g.Data,Info=g.Info,Md=g.Md,Snes=g.Snes,Enabled=g.Info.Supported});
+            foreach(var g in loaded)games.Add(new FcGame{Name=g.Name,Data=g.Data,Info=g.Info,Md=g.Md,Snes=g.Snes,Enabled=g.Info.CanPack});
             status.Text=L("image_loaded","MIX image loaded; choose Burn to write it to the scanned card.");
         });
     }
@@ -436,7 +436,6 @@ public sealed class FcWorkspaceControl : UserControl
         bool convert=!snapshot!.IsFc;
         string prompt=convert?L("convert_confirm","Replace this card's existing GB/GBC/unknown directory with a dedicated MIX image? Existing games will no longer be listed."):
             L("burn_confirm","Apply this NES / MD / SNES MIX v2 list? Unchanged ROMs and existing saves are preserved; new RAM is initialized by bank.");
-        prompt+=Environment.NewLine+Environment.NewLine+L("protocol_confirm","Writes MIX GLB2 v2 / LNC2. Old firmware cannot launch it. Install the synchronized MCU and cores before gameplay. No legacy migration; back up ROMs and saves first.");
         if(MessageBox.Show(this,prompt,L("mode","MIX | NES + MD + SNES (MBCX)"),MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
         var copy=games.Select(g=>g.Copy()).ToList();var expected=snapshot;var backend=backendFactory!();
         // A failure invalidates the snapshot: stale metadata can never be reused.

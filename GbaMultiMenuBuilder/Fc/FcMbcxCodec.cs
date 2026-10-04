@@ -110,7 +110,7 @@ public static class FcMbcxCodec
         Dictionary<Guid,(int Offset,int Size)> locations=[];
         foreach(var g in rows)
         {
-            if(!g.Info.Supported)throw new InvalidDataException($"{g.Name}: {g.Info.Error}");
+            if(!g.Info.CanPack)throw new InvalidDataException($"{g.Name}: {g.Info.Error}");
             if(g.Snes is not null)SnesMbcxCodec.ValidateGame(g);
             if(g.RomBytes<16)throw new InvalidDataException("Empty NES ROM.");
             if(preserveLocations&&g.OriginalOffset>=PrefixBytes)
@@ -226,7 +226,7 @@ public static class FcMbcxCodec
             SaveRamBytes=ram-work-(battery?saveChr:0),ChrRamBytes=cram-saveChr,SaveChrRamBytes=saveChr,Battery=battery,CorrectionKind=kind,
             MetadataSource=kind==3?"Manual configuration":kind==1?"Known content correction":kind==2?"Mesen DB (validated)":"Card configuration",
             Warning=kind==3?null:parsed.CorrectionKind!=0&&(parsed.Mapper!=mapper||parsed.StoredRamBytes!=ram)?"Known correction available: rebuild configuration":parsed.Warning,
-            Error=NesRomHeaderService.SupportsMapper(mapper,sub)?null:"Unsupported card mapper configuration."};
+            Error=NesRomHeaderService.IsMapperRepresentable(mapper,sub)?null:"Card mapper/submapper is outside the encodable range."};
     }
     internal static FcGame ReadDirectoryGame(ReadOnlySpan<byte> config,string name,int length,int offset,int allocated,byte[] bankMap,string identity)
     {
