@@ -1315,13 +1315,27 @@ public partial class Form1 : DpiAwareForm
     private void UpdateProgrammerModeSelectorUi(bool allowInteraction)
     {
         ProgrammerKind? programmerKind = GetSelectedProgrammerKind();
-        bool showBeggarMode = programmerKind == ProgrammerKind.BeggarLegacy;
-        bool showSelector = showBeggarMode;
-        bool allowBeggarMode = allowInteraction && showBeggarMode;
+        bool allowBeggarMode = allowInteraction && programmerKind == ProgrammerKind.BeggarLegacy;
 
-        labelBeggarCartModeCaption.Visible = showSelector;
-        panelProgrammerModeHost.Visible = showSelector;
-        panelBeggarCartMode.Visible = showBeggarMode;
+        if (programmerKind == ProgrammerKind.WaterLink)
+        {
+            bool selectionInitialized = beggarCartModeSelectionInitialized;
+            beggarCartModeSelectionInitialized = false;
+            try
+            {
+                radioButtonBeggarCartModeGba.Checked = true;
+                radioButtonBeggarCartModeGb.Checked = false;
+                lastSelectedBeggarCartMode = BeggarCartMode.Gba;
+            }
+            finally
+            {
+                beggarCartModeSelectionInitialized = selectionInitialized;
+            }
+        }
+
+        labelBeggarCartModeCaption.Visible = true;
+        panelProgrammerModeHost.Visible = true;
+        panelBeggarCartMode.Visible = true;
 
         labelBeggarCartModeCaption.Text = T("ui", "cart_mode", "Mode");
 

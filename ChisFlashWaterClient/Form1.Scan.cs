@@ -38,7 +38,6 @@ public partial class Form1
             {
                 string caption = device["Caption"]?.ToString() ?? string.Empty;
                 string name = device["Name"]?.ToString() ?? string.Empty;
-                string manufacturer = device["Manufacturer"]?.ToString() ?? string.Empty;
                 string pnpDeviceId = device["PNPDeviceID"]?.ToString() ?? string.Empty;
 
                 string? portName = ExtractComPortName(caption) ?? ExtractComPortName(name);
@@ -47,12 +46,19 @@ public partial class Form1
                     continue;
                 }
 
-                if (!TryGetSupportedProgrammerKind(pnpDeviceId, caption, manufacturer, out ProgrammerKind kind))
+                string productName = UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface)
+                    ? ReadUsbProductName(device, pnpDeviceId)
+                    : string.Empty;
+                if (!TryGetSupportedProgrammerKind(pnpDeviceId, productName, out ProgrammerKind kind))
                 {
                     continue;
                 }
 
-                AddSerialPortEntry(portName, pnpDeviceId, kind);
+                AddSerialPortEntry(portName, pnpDeviceId, kind, productName);
+                if (kind == ProgrammerKind.Unknown && UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface))
+                    AppendLog(Tf("log", "shared_usb_product_unconfirmed",
+                        "Shared USB ID detected ({0}), but no explicit WaterLink product identity was found. The device remains Unknown; no programmer commands will be sent.",
+                        string.IsNullOrWhiteSpace(productName) ? T("value", "programmer_unknown", "Unknown") : productName));
             }
         }
         catch (ManagementException ex)
@@ -1116,21 +1122,13 @@ public partial class Form1
         return text[start..end].Trim();
     }
 
-    private static bool TryGetSupportedProgrammerKind(string? pnpDeviceId, string? caption, string? manufacturer, out ProgrammerKind kind)
+    private static bool TryGetSupportedProgrammerKind(string? pnpDeviceId, string? productName, out ProgrammerKind kind)
     {
         kind = ProgrammerKind.Unknown;
 
-        string normalizedId = (pnpDeviceId ?? string.Empty).ToUpperInvariant();
-
-        bool waterLinkUsbIdMatch =
-            normalizedId.StartsWith(@"USB\VID_" + TargetUsbVid + "&PID_" + TargetUsbPid, StringComparison.Ordinal) &&
-            normalizedId.Contains("&" + TargetUsbInterface);
-
-        bool beggarUsbIdMatch =
-            normalizedId.Contains("VID_" + BeggarUsbVid) &&
-            normalizedId.Contains("PID_" + BeggarUsbPid);
-
-        if (waterLinkUsbIdMatch)
+        bool waterLinkUsbIdMatch = UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface);
+        bool beggarUsbIdMatch = UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, BeggarUsbPid);
+        if (waterLinkUsbIdMatch && HasWaterLinkProductIdentity(productName))
         {
             kind = ProgrammerKind.WaterLink;
             return true;
@@ -1147,7 +1145,7 @@ public partial class Form1
         return true;
     }
 
-    private void AddSerialPortEntry(string portName, string pnpDeviceId, ProgrammerKind kind)
+    private void AddSerialPortEntry(string portName, string pnpDeviceId, ProgrammerKind kind, string? productName = null)
     {
         if (string.IsNullOrWhiteSpace(portName))
         {
@@ -1160,6 +1158,8 @@ public partial class Form1
             ProgrammerKind.BeggarLegacy => BeggarDisplayName,
             _ => T("value", "programmer_unknown", "Unknown"),
         };
+        if (kind == ProgrammerKind.Unknown && !string.IsNullOrWhiteSpace(productName))
+            baseName += " · " + productName;
         string displayName = $"{baseName} ({portName})";
         while (serialPorts.ContainsKey(displayName))
         {

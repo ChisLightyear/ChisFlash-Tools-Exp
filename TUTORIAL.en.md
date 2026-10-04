@@ -334,6 +334,10 @@ The Client ships its own menu ROMs under the **`Assets\` folder next to the prog
 3. **Flashcart type** → match your actual cart (a wrong choice patches the wrong way)
 4. Click **Scan cartridge** → games on the cart appear in **Cartridge ROM list**
 
+Starting with Client 2.035, a shared USB ID does not identify every AG32 device as WaterLink. An explicit WaterLink USB product identity is required. Composite-device parent product names are read instead of relying on CDC interface labels, manufacturer names or Windows friendly names. Unconfirmed devices display their actual product name but do not gain cartridge-command access. Older firmware that reports only a generic AG32/CDC name needs a dedicated product identity for reliable automatic identification.
+
+The GBA / GB selector remains visible. Confirmed WaterLink devices automatically select GBA and disable both options. Beggar devices still allow GBA or GB selection while idle.
+
 ### 3. Add games and burn
 
 - In the **ROM workspace** click **Add ROM** and pick `.gba` files (multiple allowed)

@@ -332,6 +332,10 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 3. **烧录卡类型** → 选与实物一致的（选错补丁会打错）
 4. 点 **分析卡带** → 卡带里的游戏会出现在 **卡内 ROM 列表**
 
+上位机 2.035 起，不再把使用共用 USB ID 的 AG32 设备直接认作 WaterLink；需要 USB 产品名明确标识 WaterLink，并读取复合设备父节点的产品名，而不是依赖“CDC 接口”名称、厂家名称或 Windows 友好名称。未确认的设备显示实际产品名，但不开放卡带读写命令。若旧固件只提供 AG32/CDC 通用名称，需要固件增加专属产品标识后才能可靠自动识别。
+
+GBA / GB 选框保持显示。确认是 WaterLink 时自动选中 GBA，两项置灰不可切换；丐中丐空闲时仍可选择 GBA 或 GB。
+
 ### 3. 加游戏并烧录
 
 - 在 **ROM 工作区**点 **添加 ROM**，选 `.gba` 文件（可多个）
