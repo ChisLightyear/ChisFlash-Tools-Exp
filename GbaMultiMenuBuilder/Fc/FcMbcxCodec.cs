@@ -12,6 +12,11 @@ public sealed class FcGame
     public bool Enabled {get;set;}=true;
     public string Name {get;set;}="";
     public byte[] Data {get;init;}=[];
+    public int OriginalRomBytes {get;init;}
+    public byte[] OriginalConfig {get;init;}=[];
+    public string? DirectoryIdentity {get;init;}
+    public bool HasRomData=>Data.Length>0;
+    public int RomBytes=>HasRomData?Data.Length:OriginalRomBytes;
     public required NesRomInfo Info {get;set;}
     public int OriginalOffset {get;init;}=-1;
     public int OriginalAllocated {get;init;}
@@ -40,15 +45,21 @@ public sealed class FcGame
             return plan.SpillBytes==0?$"{plan.TotalBytes/1024d:F1} KiB":$"128 + {plan.SpillBytes/1024d:F1} KiB";
         }
     }
-    public int AllocatedBytes=>FcMbcxCodec.Align(Data.Length,FcMbcxCodec.RomBankBytes);
-    public FcGame Copy()=>new(){Id=Id,Enabled=Enabled,Name=Name,Data=Data,Info=Info,Md=Md,OriginalOffset=OriginalOffset,OriginalAllocated=OriginalAllocated,OriginalSaveMap=OriginalSaveMap,OriginalBattery=OriginalBattery,OriginalStoredRamBytes=OriginalStoredRamBytes};
+    public int AllocatedBytes=>FcMbcxCodec.Align(RomBytes,FcMbcxCodec.RomBankBytes);
+    public FcGame Copy()=>WithData(Data,DirectoryIdentity);
+    public FcGame WithData(byte[] data,string? identity=null,NesRomInfo? info=null)=>new(){Id=Id,Enabled=Enabled,Name=Name,Data=data,Info=info??Info,Md=Md,OriginalOffset=OriginalOffset,OriginalAllocated=OriginalAllocated,OriginalSaveMap=OriginalSaveMap,OriginalBattery=OriginalBattery,OriginalStoredRamBytes=OriginalStoredRamBytes,OriginalRomBytes=RomBytes,OriginalConfig=OriginalConfig,DirectoryIdentity=identity??DirectoryIdentity};
 }
 public sealed record FcPlacement(FcGame Game,int Offset,int AllocatedBytes,byte[] SaveMap);
 public sealed record FcLayout(IReadOnlyList<FcPlacement> Entries,int EndBytes,int DedicatedBanks,int SharedBanks);
-public sealed record FcCardSnapshot(string DeviceId,int Capacity,int SectorBytes,byte[] Prefix,IReadOnlyList<FcGame> Games,bool IsFc,bool Writable,string? Warning=null);
+public sealed record FcMetadataRange(int Address,int Bytes);
+public sealed record FcCardSnapshot(string DeviceId,int Capacity,int SectorBytes,byte[] Prefix,IReadOnlyList<FcGame> Games,bool IsFc,bool Writable,string? Warning=null,IReadOnlyList<FcMetadataRange>? MetadataRanges=null);
 public sealed record FcProgress(string Message,int Percent);
 public interface IFcCardBackend
 {
+    FcCardSnapshot RebuildConfiguration(FcCardSnapshot expected,CancellationToken cancellation,IProgress<FcProgress> progress)=>throw new NotSupportedException("Configuration-only rebuild is unavailable.");
+    IReadOnlyList<FcGame> LoadGames(FcCardSnapshot expected,IReadOnlyList<FcGame> games,CancellationToken cancellation,IProgress<FcProgress> progress)=>throw new NotSupportedException("ROM loading is unavailable.");
+    IReadOnlyList<GameLibraryDirectory.SaveImage> ExportSaves(FcCardSnapshot expected,CancellationToken cancellation,IProgress<FcProgress> progress)=>throw new NotSupportedException("Save export is unavailable.");
+    void ImportSaves(FcCardSnapshot expected,IReadOnlyList<GameLibraryDirectory.SaveImage> saves,CancellationToken cancellation,IProgress<FcProgress> progress)=>throw new NotSupportedException("Save import is unavailable.");
     FcCardSnapshot Scan(CancellationToken cancellation,IProgress<FcProgress> progress);
     FcCardSnapshot Write(FcCardSnapshot expected,IReadOnlyList<FcGame> games,bool convert,CancellationToken cancellation,IProgress<FcProgress> progress);
 }
@@ -78,7 +89,7 @@ public static class FcMbcxCodec
         if(offset<body){int n=Math.Min(count,body-offset);game.Data.AsSpan(lead+offset,n).CopyTo(target);copied=n;offset+=n;}
         if(copied<count)game.Data.AsSpan(offset-body,count-copied).CopyTo(target[copied..]);
     }
-    private static byte[] RestoreNesFile(byte[] stored,ReadOnlySpan<byte> config)
+    internal static byte[] RestoreNesFile(byte[] stored,ReadOnlySpan<byte> config)
     {
         if(!config[..4].SequenceEqual("FC02"u8)||config[4]!=7)throw new InvalidDataException("Unsupported NES payload layout; rebuild with the matching tool.");
         int lead=16+((config[5]&8)!=0?512:0),body=stored.Length-lead;
@@ -88,18 +99,19 @@ public static class FcMbcxCodec
         return data;
     }
     // A type guard for the generic GB writer, not an old-format decoder.
-    public static bool HasFcIdentity(ReadOnlySpan<byte> config)=>config.Length>=36&&config[..7].SequenceEqual("MBCXCFG"u8)&&config.Slice(32,4).SequenceEqual("FC02"u8);
+    public static bool HasFcIdentity(ReadOnlySpan<byte> config)=>GameLibraryDirectory.IsLibrary(config)||config.Length>=36&&config[..7].SequenceEqual("MBCXCFG"u8)&&config.Slice(32,4).SequenceEqual("FC02"u8);
     public static bool IsFcHeaders(ReadOnlySpan<byte> config,ReadOnlySpan<byte> directory)
     {
+        if(GameLibraryDirectory.IsLibrary(config))return true;
         if(config.Length<64||directory.Length<64)return false;
         return HasFcIdentity(config)&&directory[..7].SequenceEqual("MBCXROM"u8)&&
             config[7]==2&&directory[7]==3;
     }
-    public static bool IsFcPrefix(ReadOnlySpan<byte> prefix)=>prefix.Length>=PrefixBytes&&IsFcHeaders(prefix.Slice(ConfigOffset,64),prefix.Slice(DirectoryOffset,64));
+    public static bool IsFcPrefix(ReadOnlySpan<byte> prefix)=>prefix.Length>=PrefixBytes&&(GameLibraryDirectory.IsLibrary(prefix.Slice(ConfigOffset,64))||IsFcHeaders(prefix.Slice(ConfigOffset,64),prefix.Slice(DirectoryOffset,64)));
     public static FcLayout Plan(IReadOnlyList<FcGame> games,int capacity,bool preserveLocations)
     {
         var rows=games.Where(g=>g.Enabled).ToList();capacity=Math.Min(capacity,CapacityBytes);
-        if(rows.Count(g=>g.Md is null)>MaxGames||rows.Count(g=>g.Md is not null)>MaxGames)throw new InvalidDataException("MIX: at most 99 NES and 99 MD games.");
+        GameLibraryDirectory.ValidateCapacity(rows);
         if(capacity<PrefixBytes)throw new InvalidDataException("NES: card capacity too small.");
         if(rows.Select(g=>g.Id).Distinct().Count()!=rows.Count)throw new InvalidDataException("Duplicate NES entry identity.");
         bool[] used=new bool[capacity/RomBankBytes];Array.Fill(used,true,0,PrefixBytes/RomBankBytes);
@@ -107,11 +119,11 @@ public static class FcMbcxCodec
         foreach(var g in rows)
         {
             if(!g.Info.Supported)throw new InvalidDataException($"{g.Name}: {g.Info.Error}");
-            if(g.Data.Length<16)throw new InvalidDataException("Empty NES ROM.");
+            if(g.RomBytes<16)throw new InvalidDataException("Empty NES ROM.");
             if(preserveLocations&&g.OriginalOffset>=PrefixBytes)
             {
                 int bytes=g.OriginalAllocated;
-                if(bytes<g.Data.Length||g.OriginalOffset%RomBankBytes!=0||bytes%RomBankBytes!=0||g.OriginalOffset>capacity-bytes)throw new InvalidDataException("Invalid existing NES ROM range.");
+                if(bytes<g.RomBytes||g.OriginalOffset%RomBankBytes!=0||bytes%RomBankBytes!=0||g.OriginalOffset>capacity-bytes)throw new InvalidDataException("Invalid existing NES ROM range.");
                 for(int i=g.OriginalOffset/RomBankBytes;i<(g.OriginalOffset+bytes)/RomBankBytes;i++)
                 {if(used[i])throw new InvalidDataException("Overlapping NES ROMs.");used[i]=true;}
                 locations[g.Id]=(g.OriginalOffset,bytes);
@@ -170,37 +182,7 @@ public static class FcMbcxCodec
         var placements=rows.Select(g=>new FcPlacement(g,locations[g.Id].Offset,locations[g.Id].Size,saves[g.Id])).ToList();
         return new(placements,placements.Count==0?PrefixBytes:placements.Max(p=>p.Offset+p.AllocatedBytes),saveUsed.Count(v=>v),shared);
     }
-    public static byte[] BuildPrefix(IReadOnlyList<FcPlacement> entries,byte[]? original=null)
-    {
-        var md=entries.Where(p=>p.Game.Md is not null).ToArray();
-        entries=entries.Where(p=>p.Game.Md is null).ToArray();
-        if(entries.Count>MaxGames)throw new InvalidDataException("Too many NES entries.");
-        byte[] b=original is {Length:PrefixBytes}?(byte[])original.Clone():Enumerable.Repeat((byte)255,PrefixBytes).ToArray();
-        b.AsSpan(ConfigOffset,64).Clear();b.AsSpan(DirectoryOffset,64+MaxGames*EntryBytes).Fill(255);
-        b.AsSpan(GameConfigOffset,GameConfigSlots*GameConfigBytes).Fill(255);
-        b.AsSpan(TitleListOffset,TitleSlots*TitleBytes).Clear();b.AsSpan(TitleDetailOffset,TitleSlots*TitleDetailBytes).Clear();
-        var cfg=b.AsSpan(ConfigOffset,64);"MBCXCFG"u8.CopyTo(cfg);cfg[7]=2;W16(cfg,8,1);cfg[11]=1;W16(cfg,14,entries.Count);
-        W32(cfg,16,DirectoryOffset);"FC02"u8.CopyTo(cfg[32..]);cfg[36]=2;cfg[37]=13; // PC-authored game configuration, 2^13-byte SRAM banks.
-        var dir=b.AsSpan(DirectoryOffset,64);dir.Clear();"MBCXROM"u8.CopyTo(dir);dir[7]=3;W16(dir,8,1);W16(dir,10,entries.Count);W16(dir,12,128);W32(dir,16,EntriesOffset);W32(dir,20,GameConfigOffset);W16(dir,24,GameConfigBytes);dir[26]=1;
-        W32(dir,28,TitleListOffset);W32(dir,32,TitleDetailOffset);W16(dir,36,TitleBytes);dir[38]=12;dir[39]=1;
-        W16(dir,40,TitleDetailBytes);dir[42]=32;dir[43]=2;
-        for(int i=0;i<entries.Count;i++)
-        {
-            var p=entries[i];var record=BuildGameConfig(p);record[7]=checked((byte)i);record.CopyTo(b.AsSpan(GameConfigOffset+(p.Offset/RomBankBytes)*GameConfigBytes,GameConfigBytes));
-            var pixels=FcTitleRenderer.Render(p.Game.Name);pixels.List.CopyTo(b.AsSpan(TitleListOffset+i*TitleBytes));pixels.Detail.CopyTo(b.AsSpan(TitleDetailOffset+i*TitleDetailBytes));
-            var e=b.AsSpan(EntriesOffset+i*128,128);e.Clear();W16(e,0,i);
-            W32(e,4,p.Offset/RomBankBytes);W16(e,8,p.AllocatedBytes/RomBankBytes);
-            e[10]=checked((byte)p.SaveMap.Length);e[11]=0xfc;e[12]=p.Game.Info.Battery?(byte)1:(byte)0;e[13]=3;
-            string title=string.IsNullOrWhiteSpace(p.Game.Name)?"UNKNOWN":p.Game.Name.Trim();
-            if(title.Length>46)title=title[..46];if(title.Length>0&&char.IsHighSurrogate(title[^1]))title=title[..^1];
-            W16(e,2,title.Length);Encoding.Unicode.GetBytes(title).CopyTo(e[16..]); // empty local name, UTF16 title, terminator.
-            e.Slice(110,8).Fill(255);p.SaveMap.CopyTo(e[110..]);W32(e,118,p.Game.Data.Length);W32(e,122,p.Game.Info.StoredRamBytes);
-            e[126]=p.Game.Info.MetadataSource.StartsWith("Mesen",StringComparison.Ordinal)?(byte)1:(byte)0;
-        }
-        MixDirectory.Write(b,md,entries);
-        return b;
-    }
-    // FC02 v7: aligned PRG payload; original header/trainer follow the payload.
+    public static byte[] BuildPrefix(IReadOnlyList<FcPlacement> entries,byte[]? original=null)=>GameLibraryDirectory.Write(entries);
     public static byte[] BuildGameConfig(FcPlacement p)
     {
         var info=p.Game.Info;var h=p.Game.Data.AsSpan(0,16);
@@ -232,13 +214,17 @@ public static class FcMbcxCodec
         Encoding.ASCII.GetBytes(SizeLabel(info.ChrBytes==0?info.ChrRamBytes+info.SaveChrRamBytes:info.ChrBytes)).CopyTo(b.AsSpan(112,8));
         Encoding.ASCII.GetBytes(SizeLabel(info.StoredRamBytes)).CopyTo(b.AsSpan(120,8));return b;
     }
-    private static NesRomInfo ReadGameConfig(ReadOnlySpan<byte> c,byte[] data,int offset,NesRomInfo parsed,ReadOnlySpan<byte> entry)
+    internal static NesRomInfo ReadGameConfig(ReadOnlySpan<byte> c,byte[] data,int offset,NesRomInfo parsed,ReadOnlySpan<byte> entry)
+    {
+        var raw=NesRomHeaderService.Parse(data,false);
+        return ReadGameConfigMetadata(c,data.Length,(data[6]&4)!=0,offset,parsed,entry,raw.WorkRamBytes);
+    }
+    internal static NesRomInfo ReadGameConfigMetadata(ReadOnlySpan<byte> c,int dataBytes,bool originalTrainer,int offset,NesRomInfo parsed,ReadOnlySpan<byte> entry,int rawWork=0)
     {
         if(!c[..4].SequenceEqual("FC02"u8)||c[4]!=7||c[7]!=U16(entry,0)||(c[5]&0x80)!=0||c[10]>8)
             throw new InvalidDataException("Invalid NES game configuration; rewrite the card with the current PC tool.");
         int mapper=U16(c,8),sub=c[6],prg=checked((int)U32(c,16)),chr=checked((int)U32(c,24));
-        var raw=NesRomHeaderService.Parse(data,false);
-        int ram=checked((int)U32(c,32)),work=Math.Min(raw.WorkRamBytes,ram),cram=checked((int)U32(c,28));bool battery=(c[5]&4)!=0,trainer=(c[5]&8)!=0;
+        int ram=checked((int)U32(c,32)),work=Math.Min(rawWork,ram),cram=checked((int)U32(c,28));bool battery=(c[5]&4)!=0,trainer=(c[5]&8)!=0;
         byte kind=0;int saveChr=0;
         if(c.Slice(80,4).SequenceEqual("RC01"u8))
         {
@@ -249,8 +235,8 @@ public static class FcMbcxCodec
         else if(mapper is 195 or 198&&ram>=12288&&battery)work=4096;
         int expectedPrg=offset;int chrCapacity=chr==0?cram:chr;
         if(U32(c,12)!=expectedPrg||
-           (long)prg+chr>data.Length-16-(trainer?512:0)||trainer!=((data[6]&4)!=0)||prg<=0||chr<0||work>ram||ram<0||
-           U32(c,20)!=(chr==0?0:(long)expectedPrg+prg)||U32(c,36)!=(trainer?(long)offset+data.Length-512:0)||U16(c,40)!=(trainer?512:0)||
+           (long)prg+chr>dataBytes-16-(trainer?512:0)||trainer!=originalTrainer||prg<=0||chr<0||work>ram||ram<0||
+           U32(c,20)!=(chr==0?0:(long)expectedPrg+prg)||U32(c,36)!=(trainer?(long)offset+dataBytes-512:0)||U16(c,40)!=(trainer?512:0)||
            chrCapacity<=0||U32(c,44)!=0x100000/chrCapacity||U32(c,60)!=chrCapacity-1||((c[5]&64)!=0)!=((chrCapacity&(chrCapacity-1))==0)||U32(c,56)!=0x2000000/prg||((c[5]&32)!=0)!=((prg&(prg-1))==0)||c[10]!=entry[10]||!c.Slice(48,c[10]).SequenceEqual(entry.Slice(110,c[10]))||U32(c,32)!=U32(entry,122))
             throw new InvalidDataException("NES game configuration does not match its allocated ROM/SRAM ranges.");
         var snapshot=FcSnapshotPlan.Create(mapper,chr,cram,ram);
@@ -262,8 +248,37 @@ public static class FcMbcxCodec
             Warning=kind==3?null:parsed.CorrectionKind!=0&&(parsed.Mapper!=mapper||parsed.StoredRamBytes!=ram)?"Known correction available: rebuild configuration":parsed.Warning,
             Error=NesRomHeaderService.SupportsMapper(mapper,sub)?null:"Unsupported card mapper configuration."};
     }
-    public static List<FcGame> Read(byte[] prefix,int capacity,Func<int,int,byte[]> read,CancellationToken ct)
+    internal static FcGame ReadDirectoryGame(ReadOnlySpan<byte> config,string name,int length,int offset,int allocated,ReadOnlySpan<byte> entry,string? identity=null)
     {
+        int ram=checked((int)U32(config,32)),work=(config[5]&4)!=0?0:ram;
+        var parsed=new NesRomInfo(U16(config,8),config[6],checked((int)U32(config,16)),checked((int)U32(config,24)),work,ram-work,checked((int)U32(config,28)),0,(config[5]&4)!=0,false,0,"Card configuration",null);
+        var info=ReadGameConfigMetadata(config,length,(config[5]&8)!=0,offset,parsed,entry,work);
+        return new(){Name=name,Info=info,OriginalOffset=offset,OriginalAllocated=allocated,OriginalSaveMap=entry.Slice(110,config[10]).ToArray(),OriginalBattery=info.Battery,OriginalStoredRamBytes=info.StoredRamBytes,OriginalRomBytes=length,OriginalConfig=config.ToArray(),DirectoryIdentity=identity};
+    }
+    internal static NesRomInfo ReadOriginalInfo(FcGame game,byte[] data)
+    {
+        byte[] entry=new byte[128];var config=game.OriginalConfig.AsSpan();W16(entry,0,config[7]);entry[10]=config[10];config.Slice(48,8).CopyTo(entry.AsSpan(110));W32(entry,122,checked((int)U32(config,32)));
+        return ReadGameConfig(config,data,game.OriginalOffset,NesRomHeaderService.Parse(data),entry);
+    }
+    public static FcGame LoadRom(FcGame game,Func<int,int,byte[]> read,CancellationToken cancellation)
+    {
+        if(game.HasRomData)return game.Copy();
+        cancellation.ThrowIfCancellationRequested();byte[] stored=read(game.OriginalOffset,game.RomBytes);
+        if(stored.Length!=game.RomBytes)throw new EndOfStreamException("Incomplete MIX ROM read.");
+        cancellation.ThrowIfCancellationRequested();
+        byte[] data;NesRomInfo info=game.Info;
+        if(game.Md is null){
+            data=RestoreNesFile(stored,game.OriginalConfig);info=ReadOriginalInfo(game,data);
+        }else {
+            data=stored;if(MdMbcxCodec.Describe(data,game.Name)!=game.Md)throw new InvalidDataException("MD ROM does not match its directory configuration.");
+        }
+        var loaded=game.WithData(data,info:info);string identity=GameLibraryDirectory.StableId(loaded);
+        if(game.DirectoryIdentity is not null&&game.DirectoryIdentity!=identity)throw new InvalidDataException("ROM content identity mismatch.");
+        return loaded.WithData(data,identity);
+    }
+    public static List<FcGame> Read(byte[] prefix,int capacity,Func<int,int,byte[]> read,CancellationToken ct,bool directoryOnly=false)
+    {
+        if(GameLibraryDirectory.IsLibrary(prefix.AsSpan(ConfigOffset)))return GameLibraryDirectory.Read(prefix,capacity,read,ct,directoryOnly);
         if(!IsFcPrefix(prefix))throw new InvalidDataException("Not an NES MBCX directory.");
         var d=prefix.AsSpan(DirectoryOffset,64);int count=U16(d,10),size=U16(d,12);uint entryStart=U32(d,16);
         if(count>99||size!=128||entryStart!=EntriesOffset||U32(d,20)!=GameConfigOffset||U16(d,24)!=GameConfigBytes||d[26]!=1||
@@ -279,19 +294,20 @@ public static class FcMbcxCodec
             if(offset>Math.Min(capacity,CapacityBytes)-allocated||ranges.Any(r=>offset<r.End&&offset+allocated>r.Start))throw new InvalidDataException("NES ranges overlap or exceed capacity.");
             int length=checked((int)U32(e,118));
             if(length<16||length>allocated)throw new InvalidDataException("Invalid NES file length.");
-            byte[] stored=read(offset,length);if(stored.Length!=length)throw new EndOfStreamException();
             var config=prefix.AsSpan(GameConfigOffset+(int)bank*GameConfigBytes,GameConfigBytes);
-            byte[] data=RestoreNesFile(stored,config);
-            var info=NesRomHeaderService.Parse(data);
-            info=ReadGameConfig(config,data,offset,info,e);
             int titleLength=U16(e,2);
             if(titleLength is <1 or >46||U16(e,14)!=0)throw new InvalidDataException("Invalid NES Unicode title length.");
             string title=Encoding.Unicode.GetString(e.Slice(16,titleLength*2));
-            games.Add(new(){Name=title,Data=data,Info=info,OriginalOffset=offset,OriginalAllocated=allocated,
-                OriginalSaveMap=e.Slice(110,Math.Min(8,(int)e[10])).ToArray(),OriginalBattery=e[12]!=0,OriginalStoredRamBytes=info.StoredRamBytes});
+            if(e[12]>1||((config[5]&4)!=0)!=(e[12]!=0))throw new InvalidDataException("Invalid legacy NES battery flag.");
+            if(directoryOnly)games.Add(ReadDirectoryGame(config,title,length,offset,allocated,e));
+            else {
+                byte[] stored=read(offset,length);if(stored.Length!=length)throw new EndOfStreamException();byte[] data=RestoreNesFile(stored,config);
+                var info=ReadGameConfig(config,data,offset,NesRomHeaderService.Parse(data),e);
+                games.Add(new(){Name=title,Data=data,Info=info,OriginalOffset=offset,OriginalAllocated=allocated,OriginalSaveMap=e.Slice(110,Math.Min(8,(int)e[10])).ToArray(),OriginalBattery=e[12]!=0,OriginalStoredRamBytes=info.StoredRamBytes,OriginalRomBytes=length,OriginalConfig=config.ToArray()});
+            }
             ranges.Add((offset,offset+allocated));
         }
-        MixDirectory.Read(prefix,capacity,read,ct,games);
+        MixDirectory.Read(prefix,capacity,read,ct,games,directoryOnly);
         return games;
     }
     public static void Export(string path,IReadOnlyList<FcGame> games,CancellationToken ct,IProgress<FcProgress> progress)

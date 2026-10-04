@@ -961,6 +961,8 @@ public partial class Form1
             UpdateFcActionButtons(busy);
             return;
         }
+        if(HasActiveMixWorkspace){UpdateMixRebuildMenu(busy,true);return;}
+        menuRom.Enabled=true;
         if (menuFcTools is not null) menuFcTools.Visible = false;
         menuCartridge.Enabled = true;
         menuSave.Enabled = true;

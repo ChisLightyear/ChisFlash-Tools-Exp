@@ -1,3 +1,19 @@
+# 0.91.2 — MIX configuration-only rebuild
+
+- Client 2.033 uses the shared Cartridge > Rebuild Menu action for MIX configuration-only updates.
+- Rebuild from the scanned card while retaining ROM addresses, original bytes, manual configuration and existing save mappings.
+- Pending workspace changes remain staged and are not applied by this maintenance action.
+- Preflight rejects ROM relocation/content changes and save-map changes before erase; unchanged configurations do not write NOR.
+- Require a valid writable scanned card and confirmation. Failures invalidate the source snapshot.
+
+# 0.91.1 — Directory-only MIX scans
+
+- Client 2.032 reads directory records, launch configuration and names without loading ROM payloads or title bitmaps.
+- Load ROMs only for explicit export, configuration checks or rebuild/write operations; verify content identities before rebuilding.
+- Validate metadata CRCs, ranges and the scanned source before access. Preserve existing dedicated SRAM mappings.
+- Bank-selection caching is scoped to an I/O session and invalidated around NOR writes and SRAM access.
+- This is a desktop-software update; no firmware installation or hardware validation is implied.
+
 # 0.91 — NES naming and GBC 12px fonts
 
 - Display NES consistently across the interface while retaining existing cartridge formats.

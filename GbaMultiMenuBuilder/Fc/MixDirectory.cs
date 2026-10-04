@@ -47,7 +47,7 @@ public static class MixDirectory
             Encoding.ASCII.GetBytes((md.Flags&1)!=0?"PAL     ":"NTSC    ").CopyTo(title[120..]);
         }
     }
-    public static void Read(byte[] prefix,int capacity,Func<int,int,byte[]> read,CancellationToken ct,List<FcGame> games)
+    public static void Read(byte[] prefix,int capacity,Func<int,int,byte[]> read,CancellationToken ct,List<FcGame> games,bool directoryOnly=false)
     {
         if(!IsMix(prefix))return;
         var h=prefix.AsSpan(MdMbcxCodec.Config,64);
@@ -63,6 +63,7 @@ public static class MixDirectory
             if(slot<0||slot>=198||U32(e,16)!=ListAddress(slot)||U32(e,24)!=DetailAddress(slot)||U32(e,20)!=Names+i*128)throw new InvalidDataException("Invalid shared title address.");
             var name=prefix.AsSpan(Names+i*128,128);int chars=U16(name,0);
             if(chars is <1 or >46)throw new InvalidDataException("Invalid MD title length.");
+            if(directoryOnly){games.Add(MdMbcxCodec.ReadDirectoryGame(Encoding.Unicode.GetString(name.Slice(2,chars*2)),length,offset,size,U16(e,2),U32(e,12),U32(e,8)));continue;}
             byte[] data=read(offset,length);if(data.Length!=length)throw new EndOfStreamException();
             var game=MdMbcxCodec.CreateGame(data,Encoding.Unicode.GetString(name.Slice(2,chars*2)));
             var md=game.Md!;int save=U32(e,8),bytes=U32(e,12),banks=game.Info.SaveBanks;

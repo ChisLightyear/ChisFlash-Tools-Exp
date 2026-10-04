@@ -49,6 +49,13 @@ public static class MdMbcxCodec
         return new FcGame {Name=title,Data=rom,Md=md,
             Info=new NesRomInfo(-1,0,rom.Length,0,0,md.SaveBytes,0,0,md.SaveBytes>0,false,0,"MD header",null)};
     }
+    internal static FcGame ReadDirectoryGame(string name,int length,int offset,int allocated,int flags,int saveBytes,int saveAddress,string? identity=null)
+    {
+        int banks=(saveBytes+8191)/8192;
+        if(length<512||(length&1)!=0||flags<0||flags>255||saveBytes<0||saveBytes>65536||(saveBytes!=0&&(saveBytes<2||(saveBytes&(saveBytes-1))!=0))||saveAddress<0||saveAddress%8192!=0||saveAddress>60*8192-banks*8192)
+            throw new InvalidDataException("Invalid MD directory configuration.");
+        return new(){Name=name,Md=new(flags,saveBytes),Info=new NesRomInfo(-1,0,length,0,0,saveBytes,0,0,saveBytes>0,false,0,"MD card configuration",null),OriginalOffset=offset,OriginalAllocated=allocated,OriginalRomBytes=length,OriginalBattery=saveBytes>0,OriginalStoredRamBytes=saveBytes,OriginalSaveMap=Enumerable.Range(saveAddress/8192,banks).Select(bank=>(byte)bank).ToArray(),DirectoryIdentity=identity};
+    }
     public static MdCardImage Build(IReadOnlyList<MdRomCandidate> games)
     {
         if(games.Count is <1 or >99)throw new InvalidDataException("MD requires 1–99 games.");

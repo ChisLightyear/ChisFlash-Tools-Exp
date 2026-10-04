@@ -1189,6 +1189,13 @@ public static class WaterCartScanner
             return false;
         }
 
+        if(GbaMultiMenuBuilder.Fc.FcMbcxCodec.HasFcIdentity(configHeader))
+        {
+            isFcContent = true;
+            log?.Invoke("MIX game library detected; opening the MIX workspace.");
+            return false;
+        }
+
         if(configHeader.AsSpan(0,4).SequenceEqual("MD02"u8)){
             isMdContent=true;log?.Invoke("检测到 MD02 数据卡；GB 菜单写入已禁用。");return false;
         }
@@ -1196,13 +1203,6 @@ public static class WaterCartScanner
         if (!configHeader.AsSpan(0, 7).SequenceEqual("MBCXCFG"u8) ||
             !directoryHeader.AsSpan(0, 7).SequenceEqual("MBCXROM"u8))
         {
-            return false;
-        }
-
-        if(GbaMultiMenuBuilder.Fc.FcMbcxCodec.HasFcIdentity(configHeader))
-        {
-            isFcContent = true;
-            log?.Invoke(T("fc","detected","NES data card detected; opening the NES workspace."));
             return false;
         }
 

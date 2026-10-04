@@ -3327,6 +3327,7 @@ public partial class Form1
 
     private async Task UpdateMenuAsync()
     {
+        if(HasActiveMixWorkspace){await fcWorkspace!.RebuildCardConfigurationAsync();return;}
         if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
         MenuUpdateActionMode actionMode = GetMenuUpdateActionMode();
         if (actionMode == MenuUpdateActionMode.None)

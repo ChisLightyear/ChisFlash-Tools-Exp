@@ -175,7 +175,7 @@ public partial class Form1
         groupBoxList.Enabled = true;
         menuFcTools.Visible = true;
         menuFcTools.Enabled = idle;
-        menuCartridge.Enabled = false;
+        UpdateMixRebuildMenu(!idle);
         menuSave.Enabled = false;
         menuPendingGbaCovers.Enabled = false;
         menuReplaceSelectedRom.Enabled = false;

@@ -4,7 +4,7 @@ ChisFlash 系列 GBA/GB/GBC 烧录卡的工具集（实验/加强线）。本仓
 
 本仓库提供程序源码与菜单内核，不含游戏、封面图库或外部中文字库。游戏 ROM 需自备；封面和背景图可选；**GBC 中文菜单必须自备 12px 字库**，不支持 8px。详见 [未包含的内容](#未包含的内容)。
 
-当前版本：**上位机 2.031 / 合卡器 0.91**。[下载](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/latest) · [更新说明](docs/CHANGELOG-2.031-0.91.md)
+当前源码：**上位机 2.033 / 合卡器 0.91.2**。[更新说明](docs/CHANGELOG-2.033-0.91.2.md)。[现有下载包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/latest)仍为 2.031 / 0.91；本次仅更新私有仓库源码，不替换下载包。
 
 **English version: [English](#english)**
 
@@ -73,7 +73,7 @@ Toolchain for ChisFlash GBA/GB/GBC flash cartridges (experimental / enhanced lin
 
 This repository includes program source and menu kernels. Games, cover libraries and external Chinese fonts are not included. Supply your own game ROMs; covers and backgrounds are optional. **Chinese GBC menus require a 12px font; 8px fonts are not supported.** See [Not included](#not-included).
 
-Current versions: **Client 2.031 / Builder 0.91**. [Downloads](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/latest) · [Changes](docs/CHANGELOG-2.031-0.91.md)
+Current source: **Client 2.033 / Builder 0.91.2**. [Changes](docs/CHANGELOG-2.033-0.91.2.md). [Existing downloads](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/latest) remain at 2.031 / 0.91; this private-repository source update does not replace those packages.
 
 **中文版：[中文](#chisflash-tools-exp)**
 
