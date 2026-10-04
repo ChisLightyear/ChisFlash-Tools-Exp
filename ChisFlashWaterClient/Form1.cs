@@ -43,6 +43,7 @@ public partial class Form1 : DpiAwareForm
         WaterLinkMultiNor,
         Chm1,
         Chm1NoBattery,
+        Mbc5EightMiB,
     }
 
     private enum GbcMenuLanguageMode
@@ -505,18 +506,18 @@ public partial class Form1 : DpiAwareForm
 
     private void RefreshGbcFontSelectorVisibility()
     {
-        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive;
+        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
         if (gbcMenuOptions is not null) gbcMenuOptions.Visible = visible;
         labelGbcMenuLanguageCaption.Visible = visible;
         comboBoxGbcMenuLanguage.Visible = visible;
         comboBoxGbcMenuLanguage.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
         if (checkBoxWaitcntPatch is not null)
         {
-            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive;
-            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !isBusy && !isAnalyzingQueueImports;
+            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
+            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !isBusy && !isAnalyzingQueueImports;
         }
 
-        bool gbaVisible = !visible && !IsFcWorkspaceActive;
+        bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
         if (gbaMenuOptions is not null) gbaMenuOptions.Visible = gbaVisible;
         if (labelGbaMenuCaption is not null)
         {
@@ -1216,6 +1217,8 @@ public partial class Form1 : DpiAwareForm
         ProgrammerKind? programmerKind,
         BurnProfileMode fallbackMode)
     {
+        if (fallbackMode == BurnProfileMode.Mbc5EightMiB)
+            return fallbackMode;
         if (programmerKind == ProgrammerKind.BeggarLegacy && scanResult?.IsChm1 == true &&
             (scanResult.WlMapping.IsDetected || !scanResult.MenuConfig.IsDetected || UsesChm1Mode(fallbackMode)))
             return scanResult.MenuConfig.IsDetected
@@ -1286,6 +1289,7 @@ public partial class Form1 : DpiAwareForm
             : T("ui", "cart_mode_gba", "GBA");
 
     private bool IsGbcWorkspaceMode() =>
+        IsMbc5EightMiBMode() ||
         GetSelectedBeggarCartMode() == BeggarCartMode.Gb ||
         currentScanResult?.IsBeggarMaxGbcMode == true ||
         GetSelectedBurnProfileMode() == BurnProfileMode.BeggarMaxSram;

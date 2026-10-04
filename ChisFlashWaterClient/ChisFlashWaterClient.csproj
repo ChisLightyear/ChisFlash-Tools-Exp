@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.35</Version>
-    <AssemblyVersion>2.0.35.0</AssemblyVersion>
-    <FileVersion>2.0.35.0</FileVersion>
-    <InformationalVersion>2.035 device identity</InformationalVersion>
+    <Version>2.0.36</Version>
+    <AssemblyVersion>2.0.36.0</AssemblyVersion>
+    <FileVersion>2.0.36.0</FileVersion>
+    <InformationalVersion>2.036 MBC5 five-slot preview</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>

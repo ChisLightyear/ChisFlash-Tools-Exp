@@ -615,6 +615,7 @@ public partial class Form1
 
             if(GetSelectedBurnProfileMode()==BurnProfileMode.FcMbcx){ShowFcWorkspace();return;}
             HideFcWorkspace();
+            HandleMbc5ProfileSelection();
             int selectedIndex = dataGridViewRoms.SelectedRows.Count > 0
                 ? dataGridViewRoms.SelectedRows[0].Index
                 : -1;
@@ -697,6 +698,7 @@ public partial class Form1
             EditMode = DataGridViewEditMode.EditProgrammatically,
         };
         components.Add(dataGridViewRoms);
+        dataGridViewRoms.SizeChanged += (_, _) => ResizeMbc5Rows();
         dataGridViewRoms.SelectionChanged += (_, _) => UpdateActionButtons(isBusy);
         dataGridViewRoms.CellMouseDown += DataGridViewRoms_CellMouseDown;
         dataGridViewRoms.CellContentClick += DataGridViewRoms_CellContentClick;
@@ -1014,7 +1016,8 @@ public partial class Form1
         labelMenuItemCountValue.Text = "0";
         labelMenuTitleValue.Text = T("ui", "not_detected", "Not Detected");
         labelScanMethodValue.Text = T("ui", "scan_method_nor_only", "NOR 4MiB Header Scan");
-        SetMenuBackgroundPreviewState(null, false);
+        if (IsMbc5EightMiBMode()) RefreshMbc5Preview();
+        else SetMenuBackgroundPreviewState(null, false);
     }
 
     private void SetMenuBackgroundPreviewState(Image? image, bool isVisible)
@@ -1040,6 +1043,7 @@ public partial class Form1
 
     private void UpdateMenuBackgroundPreview(WaterCartScanResult? result)
     {
+        if (IsMbc5EightMiBMode()) { RefreshMbc5Preview(); return; }
         if (result?.IsBeggarMaxGbcMode == true || IsGbcWorkspaceMode())
         {
             currentPreviewUsesGbcListMode = true;
@@ -2018,6 +2022,7 @@ public partial class Form1
 
     private void ShowMenuBackgroundPreviewDialog()
     {
+        if (IsMbc5EightMiBMode()) return;
         if (CanEditPendingGbaCovers())
         {
             ShowPendingGbaCoverEditor();
@@ -3118,6 +3123,7 @@ public partial class Form1
 
     private void UpdateWorkspaceGroupTitle()
     {
+        if (IsMbc5EightMiBMode()) { groupBoxList.Text = "MBC5 8M · " + Mbc5LayoutDescription(); return; }
         var usage = GetWorkspaceUsageSummary();
         var saveUsage = GetWorkspaceSaveUsageSummary();
         int pendingCount = GetPendingWorkspaceItemCount();

@@ -959,6 +959,7 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(busy); return; }
         if (IsFcWorkspaceActive)
         {
             UpdateFcActionButtons(busy);

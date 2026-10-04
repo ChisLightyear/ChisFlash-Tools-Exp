@@ -115,6 +115,7 @@ public partial class Form1
 
     private async Task SelectRomFilesForQueueAsync()
     {
+        if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy)
         {
             return;
@@ -138,6 +139,7 @@ public partial class Form1
 
     private async Task AddPendingRomFilesAsync(IEnumerable<string> filePaths)
     {
+        if (IsMbc5EightMiBMode()) { await AddMbc5FilesAsync(filePaths); return; }
         if (isBusy)
         {
             return;
@@ -665,6 +667,7 @@ public partial class Form1
 
     private void RebuildWorkspaceRows(int selectedIndex)
     {
+        if (IsMbc5EightMiBMode()) { RefreshMbc5Grid(selectedIndex); return; }
         workspaceRows.Clear();
 
         if (currentScanResult is not null)
@@ -714,6 +717,8 @@ public partial class Form1
 
     private void RefreshWorkspaceGrid(int selectedIndex = -1)
     {
+        if (IsMbc5EightMiBMode()) { RefreshMbc5Grid(selectedIndex); return; }
+        RestoreMbc5GridColumns();
         dataGridViewRoms.Rows.Clear();
         if (dataGridViewRoms.Columns["GbcDedicatedSave"] is DataGridViewColumn dedicatedSaveColumn)
         {
@@ -1137,6 +1142,7 @@ public partial class Form1
 
     private void RemoveSelectedQueuedRom()
     {
+        if (IsMbc5EightMiBMode()) { RemoveMbc5Slot(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.RemoveSelected(); return; }
         if (isBusy)
         {
@@ -1174,6 +1180,7 @@ public partial class Form1
 
     private void ClearQueuedRoms()
     {
+        if (IsMbc5EightMiBMode()) { ClearMbc5Slots(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.ClearGames(); return; }
         if (isBusy)
         {
@@ -2758,6 +2765,7 @@ public partial class Form1
 
     private void DataGridViewRoms_MouseMove(object? sender, MouseEventArgs e)
     {
+        if (IsMbc5EightMiBMode()) return;
         if (isBusy ||
             isAnalyzingQueueImports ||
             IsWorkspaceModificationLocked() ||
@@ -2787,6 +2795,7 @@ public partial class Form1
 
     private void DataGridViewRoms_DragEnter(object? sender, DragEventArgs e)
     {
+        if (IsMbc5EightMiBMode()) { e.Effect = !isBusy && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None; return; }
         if (isBusy)
         {
             e.Effect = DragDropEffects.None;
@@ -2815,6 +2824,13 @@ public partial class Form1
 
     private void DataGridViewRoms_DragOver(object? sender, DragEventArgs e)
     {
+        if (IsMbc5EightMiBMode())
+        {
+            Point location = dataGridViewRoms.PointToClient(new Point(e.X, e.Y));
+            int slot = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
+            e.Effect = !isBusy && slot >= 0 && mbc5Layout.GetSlot(slot).Enabled && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+            return;
+        }
         if (isBusy)
         {
             e.Effect = DragDropEffects.None;
@@ -2854,6 +2870,14 @@ public partial class Form1
 
     private async void DataGridViewRoms_DragDrop(object? sender, DragEventArgs e)
     {
+        if (IsMbc5EightMiBMode())
+        {
+            Point location = dataGridViewRoms.PointToClient(new Point(e.X, e.Y));
+            int slot = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
+            if (slot >= 0 && e.Data?.GetData(DataFormats.FileDrop) is string[] paths)
+                await RunUiActionSafelyAsync(() => AddMbc5FilesAsync(paths, slot));
+            return;
+        }
         if (isBusy)
         {
             return;
@@ -2956,6 +2980,7 @@ public partial class Form1
 
     private void DataGridViewRoms_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
+        if (IsMbc5EightMiBMode()) { if (e.RowIndex >= 0 && mbc5Layout.GetSlot(e.RowIndex).Enabled) _ = RunUiActionSafelyAsync(SelectMbc5FilesAsync); return; }
         if (isBusy || isAnalyzingQueueImports || IsWorkspaceModificationLocked() || e.RowIndex < 0)
         {
             return;

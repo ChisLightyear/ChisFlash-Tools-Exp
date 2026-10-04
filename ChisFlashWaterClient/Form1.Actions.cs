@@ -104,6 +104,7 @@ public partial class Form1
 
     private async Task ReplaceSelectedRomAsync()
     {
+        if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy || isAnalyzingQueueImports)
         {
             return;
@@ -217,6 +218,7 @@ public partial class Form1
 
     private async Task HandlePrimaryQueueActionAsync()
     {
+        if (IsMbc5EightMiBMode()) { await HandleMbc5PrimaryActionAsync(); return; }
         if (IsFcWorkspaceActive)
         {
             if (fcWorkspace!.IsBusy) fcWorkspace.Cancel();
@@ -284,6 +286,7 @@ public partial class Form1
 
     private async Task ExportSelectedEntryRomAsync()
     {
+        if (IsMbc5EightMiBMode()) { await ExportMbc5SlotAsync(); return; }
         if (IsFcWorkspaceActive) { await fcWorkspace!.ExportSelectedRomAsync(); return; }
         if (!TryResolveSelectedRomExportTarget(out SelectedRomExportTargetInfo? target, out string reason) || target is null)
         {

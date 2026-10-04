@@ -97,6 +97,9 @@ public partial class Form1
 
     private async Task ScanSelectedPortAsync()
     {
+        if (IsMbc5EightMiBMode() && !isBusy && mbc5LayoutChanged && mbc5Layout.HasContent && MessageBox.Show(this,
+            Mbc5Text("rescan_confirm", "扫描会用卡带内容替换当前五槽工作区。继续？", "Scanning replaces the five-slot workspace with cartridge contents. Continue?"),
+            "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         if(IsFcWorkspaceActive){if(CanUseFcDevice)await fcWorkspace!.ScanAsync();return;}
 
         string? portName = GetSelectedPortName();
@@ -294,7 +297,7 @@ public partial class Form1
                             "beggar_scan_mode_gb",
                             "Beggar cart mode is set to GB. Using the GBC/MAX probe."));
 
-                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result))
+                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result, scanContent: burnProfileMode != BurnProfileMode.Mbc5EightMiB))
                         {
                             return new ScanReadAttempt(
                                 null,
@@ -326,7 +329,12 @@ public partial class Form1
                         useWaterLinkMultiNor: burnProfileMode == BurnProfileMode.WaterLinkMultiNor);
                 }
 
-                if (!result.IsFcMbcxContent && !result.IsMdMbcxContent)
+                if (burnProfileMode == BurnProfileMode.Mbc5EightMiB)
+                {
+                    if (result.IsBeggarMaxGbcMode && result.Geometry.DeviceSizeBytes == Mbc5EightMiBLayout.CapacityBytes)
+                        result.Mbc5EightMiBRomImage = ReadMbc5ImageFromDevice(protocol);
+                }
+                else if (!result.IsFcMbcxContent && !result.IsMdMbcxContent)
                 {
                     PopulateSavePresenceForScan(protocol, result, programmerKind);
                     PopulateMenuBackgroundPreviewForScan(protocol, result, programmerKind);
@@ -1314,6 +1322,7 @@ public partial class Form1
             ProgrammerKind.BeggarLegacy =>
                 beggarCartMode == BeggarCartMode.Gb
                     ? [
+                        new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB),
                         new BurnProfileModeOption(
                             T("value", "burn_profile_beggar_max_sram", "Beggar MAX (SRAM)"),
                             BurnProfileMode.BeggarMaxSram),
@@ -1339,7 +1348,7 @@ public partial class Form1
                     T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"),
                     BurnProfileMode.WaterLinkMultiNor),
             ],
-            _ => [],
+            _ => [new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB)],
         };
 
         burnProfileModeSelectionInitialized = false;
@@ -1356,6 +1365,12 @@ public partial class Form1
             ?? burnProfileModeOptions.FirstOrDefault();
         burnProfileModeSelectionInitialized = true;
         comboBoxBurnProfileMode.Enabled = !isBusy && burnProfileModeOptions.Count > 0;
+        if (IsMbc5EightMiBMode()) RefreshMbc5Grid();
+        else if (mbc5ProfileActive)
+        {
+            HandleMbc5ProfileSelection();
+            RefreshWorkspaceGrid();
+        }
     }
 
     private void AdjustPortDropDownWidth()
@@ -1398,6 +1413,11 @@ public partial class Form1
 
         lastScannedPortName = GetSelectedPortName() ?? string.Empty;
         currentScanResult = result;
+        if (IsMbc5EightMiBMode() && result.Mbc5EightMiBRomImage is { } mbc5Image && !ReferenceEquals(mbc5LoadedScanImage, mbc5Image))
+        {
+            try { LoadMbc5ScanImage(mbc5Image); mbc5LoadedScanImage = mbc5Image; }
+            catch { currentScanResult = null; lastScannedPortName = string.Empty; throw; }
+        }
         RefreshBurnProfileModeOptions(GetDetectedBurnProfileMode(result, GetSelectedProgrammerKind(), GetSelectedBurnProfileMode()));
         if (result.NoCartridgeDetected)
         {
@@ -1456,6 +1476,8 @@ public partial class Form1
         {
             return;
         }
+
+        if (IsMbc5EightMiBMode()) return;
 
         if (GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy)
         {
@@ -1633,6 +1655,7 @@ public partial class Form1
 
     private void UpdateSelectionCommandStates()
     {
+        if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(isBusy); return; }
         _ = TryGetSelectedEntry(out WaterCartEntry? selectedEntry);
         bool hasActiveScan = HasActiveScanResult();
         bool scanCapacityInvalid = IsCurrentScanCapacityInvalid();
