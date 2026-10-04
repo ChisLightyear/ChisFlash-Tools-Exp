@@ -27,6 +27,7 @@ public static class GameLibraryDirectory
     }
     public static byte[] Write(IReadOnlyList<FcPlacement> entries)
     {
+        if(entries.Any(entry=>entry.Game.Snes is not null))throw new InvalidDataException(GbaMultiMenuBuilder.Snes.SnesRomImportService.LaunchUnavailable);
         if(entries.Any(entry=>!entry.Game.HasRomData))throw new InvalidOperationException("Load ROM content before rebuilding the library.");
         ValidateCapacity(entries.Select(entry=>entry.Game).ToArray());
         byte[] prefix=Enumerable.Repeat((byte)255,FcMbcxCodec.PrefixBytes).ToArray();

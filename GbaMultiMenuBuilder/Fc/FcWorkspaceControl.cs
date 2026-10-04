@@ -33,7 +33,7 @@ public sealed class FcWorkspaceControl : UserControl
     public bool HasGames => games.Count > 0;
     public bool HasSelection => grid.CurrentRow?.DataBoundItem is FcGame;
     public bool CanExportSelection => grid.CurrentRow?.DataBoundItem is FcGame { RomBytes: > 0 };
-    public bool CanEditConfiguration => grid.CurrentRow?.DataBoundItem is FcGame { Md: null };
+    public bool CanEditConfiguration => grid.CurrentRow?.DataBoundItem is FcGame { IsNes: true };
     public int GameCount => games.Count;
     public FcCardSnapshot? Snapshot => snapshot;
     public string StatusText => status.Text;
@@ -58,7 +58,7 @@ public sealed class FcWorkspaceControl : UserControl
         labels.Add((title,"mode","MIX | NES + MD (MBCX)"));
         layout.Controls.Add(title,0,0);layout.Controls.Add(actions,0,1);layout.Controls.Add(grid,0,2);layout.Controls.Add(summary,0,3);layout.Controls.Add(progress,0,4);layout.Controls.Add(status,0,5);Controls.Add(layout);
         AddButton("back","Other modes",(_,_)=>ExitRequested?.Invoke());
-        AddButton("add","Add NES / MD / ZIP",async(_,_)=>{using var d=new OpenFileDialog(){Multiselect=true,Filter="NES / MD / ZIP (*.nes;*.md;*.gen;*.smd;*.bin;*.zip)|*.nes;*.md;*.gen;*.smd;*.bin;*.zip"};if(d.ShowDialog(this)==DialogResult.OK)await ImportAsync(d.FileNames);});
+        AddButton("add","Add NES / MD / SNES / ZIP",async(_,_)=>{using var d=new OpenFileDialog(){Multiselect=true,Filter="NES / MD / SNES / ZIP (*.nes;*.md;*.gen;*.smd;*.bin;*.sfc;*.smc;*.zip)|*.nes;*.md;*.gen;*.smd;*.bin;*.sfc;*.smc;*.zip"};if(d.ShowDialog(this)==DialogResult.OK)await ImportAsync(d.FileNames);});
         AddButton("remove","Remove",(_,_)=>RemoveSelected());
         AddButton("clear","Clear",(_,_)=>ClearGames());
         AddButton("up","Up",(_,_)=>MoveRow(-1));AddButton("down","Down",(_,_)=>MoveRow(1));
@@ -81,9 +81,12 @@ public sealed class FcWorkspaceControl : UserControl
         Column(nameof(FcGame.Compatibility),"compatibility","Import check",320);
         Column(nameof(FcGame.Snapshot),"snapshot","Snapshot",130);
         var savesMenu=new ContextMenuStrip();
+        var exportRom=new ToolStripMenuItem(L("export_rom","Export selected ROM")){Name="exportRom"};
+        exportRom.Click+=async(_,_)=>await ExportSelectedRomAsync();
         var exportSaves=new ToolStripMenuItem("导出 MIX 存档");var importSaves=new ToolStripMenuItem("导入 MIX 存档");
         exportSaves.Click+=async(_,_)=>await ExportSavesAsync();importSaves.Click+=async(_,_)=>await ImportSavesAsync();
-        savesMenu.Items.AddRange([exportSaves,importSaves]);
+        savesMenu.Items.AddRange([exportRom,new ToolStripSeparator(),exportSaves,importSaves]);
+        savesMenu.Opening+=(_,_)=>exportRom.Enabled=!IsBusy&&CanExportSelection;
         savesMenu.Opening+=(_,_)=>{exportSaves.Enabled=!IsBusy&&(backendFactory is null?imageSnapshot is not null:snapshot is {IsFc:true});importSaves.Enabled=!IsBusy&&(backendFactory is null?games.Count>0:snapshot is {IsFc:true,Writable:true});};
         grid.ContextMenuStrip=savesMenu;
         grid.DataSource=games;
@@ -92,8 +95,13 @@ public sealed class FcWorkspaceControl : UserControl
         grid.CurrentCellDirtyStateChanged+=(_,_)=>{if(grid.IsCurrentCellDirty)grid.CommitEdit(DataGridViewDataErrorContexts.Commit);};
         grid.CellValueChanged+=(_,_)=>RefreshSummary();grid.DataError+=(_,e)=>{e.ThrowException=false;};
         grid.CellFormatting+=(_,e)=>{
+            if(e.RowIndex>=0&&grid.Rows[e.RowIndex].DataBoundItem is FcGame {Snes:not null})e.CellStyle!.ForeColor=Color.DimGray;
             if(e.Value is string message)e.Value=NesConfiguration.Localize(message,text);
             if(e.Value is string value){string? key=value switch{"Yes"=>"yes","No"=>"no","None"=>"none","Shared"=>"shared","Dedicated"=>"dedicated","OK"=>"ok","Mesen DB (validated)"=>"metadata_db","Mesen DB + mapper fallback"=>"metadata_db_fallback","iNES / mapper fallback"=>"metadata_fallback","Known content correction"=>"metadata_known","Manual configuration"=>"metadata_manual","Card configuration"=>"metadata_card","Board corrected; gameplay unverified"=>"board_unverified","Legacy MMC3 over 512 KiB: check mapper"=>"legacy_large_mmc3","Legacy header: board not independently confirmed"=>"legacy_unconfirmed","Known correction available: rebuild configuration"=>"correction_available","Card override retained; review configuration manually"=>"override_retained",_=>null};if(key is not null)e.Value=L(key,value);}
+        };
+        grid.CellToolTipTextNeeded+=(_,args)=>{
+            if(args.RowIndex>=0&&grid.Rows[args.RowIndex].DataBoundItem is FcGame {Snes:{ } snes} game)
+                args.ToolTipText=$"SNES · {snes.MappingDisplay} · {snes.ChipDisplay} · {snes.RegionDisplay}\n{game.Compatibility}";
         };
         DragEnter+=(_,e)=>e.Effect=!IsBusy&&e.Data?.GetDataPresent(DataFormats.FileDrop)==true?DragDropEffects.Copy:DragDropEffects.None;
         DragDrop+=async(_,e)=>{if(!IsBusy&&e.Data?.GetData(DataFormats.FileDrop) is string[] paths)await ImportAsync(paths);};
@@ -141,7 +149,7 @@ public sealed class FcWorkspaceControl : UserControl
     {
         if(IsBusy||grid.CurrentRow?.DataBoundItem is not FcGame game||game.RomBytes==0)return;
         string name=string.Concat(game.Name.Select(character=>Path.GetInvalidFileNameChars().Contains(character)?'_':character));
-        string extension=game.Md is null?"nes":"md";
+        string extension=game.Snes is not null?"sfc":game.Md is null?"nes":"md";
         using var dialog=new SaveFileDialog{FileName=name+"."+extension,Filter=$"ROM (*.{extension})|*.{extension}",DefaultExt=extension,AddExtension=true,OverwritePrompt=true};
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         await RunAsync(async(ct,reporter)=>{await EnsureRomDataAsync(new[]{game.Id},ct,reporter);byte[] data=games.Single(item=>item.Id==game.Id).Data.ToArray();await File.WriteAllBytesAsync(dialog.FileName,data,ct);status.Text=L("rom_exported","ROM exported.");});
@@ -192,12 +200,12 @@ public sealed class FcWorkspaceControl : UserControl
     }
     public void EditConfiguration()
     {
-        if(IsBusy||grid.CurrentRow?.DataBoundItem is not FcGame game||game.Md is not null)return;
+        if(IsBusy||grid.CurrentRow?.DataBoundItem is not FcGame game||!game.IsNes)return;
         _=RunAsync(async(ct,reporter)=>{await EnsureRomDataAsync(new[]{game.Id},ct,reporter);EditLoadedConfiguration();});
     }
     private void EditLoadedConfiguration()
     {
-        grid.EndEdit();if(grid.CurrentRow?.DataBoundItem is not FcGame game||game.Md is not null)return;
+        grid.EndEdit();if(grid.CurrentRow?.DataBoundItem is not FcGame game||!game.IsNes)return;
         try{
             using var dialog=new FcConfigurationDialog(game,text);
             if(dialog.ShowDialog(this)!=DialogResult.OK||dialog.Result is null)return;
@@ -223,13 +231,13 @@ public sealed class FcWorkspaceControl : UserControl
     public void RebuildConfigurations()
     {
         if(IsBusy)return;
-        _=RunAsync(async(ct,reporter)=>{await EnsureRomDataAsync(games.Where(game=>game.Enabled&&game.Md is null).Select(game=>game.Id).ToArray(),ct,reporter);RebuildLoadedConfigurations();});
+        _=RunAsync(async(ct,reporter)=>{await EnsureRomDataAsync(games.Where(game=>game.Enabled&&game.IsNes).Select(game=>game.Id).ToArray(),ct,reporter);RebuildLoadedConfigurations();});
     }
     private void RebuildLoadedConfigurations()
     {
         grid.EndEdit();var staged=games.Select(g=>g.Copy()).ToList();var lines=new List<string>();
         try{
-            foreach(var g in staged.Where(g=>g.Enabled&&g.Md is null)){
+            foreach(var g in staged.Where(g=>g.Enabled&&g.IsNes)){
                 var old=g.Info;var next=NesConfiguration.Reidentify(g);
                 if(!next.Supported){lines.Add(g.Name+": "+next.Error);continue;}
                 NesConfiguration.Validate(g,next);g.Info=next;
@@ -262,7 +270,7 @@ public sealed class FcWorkspaceControl : UserControl
                 plan.Entries.Count,plan.EndBytes/1048576d,(snapshot?.Capacity??FcMbcxCodec.CapacityBytes)/1048576d,plan.DedicatedBanks,plan.SharedBanks);
             summary.Text+=Environment.NewLine+L("core_support_notice","NES and MD share this card; select slot 3 for NES or slot 4 for MD. Requires the paired MIX MCU firmware.");
             summary.Text+=Environment.NewLine+string.Format(L("correction_counts","自动识别/纠错 {0}｜手动修正 {1}｜待核对 {2}；扫描原卡后可检查 / 重建配置。"),
-                games.Count(g=>g.Md is null&&g.Info.CorrectionKind is 1 or 2),games.Count(g=>g.Md is null&&g.Info.CorrectionKind==3),games.Count(g=>g.Md is null&&g.Info.Warning is not null&&g.Info.CorrectionKind==0));
+                games.Count(g=>g.IsNes&&g.Info.CorrectionKind is 1 or 2),games.Count(g=>g.IsNes&&g.Info.CorrectionKind==3),games.Count(g=>g.IsNes&&g.Info.Warning is not null&&g.Info.CorrectionKind==0));
             int unselected=games.Count(g=>!g.Enabled),unsupported=games.Count(g=>!g.Info.Supported);
             summary.Text+=Environment.NewLine+string.Format(L("selection_counts","Imported {0} | checked {1} | unchecked {2} | incompatible {3}; unchecked games are not written."),games.Count,games.Count(g=>g.Enabled),unselected,unsupported);
             if(unsupported>0)summary.Text+=Environment.NewLine+L("excluded_names","Incompatible:")+" "+string.Join("; ",games.Where(g=>!g.Info.Supported).Take(3).Select(g=>g.Name+": "+g.Info.Error))+(unsupported>3?" …":"");
@@ -317,7 +325,14 @@ public sealed class FcWorkspaceControl : UserControl
             foreach(var source in Services.RomArchiveImportService.Preview(path))
             {
                 ct.ThrowIfCancellationRequested();
-                if(source.Platform==Services.RomPlatform.Md){
+                if(source.Platform==Services.RomPlatform.Snes){
+                    try{imported.Add(Snes.SnesRomImportService.CreateGame(Snes.SnesRomImportService.ReadRom(source,ct),source.Title));}
+                    catch(Exception exception)when(exception is IOException or InvalidDataException){
+                        var info=Snes.SnesRomHeaderService.Parse([]) with{Error=exception.Message};
+                        imported.Add(new FcGame{Name=source.Title,Enabled=false,Snes=info,
+                            Info=new NesRomInfo(-1,0,0,0,0,0,0,0,false,false,0,"SNES header",exception.Message)});
+                    }
+                }else if(source.Platform==Services.RomPlatform.Md){
                     var md=source.MdRom!;
                     if(md.CanRead)imported.Add(Md.MdMbcxCodec.CreateGame(Md.MdRomImportService.ReadRom(md),source.Title));
                     else imported.Add(new FcGame{Name=source.Title,Data=[],Enabled=false,Md=new(0,0),

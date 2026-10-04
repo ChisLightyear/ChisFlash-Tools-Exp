@@ -43,6 +43,6 @@ public partial class Form1
     }
 
     private bool HasUnreadyPlatformImports(IEnumerable<WorkspaceListRow> rows)=>rows.Any(row=>row.PendingItem is { } item&&
-        (item.ImportedPlatform is RomPlatform.Md or RomPlatform.Fc ||
+        (item.ImportedPlatform is RomPlatform.Md or RomPlatform.Fc or RomPlatform.Snes ||
          item.ImportedPlatform==RomPlatform.Gbc&&!IsGbcWorkspaceMode() || item.ImportedPlatform==RomPlatform.Gba&&IsGbcWorkspaceMode()));
 }

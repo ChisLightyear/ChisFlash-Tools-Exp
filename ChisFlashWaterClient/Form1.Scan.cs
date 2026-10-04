@@ -1348,7 +1348,8 @@ public partial class Form1
                     T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"),
                     BurnProfileMode.WaterLinkMultiNor),
             ],
-            _ => [new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB)],
+            _ => [new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB),
+                new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD · SNES import preview (MBCX)"), BurnProfileMode.FcMbcx)],
         };
 
         burnProfileModeSelectionInitialized = false;

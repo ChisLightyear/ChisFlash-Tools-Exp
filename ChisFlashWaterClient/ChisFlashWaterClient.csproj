@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.36</Version>
-    <AssemblyVersion>2.0.36.0</AssemblyVersion>
-    <FileVersion>2.0.36.0</FileVersion>
-    <InformationalVersion>2.036 MBC5 five-slot preview</InformationalVersion>
+    <Version>2.0.37</Version>
+    <AssemblyVersion>2.0.37.0</AssemblyVersion>
+    <FileVersion>2.0.37.0</FileVersion>
+    <InformationalVersion>2.037 SNES import preview</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -134,6 +134,7 @@
   <ItemGroup>
     <Compile Include="..\GbaMultiMenuBuilder\Fc\*.cs" Link="Fc\%(Filename)%(Extension)" />
     <Compile Include="..\GbaMultiMenuBuilder\Md\*.cs" Link="Md\%(Filename)%(Extension)" />
+    <Compile Include="..\GbaMultiMenuBuilder\Snes\*.cs" Link="Snes\%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\GbaMultiMenuBuilder\Fc\MesenNesDB.csv" LogicalName="ChisFlash.Fc.MesenNesDB" />
   </ItemGroup>
 </Project>

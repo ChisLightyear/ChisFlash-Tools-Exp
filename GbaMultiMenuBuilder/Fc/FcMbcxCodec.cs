@@ -1,13 +1,16 @@
 using System.Buffers.Binary;
 using System.Text;
 using GbaMultiMenuBuilder.Md;
+using GbaMultiMenuBuilder.Snes;
 
 namespace GbaMultiMenuBuilder.Fc;
 
 public sealed class FcGame
 {
     public MdGameConfig? Md {get;init;}
-    public string Platform=>Md is not null?"MD":Info.Mapper>=0?"NES":Info.MetadataSource.ToUpperInvariant();
+    public SnesRomInfo? Snes {get;init;}
+    public bool IsNes=>Md is null&&Snes is null&&Info.Mapper>=0;
+    public string Platform=>Snes is not null?"SNES":Md is not null?"MD":Info.Mapper>=0?"NES":Info.MetadataSource.ToUpperInvariant();
     public Guid Id {get;init;}=Guid.NewGuid();
     public bool Enabled {get;set;}=true;
     public string Name {get;set;}="";
@@ -24,22 +27,22 @@ public sealed class FcGame
     public bool OriginalBattery {get;init;}
     public int OriginalStoredRamBytes {get;init;}=-1;
     public int Mapper=>Info.Mapper;
-    public string MapperDisplay=>Md is null?Info.Mapper.ToString():"—";
-    public string HeaderMapperDisplay=>Md is not null||Data.Length<16?"—":
+    public string MapperDisplay=>Snes?.MappingDisplay??(Md is null?Info.Mapper.ToString():"—");
+    public string HeaderMapperDisplay=>!IsNes||Data.Length<16?"—":
         (((Data[6]>>4)|(Data[7]&240)|((Data[7]&12)==8?(Data[8]&15)<<8:0))).ToString();
     public string Prg=>$"{Info.PrgBytes/1024} KiB";
-    public string Chr=>Md is null?$"{Info.ChrBytes/1024} KiB":"—";
+    public string Chr=>IsNes?$"{Info.ChrBytes/1024} KiB":"—";
     public string Ram=>$"{Info.StoredRamBytes} B / {Info.SaveBanks*8} KiB";
     public string Battery=>Info.Battery?"Yes":"No";
     public string SaveMode=>Info.SaveBanks==0?"None":Info.Battery?"Dedicated":"Shared";
     public string SaveBankList {get;set;}="—";
     public string Metadata=>Info.MetadataSource;
-    public string Compatibility=>Info.Error??Info.Warning??"OK";
+    public string Compatibility=>Snes is not null&&Snes.Warning is not null?(Info.Error+" "+Snes.Warning):Info.Error??Info.Warning??"OK";
     public string Snapshot
     {
         get
         {
-            if(Md is not null)return "—";
+            if(!IsNes)return "—";
             var plan=FcSnapshotPlan.Create(Info.Mapper,Info.ChrBytes,Info.ChrRamBytes+Info.SaveChrRamBytes,Info.StoredRamBytes);
             if(!plan.Enabled)return "Unavailable";
             return plan.SpillBytes==0?$"{plan.TotalBytes/1024d:F1} KiB":$"128 + {plan.SpillBytes/1024d:F1} KiB";
@@ -47,7 +50,7 @@ public sealed class FcGame
     }
     public int AllocatedBytes=>FcMbcxCodec.Align(RomBytes,FcMbcxCodec.RomBankBytes);
     public FcGame Copy()=>WithData(Data,DirectoryIdentity);
-    public FcGame WithData(byte[] data,string? identity=null,NesRomInfo? info=null)=>new(){Id=Id,Enabled=Enabled,Name=Name,Data=data,Info=info??Info,Md=Md,OriginalOffset=OriginalOffset,OriginalAllocated=OriginalAllocated,OriginalSaveMap=OriginalSaveMap,OriginalBattery=OriginalBattery,OriginalStoredRamBytes=OriginalStoredRamBytes,OriginalRomBytes=RomBytes,OriginalConfig=OriginalConfig,DirectoryIdentity=identity??DirectoryIdentity};
+    public FcGame WithData(byte[] data,string? identity=null,NesRomInfo? info=null)=>new(){Id=Id,Enabled=Enabled,Name=Name,Data=data,Info=info??Info,Md=Md,Snes=Snes,OriginalOffset=OriginalOffset,OriginalAllocated=OriginalAllocated,OriginalSaveMap=OriginalSaveMap,OriginalBattery=OriginalBattery,OriginalStoredRamBytes=OriginalStoredRamBytes,OriginalRomBytes=RomBytes,OriginalConfig=OriginalConfig,DirectoryIdentity=identity??DirectoryIdentity};
 }
 public sealed record FcPlacement(FcGame Game,int Offset,int AllocatedBytes,byte[] SaveMap);
 public sealed record FcLayout(IReadOnlyList<FcPlacement> Entries,int EndBytes,int DedicatedBanks,int SharedBanks);
@@ -82,7 +85,7 @@ public static class FcMbcxCodec
     {
         if(offset<0)throw new ArgumentOutOfRangeException(nameof(offset));
         target.Fill(255);
-        if(game.Md is not null){int n=Math.Min(target.Length,Math.Max(0,game.Data.Length-offset));game.Data.AsSpan(offset,n).CopyTo(target);return;}
+        if(game.Md is not null||game.Snes is not null){int n=Math.Min(target.Length,Math.Max(0,game.Data.Length-offset));game.Data.AsSpan(offset,n).CopyTo(target);return;}
         int lead=FilePrefixBytes(game),body=game.Data.Length-lead;
         if(body<0)throw new InvalidDataException("Truncated NES header/trainer.");
         int count=Math.Min(target.Length,Math.Max(0,game.Data.Length-offset)),copied=0;
@@ -111,6 +114,7 @@ public static class FcMbcxCodec
     public static FcLayout Plan(IReadOnlyList<FcGame> games,int capacity,bool preserveLocations)
     {
         var rows=games.Where(g=>g.Enabled).ToList();capacity=Math.Min(capacity,CapacityBytes);
+        if(rows.Any(game=>game.Snes is not null))throw new InvalidDataException(SnesRomImportService.LaunchUnavailable);
         GameLibraryDirectory.ValidateCapacity(rows);
         if(capacity<PrefixBytes)throw new InvalidDataException("NES: card capacity too small.");
         if(rows.Select(g=>g.Id).Distinct().Count()!=rows.Count)throw new InvalidDataException("Duplicate NES entry identity.");

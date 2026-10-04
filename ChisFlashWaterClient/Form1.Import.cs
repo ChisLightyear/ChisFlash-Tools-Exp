@@ -493,11 +493,19 @@ public partial class Form1
         bool isGbcWorkspaceMode)
     {
         var sources = RomArchiveImportService.Preview(filePath);
-        if (sources.Any(s=>s.MdRom is not null || s.EntryIndex is not null || s.Platform==RomPlatform.Fc))
+        if (sources.Any(s=>s.MdRom is not null || s.EntryIndex is not null || s.Platform is RomPlatform.Fc or RomPlatform.Snes))
         {
             var imported = new List<PendingRomImportItem>();
             foreach(var source in sources)
             {
+                if(source.Platform==RomPlatform.Snes)
+                {
+                    var snes=GbaMultiMenuBuilder.Snes.SnesRomImportService.CreateGame(GbaMultiMenuBuilder.Snes.SnesRomImportService.ReadRom(source),source.Title);
+                    imported.Add(new PendingRomImportItem{ImportedPlatform=RomPlatform.Snes,FilePath=RomArchiveImportService.Materialize(source),SourceImportKey=filePath,
+                        FileName=source.EntryName,DisplayTitle=source.Title,HeaderTitle="SNES · "+snes.Snes!.MappingDisplay,FileSizeBytes=snes.RomBytes,
+                        SaveTypeInfo=new(DetectedSaveTypeKind.Unknown,null)});
+                    continue;
+                }
                 if(source.MdRom is null)
                 {
                     string actual=RomArchiveImportService.Materialize(source);

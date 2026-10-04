@@ -1,3 +1,9 @@
+# 0.91.3 — SNES import preview
+
+- MIX recognizes SFC/SMC and ZIP members, inspects ordinary/extended SNES headers, and exposes individual SFC export without modifying sources.
+- SNES rows remain unchecked: the installed-core launch contract is not confirmed. Layout and GLB2 guards reject forced SNES packing before NOR/SRAM writes.
+- This is not SNES gameplay or hardware support. See the paired Client 2.037 / Builder 0.91.3 change notes for scope and next steps.
+
 # 0.91.2 — MIX configuration-only rebuild
 
 - Client 2.033 uses the shared Cartridge > Rebuild Menu action for MIX configuration-only updates.

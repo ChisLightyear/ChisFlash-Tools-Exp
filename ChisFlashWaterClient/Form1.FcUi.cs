@@ -33,7 +33,7 @@ public partial class Form1
             return item;
         }
         Task Local(Action action) { action(); return Task.CompletedTask; }
-        menuFcTools = new ToolStripMenuItem("MIX · NES / MD") { Visible = false };
+        menuFcTools = new ToolStripMenuItem("MIX · NES / MD / SNES 导入预览") { Visible = false };
         menuFcUp = Add("up", "Up", () => Local(() => fcWorkspace!.MoveRow(-1)));
         menuFcDown = Add("down", "Down", () => Local(() => fcWorkspace!.MoveRow(1)));
         menuFcPreview = Add("title_preview", "12px title preview", () => Local(() => fcWorkspace!.PreviewTitle()));
@@ -98,7 +98,7 @@ public partial class Form1
         UpdateFcCardInfo();
         UpdateActionButtons(false);
         var queued = pendingImportItems
-            .Where(item => item.FcRom is not null || item.MdRom is not null)
+            .Where(item => item.FcRom is not null || item.MdRom is not null || item.ImportedPlatform == GbaMultiMenuBuilder.Services.RomPlatform.Snes)
             .Select(item => item.MdRom?.SourcePath ?? (string.IsNullOrWhiteSpace(item.SourceImportKey) ? item.FilePath : item.SourceImportKey))
             .Where(path => !queuedFcSources.Contains(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (queued.Length > 0)
@@ -162,7 +162,7 @@ public partial class Form1
         labelMenuItemCountValue.Text = (snapshot?.Games.Count ?? 0).ToString();
         labelMenuTitleValue.Text = "NES / MD";
         labelScanMethodValue.Text = "MBCX";
-        groupBoxList.Text = T("ui", "rom_workspace", "ROM Workspace") + " · NES / MD";
+        groupBoxList.Text = T("ui", "rom_workspace", "ROM Workspace") + " · NES / MD · SNES导入预览";
     }
 
     private void UpdateFcActionButtons(bool busy)

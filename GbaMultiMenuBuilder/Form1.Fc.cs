@@ -23,7 +23,7 @@ public partial class Form1
         if(_fcWorkspace.Parent!=this)Controls.Add(_fcWorkspace);
         _fcWorkspace.RefreshLanguage();
         previous.Visible=false;_fcWorkspace.Visible=true;_fcWorkspace.BringToFront();
-        var queued=_games.Where(g=>(g.OtherRom?.Platform==Services.RomPlatform.Fc||g.MdRom is not null)&&queuedFcSources.Add(g.OtherRom?.SourcePath??g.MdRom?.SourcePath??g.RomPath)).Select(g=>g.OtherRom?.SourcePath??g.MdRom?.SourcePath??g.RomPath).ToArray();
+        var queued=_games.Where(g=>(g.OtherRom?.Platform is Services.RomPlatform.Fc or Services.RomPlatform.Snes||g.MdRom is not null)&&queuedFcSources.Add(g.OtherRom?.SourcePath??g.MdRom?.SourcePath??g.RomPath)).Select(g=>g.OtherRom?.SourcePath??g.MdRom?.SourcePath??g.RomPath).ToArray();
         if(queued.Length>0)await _fcWorkspace.ImportAsync(queued);
     }
 }
