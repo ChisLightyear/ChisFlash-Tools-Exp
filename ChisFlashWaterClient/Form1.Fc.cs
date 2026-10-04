@@ -11,6 +11,7 @@ public partial class Form1
         foreach(ToolStripItem item in menuCartridge.DropDownItems)item.Enabled=false;
         menuUpdateMenu.Text=T("ui","force_rebuild_menu","重建菜单");
         menuUpdateMenu.Enabled=!busy&&fcWorkspace?.CanRebuildConfiguration==true;
+        menuEraseEntireNor.Enabled=!busy&&CanEraseEntireNorCurrentScan(out _);
         if(standalone){menuRom.Enabled=false;menuSave.Enabled=false;menuScan.Enabled=false;}
     }
     private readonly HashSet<string> queuedFcSources = new(StringComparer.OrdinalIgnoreCase);

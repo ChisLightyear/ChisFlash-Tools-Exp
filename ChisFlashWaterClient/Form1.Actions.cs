@@ -3074,10 +3074,11 @@ public partial class Form1
             return;
         }
 
-        WaterCartScanResult scanSnapshot = currentScanResult!;
+        WaterCartScanResult scanSnapshot = GetEntireNorEraseScanSnapshot()!;
         ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
-        int targetMask = ResolveGbaPpbChipMask(scanSnapshot, programmerKind);
-        if (programmerKind == ProgrammerKind.BeggarLegacy && scanSnapshot.Geometry.IsS70Gl02GsDualDie)
+        bool useGbcErase = scanSnapshot.IsBeggarMaxGbcMode;
+        int targetMask = useGbcErase ? 0x01 : ResolveGbaPpbChipMask(scanSnapshot, programmerKind);
+        if (!useGbcErase && programmerKind == ProgrammerKind.BeggarLegacy && scanSnapshot.Geometry.IsS70Gl02GsDualDie)
         {
             targetMask = 0x03;
         }
@@ -3099,7 +3100,7 @@ public partial class Form1
         bool targetCoverageMatches = targetCount == 1
             ? deviceSizeBytes <= logicalTargetSizeBytes
             : deviceSizeBytes == targetCoverageBytes;
-        if (!targetCoverageMatches)
+        if (!useGbcErase && !targetCoverageMatches)
         {
             AppendLog(Tf(
                 "error",
@@ -3112,7 +3113,11 @@ public partial class Form1
 
         string detectedDescription = BuildPpbDetectedTargetDescription(scanSnapshot, targetCount);
         int capacityMiB = deviceSizeBytes / (1024 * 1024);
-        string confirmMessage = Tf(
+        string confirmMessage = useGbcErase
+            ? Tf("dialog", "erase_entire_nor_gbc_confirm_message",
+                "Detected: {0}\nCapacity: {1} MiB\n\nThis will permanently erase the entire NOR, including all menus, directories and game ROMs. The cartridge's separate SRAM is not erased. No valid multicart directory is required.\n\nDo you want to continue?",
+                detectedDescription, capacityMiB)
+            : Tf(
             "dialog",
             "erase_entire_nor_confirm_message",
             "Detected: {0}\nCapacity: {1} MiB\nErase targets: {2} (mask 0x{3:X})\n\nThis will permanently erase the entire NOR, including the menu, all game ROMs, batteryless saves, and any save data stored in NOR. SPI/FRAM save chips are not erased.\n\nFor stacked 2 Gbit/02G NOR and multi-NOR carts, every detected 128 MiB target will be erased separately.\n\nDo you want to continue?",
@@ -3148,6 +3153,8 @@ public partial class Form1
         }
 
         SetBusy(true, T("status", "erase_entire_nor_busy", "Erasing entire NOR..."));
+        lastScannedPortName = string.Empty;
+        fcWorkspace?.InvalidateSnapshot();
         AppendLog(Tf(
             "log",
             "erase_entire_nor_start",
@@ -3160,6 +3167,12 @@ public partial class Form1
         {
             await Task.Run(() =>
             {
+                if (useGbcErase)
+                {
+                    EraseEntireGbcNorOnDevice(portName, programmerKind, scanSnapshot);
+                    return;
+                }
+
                 if (programmerKind == ProgrammerKind.BeggarLegacy)
                 {
                     EraseEntireLegacyNorOnDevice(portName, scanSnapshot, targetCount);
@@ -3193,6 +3206,14 @@ public partial class Form1
             });
 
             AppendLog(T("log", "erase_entire_nor_done", "Entire NOR erase and verification completed successfully."));
+
+            if (IsFcWorkspaceActive)
+            {
+                string rescanMessage = T("status", "erase_entire_nor_rescan_required", "Entire NOR erased. Rescan the cartridge before continuing.");
+                AppendLog(rescanMessage);
+                SetBusy(false, rescanMessage);
+                return;
+            }
 
             try
             {

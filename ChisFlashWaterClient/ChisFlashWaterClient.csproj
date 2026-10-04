@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.33</Version>
-    <AssemblyVersion>2.0.33.0</AssemblyVersion>
-    <FileVersion>2.0.33.0</FileVersion>
-    <InformationalVersion>2.033 MIX rebuild</InformationalVersion>
+    <Version>2.0.34</Version>
+    <AssemblyVersion>2.0.34.0</AssemblyVersion>
+    <FileVersion>2.0.34.0</FileVersion>
+    <InformationalVersion>2.034 GB full erase</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>

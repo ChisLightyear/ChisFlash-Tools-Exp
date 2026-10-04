@@ -165,9 +165,10 @@ public partial class Form1
 
     private bool CanEraseEntireNorCurrentScan(out string reason)
     {
-        if (!EnsureSelectedPortHasActiveScan(out reason) ||
-            !EnsureCurrentScanIsWritable(out reason, allowLayoutReset: true))
+        WaterCartScanResult? scan = GetEntireNorEraseScanSnapshot();
+        if (string.IsNullOrWhiteSpace(GetSelectedPortName()) || scan is null)
         {
+            reason = T("error", "select_and_scan_first", "Please select and scan the current cart first.");
             return false;
         }
 
@@ -176,21 +177,23 @@ public partial class Form1
             return false;
         }
 
-        if (currentScanResult?.NoCartridgeDetected != false)
+        if (scan.NoCartridgeDetected)
         {
             reason = T("error", "erase_entire_nor_no_cartridge", "No cartridge was detected, so full NOR erase cannot run.");
             return false;
         }
 
-        if (currentScanResult.IsBeggarMaxGbcMode)
+        if (scan.IsWriteProtected)
         {
-            reason = T("error", "erase_entire_nor_gbc_unsupported", "Full NOR erase is not available in MAX/GBC mode.");
+            reason = string.IsNullOrWhiteSpace(scan.WriteProtectionReason)
+                ? T("error", "current_scan_read_only", "The current scan is read-only, so write/erase actions are disabled.")
+                : scan.WriteProtectionReason;
             return false;
         }
 
         const int MaximumSupportedNorBytes = 4 * 128 * 1024 * 1024;
-        if (currentScanResult.Geometry.DeviceSizeBytes <= 0 ||
-            currentScanResult.Geometry.DeviceSizeBytes > MaximumSupportedNorBytes)
+        if (scan.Geometry.DeviceSizeBytes <= 0 ||
+            scan.Geometry.DeviceSizeBytes > MaximumSupportedNorBytes)
         {
             reason = T("error", "erase_entire_nor_capacity_invalid", "The detected NOR capacity is invalid.");
             return false;

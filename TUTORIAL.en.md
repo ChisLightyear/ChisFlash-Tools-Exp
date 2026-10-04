@@ -461,6 +461,8 @@ These live under the **Cartridge** / **ROM** / **Save** menus. **They carry risk
 | **Fragment test** | Test the fragment management feature |
 | **Timing settings** | View current NOR read/write timing parameters |
 
+Starting with Client 2.034, GB/MAX and scanned MIX cartridges also support Cartridge > Erase Entire NOR. A valid menu or multicart directory is not required, and existing GB/GBC, FC or MD contents do not restrict erase. A connected programmer, a scan with valid capacity and two confirmations are still required. The GB path uses byte commands for chip erase, followed by byte-for-byte verification of the entire detected NOR capacity; separate SRAM is not erased. Starting erase invalidates the previous scan. Rescan after failure or after erasing a MIX cartridge. Offline checks pass; physical-cartridge validation is pending.
+
 ---
 
 ## Precautions
