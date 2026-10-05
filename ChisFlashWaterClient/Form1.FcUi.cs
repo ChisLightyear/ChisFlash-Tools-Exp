@@ -49,9 +49,14 @@ public partial class Form1
     private async Task ActivateFcWorkspaceAsync()
     {
         if (isBusy || isAnalyzingQueueImports || IsFcWorkspaceActive) return;
-        if (GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy &&
+        if (GetSelectedProgrammerKind() != ProgrammerKind.WaterLink &&
             GetSelectedBeggarCartMode() != BeggarCartMode.Gb)
             radioButtonBeggarCartModeGb.Checked = true;
+        if (!GetGbcProfileModes(GetGbcProfileCapacity()).Contains(BurnProfileMode.FcMbcx))
+        {
+            labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type");
+            return;
+        }
         burnProfileModeSelectionInitialized = false;
         if (!burnProfileModeOptions.Any(option => option.Mode == BurnProfileMode.FcMbcx))
         {
@@ -60,6 +65,7 @@ public partial class Form1
         }
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.First(option => option.Mode == BurnProfileMode.FcMbcx);
         burnProfileModeSelectionInitialized = true;
+        ApplyGbcProfileWorkspace();
         if (fcWorkspace is null || fcWorkspace.IsDisposed)
         {
             fcWorkspace = new FcWorkspaceControl((key, fallback) => T("fc", key, fallback), CreateFcBackend, integrated: true);
@@ -143,6 +149,7 @@ public partial class Form1
             BeginInvoke(new Action<WaterCartScanResult>(UpdateFcHardwareInfo), info);
             return;
         }
+        RememberGbcProfileCapacity(info);
         if (!IsFcWorkspaceActive) return;
         fcHardwareInfo = info;
         UpdateFcCardInfo();

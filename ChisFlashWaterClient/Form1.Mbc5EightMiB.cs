@@ -379,22 +379,25 @@ public partial class Form1
         }
     }
 
-    private void WriteMbc5ImageOnDevice(string port, WaterCartScanResult expected, byte[] image, CancellationToken cancellationToken)
+    private void WriteMbc5ImageOnDevice(string port, WaterCartScanResult expected, byte[] image, CancellationToken cancellationToken) =>
+        WriteGbcImageOnDevice(port, expected, image, cancellationToken);
+
+    private void WriteGbcImageOnDevice(string port, WaterCartScanResult expected, byte[] image, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
         if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out WaterCartScanResult live, scanContent: false) ||
-            live.Geometry.DeviceSizeBytes != Mbc5EightMiBLayout.CapacityBytes || live.RawNorIdHex != expected.RawNorIdHex ||
+            live.Geometry.DeviceSizeBytes != image.Length || live.Geometry.DeviceSizeBytes != expected.Geometry.DeviceSizeBytes || live.RawNorIdHex != expected.RawNorIdHex ||
             live.Geometry.PrimaryCommandSetId != 2 || live.IsWriteProtected || live.Geometry.RegionCount != 1 ||
             live.Geometry.SectorSizeBytes != expected.Geometry.SectorSizeBytes || live.Geometry.SectorCount != expected.Geometry.SectorCount ||
             live.Geometry.BufferWriteBytes <= 0 || live.Geometry.BufferWriteBytes > ushort.MaxValue)
             throw new InvalidOperationException("NOR identity or geometry changed; no erase was performed. Rescan the cartridge.");
-        int total = live.Geometry.SectorCount + 1024;
-        BeginMeasuredProgress("MBC5 8M", total, total);
+        int total = checked(live.Geometry.SectorCount + image.Length / GbcNorImageWriter.BankBytes * 2);
+        BeginMeasuredProgress("GB/GBC NOR", total, total);
         try
         {
-            Mbc5EightMiBWriter.Write(image, live.Geometry.DeviceSizeBytes, live.Geometry.SectorSizeBytes, live.Geometry.SectorCount,
+            GbcNorImageWriter.Write(image, live.Geometry.DeviceSizeBytes, live.Geometry.SectorSizeBytes, live.Geometry.SectorCount,
                 address => EraseBeggarMaxRange(protocol, address, address + live.Geometry.SectorSizeBytes - 1, live.Geometry.SectorSizeBytes, cancellationToken),
                 (bank, data) =>
                 {
@@ -409,7 +412,7 @@ public partial class Form1
                 bank => ReadBeggarMaxSectorImage(protocol, bank * Mbc5EightMiBWriter.BankBytes, Mbc5EightMiBWriter.BankBytes, cancellationToken),
                 () => { if (!protocol.TryWriteGbc(0, [0xF0], 3000) || !TrySwitchBeggarMaxRomBank(protocol, 0)) throw new IOException("Could not restore ROM bank 0."); },
                 (_, _, phase) => AdvanceMeasuredProgress(1, 1, phase), cancellationToken);
-            CompleteMeasuredProgress("MBC5 8M");
+            CompleteMeasuredProgress("GB/GBC NOR");
         }
         catch { AbortMeasuredProgress(); throw; }
     }

@@ -115,6 +115,7 @@ public partial class Form1
 
     private async Task SelectRomFilesForQueueAsync()
     {
+        if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
         if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy)
         {
@@ -139,6 +140,7 @@ public partial class Form1
 
     private async Task AddPendingRomFilesAsync(IEnumerable<string> filePaths)
     {
+        if (IsGbcRawImageMode()) { await AddGbcImageFilesAsync(filePaths); return; }
         if (IsMbc5EightMiBMode()) { await AddMbc5FilesAsync(filePaths); return; }
         if (isBusy)
         {
@@ -1150,6 +1152,7 @@ public partial class Form1
 
     private void RemoveSelectedQueuedRom()
     {
+        if (IsGbcRawImageMode()) { ClearGbcImage(); return; }
         if (IsMbc5EightMiBMode()) { RemoveMbc5Slot(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.RemoveSelected(); return; }
         if (isBusy)
@@ -1188,6 +1191,7 @@ public partial class Form1
 
     private void ClearQueuedRoms()
     {
+        if (IsGbcRawImageMode()) { ClearGbcImage(); return; }
         if (IsMbc5EightMiBMode()) { ClearMbc5Slots(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.ClearGames(); return; }
         if (isBusy)

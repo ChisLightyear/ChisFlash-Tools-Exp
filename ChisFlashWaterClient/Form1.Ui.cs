@@ -164,7 +164,9 @@ public partial class Form1
         comboBoxPorts.DropDown += (_, _) => AdjustPortDropDownWidth();
         comboBoxPorts.SelectedIndexChanged += (_, _) =>
         {
-            RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
+            ClearGbcProfileCapacity();
+            RefreshBurnProfileModeOptions(GetSelectedBeggarCartMode() == BeggarCartMode.Gb
+                ? BurnProfileMode.GbcUnselected : GetSelectedBurnProfileMode());
             InvalidateFcDevice();
             if (dataGridViewRoms is not null && !dataGridViewRoms.IsDisposed && dataGridViewRoms.Columns.Count > 0)
             {
@@ -613,6 +615,9 @@ public partial class Form1
                 return;
             }
 
+            buttonQueueAdd.Text = T("ui", "queue_add", "Add ROMs");
+            buttonQueueClear.Text = T("ui", "queue_clear", "Clear Queue");
+            ApplyGbcProfileWorkspace();
             if(GetSelectedBurnProfileMode()==BurnProfileMode.FcMbcx){ShowFcWorkspace();return;}
             HideFcWorkspace();
             HandleMbc5ProfileSelection();
@@ -987,6 +992,7 @@ public partial class Form1
         }
 
         lastSelectedBeggarCartMode = selectedMode;
+        ClearGbcProfileCapacity();
 
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
         InvalidateFcDevice();
@@ -3123,6 +3129,8 @@ public partial class Form1
 
     private void UpdateWorkspaceGroupTitle()
     {
+        if (IsGbcRawImageMode()) { RefreshGbcImageDetails(); return; }
+        if (IsGbcProfileUnselected()) { groupBoxList.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
         if (IsMbc5EightMiBMode()) { groupBoxList.Text = "MBC5 8M · " + Mbc5LayoutDescription(); return; }
         var usage = GetWorkspaceUsageSummary();
         var saveUsage = GetWorkspaceSaveUsageSummary();

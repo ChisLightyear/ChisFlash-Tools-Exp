@@ -22,6 +22,7 @@ public partial class Form1
         InvalidateFcDevice();
         if (resetAnalysisState)
         {
+            ClearGbcProfileCapacity();
             ResetCurrentCartAnalysisView();
         }
 
@@ -100,7 +101,6 @@ public partial class Form1
         if (IsMbc5EightMiBMode() && !isBusy && mbc5LayoutChanged && mbc5Layout.HasContent && MessageBox.Show(this,
             Mbc5Text("rescan_confirm", "扫描会用卡带内容替换当前五槽工作区。继续？", "Scanning replaces the five-slot workspace with cartridge contents. Continue?"),
             "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        if(IsFcWorkspaceActive){if(CanUseFcDevice)await fcWorkspace!.ScanAsync();return;}
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
@@ -297,7 +297,7 @@ public partial class Form1
                             "beggar_scan_mode_gb",
                             "Beggar cart mode is set to GB. Using the GBC/MAX probe."));
 
-                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result, scanContent: burnProfileMode != BurnProfileMode.Mbc5EightMiB))
+                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result, scanContent: burnProfileMode is BurnProfileMode.BeggarMaxSram or BurnProfileMode.FcMbcx))
                         {
                             return new ScanReadAttempt(
                                 null,
@@ -334,7 +334,7 @@ public partial class Form1
                     if (result.IsBeggarMaxGbcMode && result.Geometry.DeviceSizeBytes == Mbc5EightMiBLayout.CapacityBytes)
                         result.Mbc5EightMiBRomImage = ReadMbc5ImageFromDevice(protocol);
                 }
-                else if (!result.IsFcMbcxContent && !result.IsMdMbcxContent)
+                else if ((!result.IsBeggarMaxGbcMode || burnProfileMode == BurnProfileMode.BeggarMaxSram) && !result.IsFcMbcxContent && !result.IsMdMbcxContent)
                 {
                     PopulateSavePresenceForScan(protocol, result, programmerKind);
                     PopulateMenuBackgroundPreviewForScan(protocol, result, programmerKind);
@@ -352,6 +352,8 @@ public partial class Form1
     {
         if (attempt.Result is null)
         {
+            ClearGbcProfileCapacity();
+            RefreshBurnProfileModeOptions(BurnProfileMode.GbcUnselected);
             ResetCurrentCartAnalysisView();
             failureMessage = attempt.FailureMessage;
             return false;
@@ -1317,40 +1319,24 @@ public partial class Form1
         BurnProfileMode defaultMode = GetDefaultBurnProfileMode(programmerKind);
         BeggarCartMode beggarCartMode = GetSelectedBeggarCartMode();
 
-        burnProfileModeOptions = programmerKind switch
-        {
-            ProgrammerKind.BeggarLegacy =>
-                beggarCartMode == BeggarCartMode.Gb
-                    ? [
-                        new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB),
-                        new BurnProfileModeOption(
-                            T("value", "burn_profile_beggar_max_sram", "Beggar MAX (SRAM)"),
-                            BurnProfileMode.BeggarMaxSram),
-                        new BurnProfileModeOption(T("fc","mode","MIX | NES + MD + SNES (MBCX)"),BurnProfileMode.FcMbcx),
-                    ]
-                    : [
-                        new BurnProfileModeOption(
-                            T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"),
-                            BurnProfileMode.WaterLinkSram),
-                        new BurnProfileModeOption(
-                            T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"),
-                            BurnProfileMode.BeggarNoBattery),
-                        new BurnProfileModeOption(
-                            T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
-                            BurnProfileMode.BeggarFram),
-                    ],
-            ProgrammerKind.WaterLink =>
-            [
-                new BurnProfileModeOption(
-                    T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"),
-                    BurnProfileMode.WaterLinkSram),
-                new BurnProfileModeOption(
-                    T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"),
-                    BurnProfileMode.WaterLinkMultiNor),
-            ],
-            _ => [new BurnProfileModeOption("MBC5 8M · 3in1 / 4in1", BurnProfileMode.Mbc5EightMiB),
-                new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), BurnProfileMode.FcMbcx)],
-        };
+        burnProfileModeOptions = programmerKind is null or ProgrammerKind.Unknown ||
+            programmerKind != ProgrammerKind.WaterLink && beggarCartMode == BeggarCartMode.Gb
+            ? GetGbcProfileModes(GetGbcProfileCapacity()).Select(mode => new BurnProfileModeOption(GetBurnProfileModeDisplayName(mode), mode)).ToList()
+            : programmerKind switch
+            {
+                ProgrammerKind.BeggarLegacy =>
+                [
+                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
+                ],
+                ProgrammerKind.WaterLink =>
+                [
+                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
+                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"), BurnProfileMode.WaterLinkMultiNor),
+                ],
+                _ => [new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram)],
+            };
 
         burnProfileModeSelectionInitialized = false;
         if (programmerKind == ProgrammerKind.BeggarLegacy && beggarCartMode == BeggarCartMode.Gba && currentScanResult?.IsChm1 == true)
@@ -1372,6 +1358,7 @@ public partial class Form1
             HandleMbc5ProfileSelection();
             RefreshWorkspaceGrid();
         }
+        ApplyGbcProfileWorkspace();
     }
 
     private void AdjustPortDropDownWidth()
@@ -1412,6 +1399,8 @@ public partial class Form1
             return;
         }
 
+        RememberGbcProfileCapacity(result);
+        RefreshBurnProfileModeOptions(GetDetectedBurnProfileMode(result, GetSelectedProgrammerKind(), GetSelectedBurnProfileMode()));
         lastScannedPortName = GetSelectedPortName() ?? string.Empty;
         currentScanResult = result;
         if (IsMbc5EightMiBMode() && result.Mbc5EightMiBRomImage is { } mbc5Image && !ReferenceEquals(mbc5LoadedScanImage, mbc5Image))
@@ -1419,7 +1408,6 @@ public partial class Form1
             try { LoadMbc5ScanImage(mbc5Image); mbc5LoadedScanImage = mbc5Image; }
             catch { currentScanResult = null; lastScannedPortName = string.Empty; throw; }
         }
-        RefreshBurnProfileModeOptions(GetDetectedBurnProfileMode(result, GetSelectedProgrammerKind(), GetSelectedBurnProfileMode()));
         if (result.NoCartridgeDetected)
         {
             currentScanResult = null;
@@ -1656,6 +1644,7 @@ public partial class Form1
 
     private void UpdateSelectionCommandStates()
     {
+        if (IsGbcRawImageMode() || IsGbcProfileUnselected()) { UpdateGbcProfileActionButtons(isBusy); return; }
         if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(isBusy); return; }
         _ = TryGetSelectedEntry(out WaterCartEntry? selectedEntry);
         bool hasActiveScan = HasActiveScanResult();

@@ -44,6 +44,10 @@ public partial class Form1 : DpiAwareForm
         Chm1,
         Chm1NoBattery,
         Mbc5EightMiB,
+        GbcUnselected,
+        MbcxRtcEightMiB,
+        MbcxRtcThirtyTwoMiB,
+        GbcSixteenInOne,
     }
 
     private enum GbcMenuLanguageMode
@@ -506,18 +510,19 @@ public partial class Form1 : DpiAwareForm
 
     private void RefreshGbcFontSelectorVisibility()
     {
-        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
+        bool imageProfile = IsGbcRawImageMode() || IsGbcProfileUnselected();
+        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
         if (gbcMenuOptions is not null) gbcMenuOptions.Visible = visible;
         labelGbcMenuLanguageCaption.Visible = visible;
         comboBoxGbcMenuLanguage.Visible = visible;
         comboBoxGbcMenuLanguage.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
         if (checkBoxWaitcntPatch is not null)
         {
-            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
-            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !isBusy && !isAnalyzingQueueImports;
+            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
+            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile && !isBusy && !isAnalyzingQueueImports;
         }
 
-        bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode();
+        bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
         if (gbaMenuOptions is not null) gbaMenuOptions.Visible = gbaVisible;
         if (labelGbaMenuCaption is not null)
         {
@@ -1217,8 +1222,11 @@ public partial class Form1 : DpiAwareForm
         ProgrammerKind? programmerKind,
         BurnProfileMode fallbackMode)
     {
-        if (fallbackMode == BurnProfileMode.Mbc5EightMiB)
-            return fallbackMode;
+        if (programmerKind != ProgrammerKind.WaterLink &&
+            (GetSelectedBeggarCartMode() == BeggarCartMode.Gb || scanResult?.IsBeggarMaxGbcMode == true))
+            return GetGbcProfileModes(scanResult?.Geometry.DeviceSizeBytes > 0
+                ? scanResult.Geometry.DeviceSizeBytes : GetGbcProfileCapacity()).Contains(fallbackMode)
+                ? fallbackMode : BurnProfileMode.GbcUnselected;
         if (programmerKind == ProgrammerKind.BeggarLegacy && scanResult?.IsChm1 == true &&
             (scanResult.WlMapping.IsDetected || !scanResult.MenuConfig.IsDetected || UsesChm1Mode(fallbackMode)))
             return scanResult.MenuConfig.IsDetected
@@ -1304,7 +1312,7 @@ public partial class Form1 : DpiAwareForm
         if (programmerKind == ProgrammerKind.BeggarLegacy)
         {
             return GetSelectedBeggarCartMode() == BeggarCartMode.Gb
-                ? BurnProfileMode.BeggarMaxSram
+                ? BurnProfileMode.GbcUnselected
                 : BurnProfileMode.BeggarFram;
         }
 
@@ -1396,7 +1404,13 @@ public partial class Form1 : DpiAwareForm
             BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"),
             BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
             BurnProfileMode.BeggarWithBattery => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
-            BurnProfileMode.BeggarMaxSram => T("value", "burn_profile_beggar_max_sram", "Beggar MAX (SRAM)"),
+            BurnProfileMode.BeggarMaxSram => T("gbc_profile", "free", "Free multicart 32M · GB/GBC"),
+            BurnProfileMode.GbcUnselected => T("gbc_profile", GetGbcProfileCapacity() is null ? "pending" : "choose", GetGbcProfileCapacity() is null ? "Capacity not read · choose cartridge type" : "Choose cartridge type"),
+            BurnProfileMode.Mbc5EightMiB => "MBC5 8M · 3in1 / 4in1",
+            BurnProfileMode.MbcxRtcEightMiB => "MBCX RTC 8M",
+            BurnProfileMode.MbcxRtcThirtyTwoMiB => "MBCX RTC 32M",
+            BurnProfileMode.GbcSixteenInOne => "MAX 32M · 16in1",
+            BurnProfileMode.FcMbcx => T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"),
             BurnProfileMode.Chm1 => T("value", "burn_profile_chm1", "01G/02G Fragment Management (Battery / FRAM)"),
             BurnProfileMode.Chm1NoBattery => T("value", "burn_profile_chm1_no_battery", "01G/02G Fragment Management (Batteryless)"),
             BurnProfileMode.WaterLinkMultiNor => T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"),

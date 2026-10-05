@@ -1,6 +1,6 @@
 # MIX v2：统一存储与启动协议
 
-适用：上位机2.039、合卡器0.92.1。本文为桌面端已实现的数据合同，也是 MCU／FPGA 的接口依据。NES、MD、SNES 均作为已接入平台；桌面端不检查已安装核心或核心 Mapper 白名单，不以 SNES 接入状态阻止合卡、BIN 导出或烧录。本轮只验证桌面与模拟卡流程，不宣称实际运行、特殊芯片兼容或硬件写卡通过。
+适用：上位机2.040、合卡器0.92.1。本文为桌面端已实现的数据合同，也是 MCU／FPGA 的接口依据。NES、MD、SNES 均作为已接入平台；桌面端不检查已安装核心或核心 Mapper 白名单，不以 SNES 接入状态阻止合卡、BIN 导出或烧录。本轮只验证桌面与模拟卡流程，不宣称实际运行、特殊芯片兼容或硬件写卡通过。
 
 ## 1. 不再兼容旧格式
 
@@ -199,4 +199,4 @@ CRC32使用反射多项式0xedb88320、初值0xffffffff、最终按位取反。�
 
 ## English summary
 
-Client2.039 and Builder0.92.1 write/read GLB2 version2 and LNC2 version2 only. No legacy decoding, migration or downgrade. NES, MD and SNES use the same 8 KiB noncontiguous SRAM map, stored as a bounded per-record asset with its own CRC. Dedicated banks0–59 cannot overlap; shared working banks60–63 remain reserved. Map length follows RAM demand, so128 KiB uses16 entries. Preserve existing logical prefixes; initialize/restore by the full map, never by first-bank-plus-offset. NES, MD and SNES are integrated platforms. The desktop accepts encodable NES mapper/submapper values (0–4095 / 0–15) without checking installed cores or runtime support whitelists; no SNES synchronization gate is added to packing, export or programming. File validity, actual storage capacity, bank overlap and card write protection remain checked. Runtime implementations follow this contract; successful packing is not evidence of gameplay or coprocessor compatibility.
+Client2.040 and Builder0.92.1 write/read GLB2 version2 and LNC2 version2 only. No legacy decoding, migration or downgrade. NES, MD and SNES use the same 8 KiB noncontiguous SRAM map, stored as a bounded per-record asset with its own CRC. Dedicated banks0–59 cannot overlap; shared working banks60–63 remain reserved. Map length follows RAM demand, so128 KiB uses16 entries. Preserve existing logical prefixes; initialize/restore by the full map, never by first-bank-plus-offset. NES, MD and SNES are integrated platforms. The desktop accepts encodable NES mapper/submapper values (0–4095 / 0–15) without checking installed cores or runtime support whitelists; no SNES synchronization gate is added to packing, export or programming. File validity, actual storage capacity, bank overlap and card write protection remain checked. Runtime implementations follow this contract; successful packing is not evidence of gameplay or coprocessor compatibility.

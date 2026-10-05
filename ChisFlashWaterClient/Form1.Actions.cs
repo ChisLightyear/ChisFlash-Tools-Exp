@@ -104,6 +104,7 @@ public partial class Form1
 
     private async Task ReplaceSelectedRomAsync()
     {
+        if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
         if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy || isAnalyzingQueueImports)
         {
@@ -218,6 +219,8 @@ public partial class Form1
 
     private async Task HandlePrimaryQueueActionAsync()
     {
+        if (IsGbcProfileUnselected()) { labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
+        if (IsGbcRawImageMode()) { await HandleGbcImagePrimaryActionAsync(); return; }
         if (IsMbc5EightMiBMode()) { await HandleMbc5PrimaryActionAsync(); return; }
         if (IsFcWorkspaceActive)
         {
@@ -231,7 +234,7 @@ public partial class Form1
             return;
         }
 
-        if(CanWriteMdQueue){await ActivateFcWorkspaceAsync();return;}
+        if(CanWriteMdQueue){AppendLog(T("gbc_profile", "choose_mix", "Select MIX to program NES / MD / SNES."));return;}
         if(HasUnreadyPlatformImports(workspaceRows)){AppendLog("列表含其他平台或尚未开放的核心，请选择对应模式后烧录。");return;}
 
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
@@ -286,6 +289,7 @@ public partial class Form1
 
     private async Task ExportSelectedEntryRomAsync()
     {
+        if (IsGbcRawImageMode()) { await ExportGbcImageAsync(); return; }
         if (IsMbc5EightMiBMode()) { await ExportMbc5SlotAsync(); return; }
         if (IsFcWorkspaceActive) { await fcWorkspace!.ExportSelectedRomAsync(); return; }
         if (!TryResolveSelectedRomExportTarget(out SelectedRomExportTargetInfo? target, out string reason) || target is null)

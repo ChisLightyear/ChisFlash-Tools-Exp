@@ -959,6 +959,7 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        if (IsGbcRawImageMode() || IsGbcProfileUnselected()) { UpdateGbcProfileActionButtons(busy); return; }
         if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(busy); return; }
         if (IsFcWorkspaceActive)
         {

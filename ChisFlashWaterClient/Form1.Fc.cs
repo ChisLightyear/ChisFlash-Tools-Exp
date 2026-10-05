@@ -18,7 +18,9 @@ public partial class Form1
 
     private async Task<bool> OpenDetectedFcCardAsync(WaterCartScanResult result)
     {
-        if (!result.IsFcMbcxContent && !result.IsMdMbcxContent) return false;
+        RememberGbcProfileCapacity(result);
+        RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
+        if (GetSelectedBurnProfileMode() != BurnProfileMode.FcMbcx) return false;
         ResetCurrentCartAnalysisView();
         SetBusy(false, T("fc", "ready", "MIX ready"));
         await ActivateFcWorkspaceAsync();
@@ -63,7 +65,7 @@ public partial class Form1
         public string DeviceId {get;}
         public int Capacity=>device.Geometry.DeviceSizeBytes;
         public int SectorBytes=>device.Geometry.SectorSizeBytes;
-        public bool Writable=>device.Geometry.DeviceSizeBytes>0&&!device.IsWriteProtected;
+        public bool Writable=>device.Geometry.DeviceSizeBytes==FcMbcxCodec.CapacityBytes&&!device.IsWriteProtected;
         public FcIo(Form1 owner,string port,CancellationToken ct)
         {
             this.owner=owner;ct.ThrowIfCancellationRequested();protocol=new WaterDeviceProtocol(port,owner.ReportTransferredBytes);

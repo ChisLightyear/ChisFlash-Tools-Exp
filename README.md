@@ -4,7 +4,7 @@ ChisFlash 系列 GBA/GB/GBC 烧录卡的工具集（实验/加强线）。本仓
 
 本仓库提供程序源码与菜单内核，不含游戏、封面图库或外部中文字库。游戏 ROM 需自备；封面和背景图可选；**GBC 中文菜单必须自备 12px 字库**，不支持 8px。详见 [未包含的内容](#未包含的内容)。
 
-当前源码：**上位机 2.039 / 合卡器 0.92.1**。[更新说明](docs/CHANGELOG-2.039-0.92.1.md)。MIX 已接入 NES / MD / SNES 合卡、目录回读与存档管理，共用非连续 SRAM bank 表。**只读写 GLB2 v2 / LNC2，不兼容旧格式；不以核心 Mapper 白名单限制合卡、BIN 导出或烧录。** 见 [统一存储协议](docs/MIX-V2-STORAGE-CONTRACT.md)。可合卡不等于实机运行验证；[MBC5 8M五槽](docs/MBC5-8M-FIVE-SLOTS.md)保留。
+当前源码：**上位机 2.040 / 合卡器 0.92.1**。[更新说明](docs/CHANGELOG-2.040-0.92.1.md)。GBC候选卡型按8/32 MiB NOR容量筛选，用户选型决定模式；见[选型规则](docs/GBC-CARTRIDGE-SELECTION.md)。MIX 已接入 NES / MD / SNES 合卡、目录回读与存档管理，共用非连续 SRAM bank 表。**只读写 GLB2 v2 / LNC2，不兼容旧格式；不以核心 Mapper 白名单限制合卡、BIN 导出或烧录。** 见 [统一存储协议](docs/MIX-V2-STORAGE-CONTRACT.md)。可合卡不等于实机运行验证；[MBC5 8M五槽](docs/MBC5-8M-FIVE-SLOTS.md)保留。
 
 **English version: [English](#english)**
 
@@ -73,7 +73,7 @@ Toolchain for ChisFlash GBA/GB/GBC flash cartridges (experimental / enhanced lin
 
 This repository includes program source and menu kernels. Games, cover libraries and external Chinese fonts are not included. Supply your own game ROMs; covers and backgrounds are optional. **Chinese GBC menus require a 12px font; 8px fonts are not supported.** See [Not included](#not-included).
 
-Current source: **Client 2.039 / Builder 0.92.1**. [Changes](docs/CHANGELOG-2.039-0.92.1.md). MIX packs, reads and manages saves for NES / MD / SNES with one noncontiguous SRAM map. **GLB2 v2 / LNC2 only; no legacy migration. Core mapper whitelists do not gate packing, BIN export or programming.** See the [storage contract](docs/MIX-V2-STORAGE-CONTRACT.md). Packing is not hardware gameplay validation. The [MBC5 five-slot mode](docs/MBC5-8M-FIVE-SLOTS.md) remains separate.
+Current source: **Client 2.040 / Builder 0.92.1**. [Changes](docs/CHANGELOG-2.040-0.92.1.md). GBC NOR capacity filters cartridge candidates; an explicit user choice selects the mode. See the [selection rules](docs/GBC-CARTRIDGE-SELECTION.md). MIX packs, reads and manages saves for NES / MD / SNES with one noncontiguous SRAM map. **GLB2 v2 / LNC2 only; no legacy migration. Core mapper whitelists do not gate packing, BIN export or programming.** See the [storage contract](docs/MIX-V2-STORAGE-CONTRACT.md). Packing is not hardware gameplay validation. The [MBC5 five-slot mode](docs/MBC5-8M-FIVE-SLOTS.md) remains separate.
 
 **中文版：[中文](#chisflash-tools-exp)**
 
