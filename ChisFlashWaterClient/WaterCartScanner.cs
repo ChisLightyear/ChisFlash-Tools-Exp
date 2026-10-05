@@ -35,9 +35,6 @@ public static class WaterCartScanner
     private const int GbcTotalSramBankCount = GbcSharedSramBankStart + GbcSharedSramBankCount;
     private const int WaterLinkItemListOffset = 0x0C0000;
     private const int WaterLinkStatusOffset = 0x0E0000;
-    private const int MenuBackgroundRegionLengthBytes = 0x9800;
-    private const int WlMenuBackgroundMarkerGapBytes = 0x40;
-    private static readonly byte[] MenuBackgroundMarker = [0x52, 0x54, 0x46, 0x4E, 0xFF, 0xFE];
     public const int UniversalImageManifestOffset = 0x0B0000;
     public const int UniversalImageManifestSize = 64;
     private const uint UniversalImageManifestMagic = 0x464D4D55;
@@ -350,29 +347,8 @@ public static class WaterCartScanner
     private static bool TryResolveMenuBackgroundRegion(
         byte[] source,
         bool usesWlLayout,
-        out int backgroundOffset)
-    {
-        backgroundOffset = -1;
-        int markerOffset = FindByteSequence(source, MenuBackgroundMarker);
-        int markerGapBytes = usesWlLayout && !GbaMenuRomService.SupportsCovers(source)
-            ? WlMenuBackgroundMarkerGapBytes
-            : 0;
-        int requiredPrefixLength = MenuBackgroundRegionLengthBytes + markerGapBytes;
-        if (markerOffset < requiredPrefixLength)
-        {
-            return false;
-        }
-
-        backgroundOffset = markerOffset - requiredPrefixLength;
-        if (backgroundOffset < 0 ||
-            backgroundOffset + MenuBackgroundRegionLengthBytes > source.Length)
-        {
-            backgroundOffset = -1;
-            return false;
-        }
-
-        return true;
-    }
+        out int backgroundOffset) =>
+        GbaMultiMenuBuilder.Services.GbaMenuBackgroundLocator.TryFind(source, out backgroundOffset);
 
     private static int FindByteSequence(byte[] source, byte[] pattern)
     {

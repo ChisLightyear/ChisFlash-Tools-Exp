@@ -1,6 +1,6 @@
 # GBA 菜单必须明确选择
 
-上位机2.041 / 合卡器0.92.2。默认NS精简菜单；没有“自动菜单”。
+上位机2.042 / 合卡器0.92.3。默认NS精简菜单；没有“自动菜单”。
 
 ## 菜单选项
 
@@ -12,7 +12,9 @@
 
 ## 黑色预览的原因
 
-LK资源的游戏列表区域本身为黑色。背景预览显示的是背景位图，没有游戏标题等运行时叠加层；因此黑色列表区域不代表解码失败或游戏无法运行。
+LK菜单运行时的列表背景为白色。此前黑色预览来自背景区定位偏移：按字体标记减固定间距会多偏移8字节，位图和调色板一起错位，白色像素索引被映射成黑色。mGBA运行同一份菜单已确认白底，之前“黑色正常”的结论撤销。
+
+现在LK按ROM代码引用的位图/调色板地址定位，并要求两者连续且结果唯一；上位机扫描、预览、背景更新与合卡器读取/替换共用定位器，不再猜字体前的固定间距。水线资源对应位图0xAED8、调色板0x144D8；普通资源对应0xAD18、0x14318。NS资源保留其带签名的布局规则。
 
 旧界面改变菜单选择后只更新操作按钮，没有重建预览，仍可能显示扫描到的LK背景。现在选择变化立即刷新：
 
@@ -25,8 +27,8 @@ LK资源的游戏列表区域本身为黑色。背景预览显示的是背景位
 
 ## 验证
 
-26项回归覆盖菜单选项、空/auto配置默认、明确LK/NS保留、水线和普通布局加载NS精简、LK实际黑色像素、菜单切换立即刷新、待写入标记、不修改扫描数据、无卡预览及合卡器默认值。测试不访问烧录器，不修改菜单固件源码。
+回归覆盖明确菜单默认值、mGBA确认的白色像素及DMA源地址、两种LK资源、上位机/扫描器/合卡器同址、背景替换范围与代码/字体保护、无引用/歧义定位拒绝、菜单切换及无卡预览。桌面测试不访问烧录器；mGBA只运行原菜单ROM，不修改固件源码。
 
 ## English
 
-Menus are explicit: Simplified NS (default), full NS, or LK. Cartridge layout never auto-selects a menu family. Old auto/unset values resolve to Simplified NS. The LK list area is black in its bundled background; background-only decoding does not include runtime game titles. Selection changes immediately refresh the preview. A different or uninstalled selected menu is shown as pending and does not modify the cartridge. Matching installed menus retain the cartridge preview. Missing assets are reported without silently switching menus.
+Menus are explicit: Simplified NS (default), full NS, or LK. Cartridge layout never auto-selects a menu family. Old auto/unset values resolve to Simplified NS. LK has a white list background in mGBA. The previous black preview was an eight-byte bitmap/palette offset error; that explanation is corrected. LK now uses unique ROM references to the contiguous bitmap and palette, shared by reading and writing paths. Selection changes immediately refresh the preview. A different or uninstalled selected menu is shown as pending and does not modify the cartridge. Matching installed menus retain the cartridge preview. Missing assets are reported without silently switching menus.

@@ -5,8 +5,6 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private const int MenuBackgroundRegionLengthBytes = 0x9800;
-    private const int WlMenuBackgroundMarkerGapBytes = 0x40;
-    private static readonly byte[] MenuBackgroundMarker = [0x52, 0x54, 0x46, 0x4E, 0xFF, 0xFE];
 
     private enum MenuUpdateActionMode
     {
@@ -834,32 +832,8 @@ public partial class Form1
     private static bool TryResolveMenuBackgroundRegion(
         byte[] source,
         bool usesWlLayout,
-        out int backgroundOffset)
-    {
-        backgroundOffset = -1;
-
-        int markerOffset = FindByteSequence(source, MenuBackgroundMarker);
-        // The 0x40 gap belongs to the bundled WL menu resource, not to the
-        // cartridge backend. NS menu ROMs can run on WL carts but keep the
-        // ordinary GBA background layout.
-        int markerGapBytes = usesWlLayout && !GbaMenuRomService.SupportsCovers(source)
-            ? WlMenuBackgroundMarkerGapBytes
-            : 0;
-        int requiredPrefixLength = MenuBackgroundRegionLengthBytes + markerGapBytes;
-        if (markerOffset < requiredPrefixLength)
-        {
-            return false;
-        }
-
-        backgroundOffset = markerOffset - requiredPrefixLength;
-        if (backgroundOffset < 0 || backgroundOffset + MenuBackgroundRegionLengthBytes > source.Length)
-        {
-            backgroundOffset = -1;
-            return false;
-        }
-
-        return true;
-    }
+        out int backgroundOffset) =>
+        GbaMultiMenuBuilder.Services.GbaMenuBackgroundLocator.TryFind(source, out backgroundOffset);
 
     private static int FindByteSequence(byte[] source, byte[] pattern)
     {

@@ -47,7 +47,6 @@ public sealed class CompilationBuilder
     private const int GbcAddressableBankCount = 0x0800;
     private const int GbcAddressableTotalBytes = GbcAddressableBankCount * GameBoyRomHeaderService.RomBankSize;
     private static readonly byte[] BootLogoSha1 = Convert.FromHexString("17DAA0FEC02FC33C0F6ABB549A8B80B6613B48EE");
-    private static readonly byte[] BackgroundMarker = [0x52, 0x54, 0x46, 0x4E, 0xFF, 0xFE];
     private readonly SramPatchService _sramPatchService = new();
     private readonly BatterylessPatchService _batterylessPatchService = new();
 
@@ -741,17 +740,10 @@ public sealed class CompilationBuilder
         bool usesWlLayout,
         Func<string, string, string, string>? textResolver)
     {
-        const int backgroundRegionLength = 0x9800;
-        const int wlMarkerGapLength = 0x40;
-        const int bitmapLength = BackgroundImageEncoder.Width * BackgroundImageEncoder.Height;
-        const int paletteLength = 0x200;
+        const int bitmapLength = GbaMenuBackgroundLocator.BitmapBytes;
+        const int paletteLength = GbaMenuBackgroundLocator.PaletteBytes;
 
-        var markerOffset = FindSequence(menuRom, BackgroundMarker);
-        var markerGapLength = usesWlLayout ? wlMarkerGapLength : 0;
-        var backgroundOffset = markerOffset - backgroundRegionLength - markerGapLength;
-        if (markerOffset < 0 ||
-            backgroundOffset < 0 ||
-            backgroundOffset + backgroundRegionLength > menuRom.Length)
+        if (!GbaMenuBackgroundLocator.TryFind(menuRom, out int backgroundOffset))
         {
             throw new InvalidOperationException(T(
                 textResolver,
@@ -2597,8 +2589,7 @@ public sealed class CompilationBuilder
                 "Background image uses more than 240 colors."));
         }
 
-        var markerOffset = FindSequence(menuRom, BackgroundMarker);
-        if (markerOffset < 0)
+        if (!GbaMenuBackgroundLocator.TryFind(menuRom, out int backgroundOffset))
         {
             throw new InvalidOperationException(T(
                 textResolver,
@@ -2607,7 +2598,6 @@ public sealed class CompilationBuilder
                 "Could not locate background data inside the base menu ROM."));
         }
 
-        var backgroundOffset = markerOffset - 0x9800 - (usesWlLayout ? 0x40 : 0);
         Buffer.BlockCopy(bitmapData, 0, menuRom, backgroundOffset, bitmapData.Length);
         Buffer.BlockCopy(paletteData, 0, menuRom, backgroundOffset + 0x9600, paletteData.Length);
     }

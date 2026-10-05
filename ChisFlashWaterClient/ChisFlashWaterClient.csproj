@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.41</Version>
-    <AssemblyVersion>2.0.41.0</AssemblyVersion>
-    <FileVersion>2.0.41.0</FileVersion>
-    <InformationalVersion>2.041 Explicit GBA menu and preview</InformationalVersion>
+    <Version>2.0.42</Version>
+    <AssemblyVersion>2.0.42.0</AssemblyVersion>
+    <FileVersion>2.0.42.0</FileVersion>
+    <InformationalVersion>2.042 Correct LK background ROM pointers</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -55,6 +55,7 @@
     <Compile Include="..\GbaMultiMenuBuilder\Models\MenuPreviewModel.cs" Link="BuilderImported\Models\MenuPreviewModel.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\AppConfigService.cs" Link="BuilderImported\Services\AppConfigService.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\CompilationBuilder.cs" Link="BuilderImported\Services\CompilationBuilder.cs" />
+    <Compile Include="..\GbaMultiMenuBuilder\Services\GbaMenuBackgroundLocator.cs" Link="BuilderImported\Services\GbaMenuBackgroundLocator.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\RomArchiveImportService.cs" Link="BuilderImported\Services\RomArchiveImportService.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\Chm1Layout.cs" Link="BuilderImported\Services\Chm1Layout.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\GameBoyRomHeaderService.cs" Link="BuilderImported\Services\GameBoyRomHeaderService.cs" />
