@@ -644,6 +644,7 @@ public partial class Form1
 
             ClientAppConfigService.SaveGbaMenuSelection(
                 GetGbaMenuSelectionConfigValue(GetSelectedGbaMenuSelection()));
+            UpdateMenuBackgroundPreview(currentScanResult);
             UpdateActionButtons(isBusy);
         };
 
@@ -1023,7 +1024,7 @@ public partial class Form1
         labelMenuTitleValue.Text = T("ui", "not_detected", "Not Detected");
         labelScanMethodValue.Text = T("ui", "scan_method_nor_only", "NOR 4MiB Header Scan");
         if (IsMbc5EightMiBMode()) RefreshMbc5Preview();
-        else SetMenuBackgroundPreviewState(null, false);
+        else UpdateMenuBackgroundPreview(null);
     }
 
     private void SetMenuBackgroundPreviewState(Image? image, bool isVisible)
@@ -1049,6 +1050,7 @@ public partial class Form1
 
     private void UpdateMenuBackgroundPreview(WaterCartScanResult? result)
     {
+        currentGbaPreviewUsesSelectedMenu = false;
         if (IsMbc5EightMiBMode()) { RefreshMbc5Preview(); return; }
         if (result?.IsBeggarMaxGbcMode == true || IsGbcWorkspaceMode())
         {
@@ -1062,6 +1064,7 @@ public partial class Form1
         }
 
         currentPreviewUsesGbcListMode = false;
+        if (TryPreviewSelectedGbaMenu(result)) return;
         currentPreviewUsesGbaFirstScreenMode = result?.GbaMenuFirstScreenPreview.IsDetected == true;
         if (currentPreviewUsesGbaFirstScreenMode && result is not null)
         {
@@ -2040,7 +2043,7 @@ public partial class Form1
             return;
         }
 
-        if (currentPreviewUsesGbaFirstScreenMode)
+        if (currentPreviewUsesGbaFirstScreenMode && !currentGbaPreviewUsesSelectedMenu)
         {
             ShowGbaMenuCoverBrowserDialog();
             return;
@@ -2053,7 +2056,7 @@ public partial class Form1
 
         using Form dialog = new DpiAwareForm()
         {
-            Text = currentPreviewUsesGbaFirstScreenMode
+            Text = currentGbaPreviewUsesSelectedMenu ? labelMenuBackgroundPreviewCaption.Text : currentPreviewUsesGbaFirstScreenMode
                 ? T("ui", "menu_first_screen_preview", "Menu First Screen Preview")
                 : T("ui", "menu_background_preview", "Background Preview"),
             StartPosition = FormStartPosition.CenterParent,
@@ -2081,7 +2084,7 @@ public partial class Form1
 
         ContextMenuStrip? contextMenu = null;
         ToolStripMenuItem? exportItem = null;
-        if (!currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
+        if (!currentGbaPreviewUsesSelectedMenu && !currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
         {
             contextMenu = new ContextMenuStrip();
             exportItem = new ToolStripMenuItem(T("ui", "export_background_image", "Export Background Image"));
@@ -2136,7 +2139,10 @@ public partial class Form1
                 "background_image_requirements_text",
                 "Image requirements:\r\n\r\n1. PNG is recommended.\r\n2. Size must be exactly 240x160.\r\n3. The image must use no more than 256 colors.\r\n4. Importing will overwrite the current menu background on the cart."),
         };
-        if (!currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
+        bool showFooter = currentGbaPreviewUsesSelectedMenu || !currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode;
+        if (currentGbaPreviewUsesSelectedMenu)
+            requirementsLabel.Text = T("ui", "selected_gba_menu_preview_notice", "This previews the selected menu. Updating the menu or burning applies it to the cartridge; the cartridge has not been changed.");
+        if (showFooter)
         {
             footerPanel.Controls.Add(requirementsLabel);
         }
@@ -2145,24 +2151,24 @@ public partial class Form1
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = currentPreviewUsesGbcListMode || currentPreviewUsesGbaFirstScreenMode ? 1 : 2,
+            RowCount = showFooter ? 2 : 1,
             Margin = Padding.Empty,
             Padding = Padding.Empty,
         };
         dialogLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         dialogLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        if (!currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
+        if (showFooter)
         {
             dialogLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 1F));
         }
         dialogLayout.Controls.Add(pictureBox, 0, 0);
-        if (!currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
+        if (showFooter)
         {
             dialogLayout.Controls.Add(footerPanel, 0, 1);
         }
 
         dialog.Controls.Add(dialogLayout);
-        if (!currentPreviewUsesGbcListMode && !currentPreviewUsesGbaFirstScreenMode)
+        if (showFooter)
         {
             dialog.Shown += (_, _) => EnsureMenuBackgroundPreviewDialogLayout(dialog, dialogLayout, requirementsLabel);
             dialog.SizeChanged += (_, _) => EnsureMenuBackgroundPreviewDialogLayout(dialog, dialogLayout, requirementsLabel);

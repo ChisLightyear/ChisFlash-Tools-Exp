@@ -58,7 +58,6 @@ public partial class Form1 : DpiAwareForm
 
     private enum GbaMenuSelection
     {
-        Auto,
         Legacy,
         Universal,
         Simplified,
@@ -360,10 +359,9 @@ public partial class Form1 : DpiAwareForm
             : ParseGbaMenuSelection(preferredSelection);
         List<GbaMenuSelectionOption> options =
         [
-            new(T("ui", "gba_menu_auto", "Auto"), GbaMenuSelection.Auto),
-            new(T("ui", "gba_menu_legacy", "Original Menu"), GbaMenuSelection.Legacy),
-            new(T("ui", "gba_menu_universal", "New NS Menu"), GbaMenuSelection.Universal),
             new(T("ui", "gba_menu_simplified", "Simplified NS Menu"), GbaMenuSelection.Simplified),
+            new(T("ui", "gba_menu_universal", "New NS Menu"), GbaMenuSelection.Universal),
+            new(T("ui", "gba_menu_legacy", "LK Menu"), GbaMenuSelection.Legacy),
         ];
 
         gbaMenuSelectionInitialized = false;
@@ -387,7 +385,7 @@ public partial class Form1 : DpiAwareForm
             "legacy" or "old" => GbaMenuSelection.Legacy,
             "universal" or "new" => GbaMenuSelection.Universal,
             "simplified" or "simple" => GbaMenuSelection.Simplified,
-            _ => GbaMenuSelection.Auto,
+            _ => GbaMenuSelection.Simplified,
         };
     }
 
@@ -396,7 +394,7 @@ public partial class Form1 : DpiAwareForm
         GbaMenuSelection.Legacy => "legacy",
         GbaMenuSelection.Universal => "universal",
         GbaMenuSelection.Simplified => "simplified",
-        _ => "auto",
+        _ => "simplified",
     };
 
     private bool HasGbaMenuSelectionChanges(
@@ -411,11 +409,6 @@ public partial class Form1 : DpiAwareForm
         }
 
         GbaMenuSelection selection = selectionOverride ?? GetSelectedGbaMenuSelection();
-        if (selection == GbaMenuSelection.Auto)
-        {
-            return false;
-        }
-
         bool currentUsesUniversalMenu = effectiveScan?.IsUniversalGbaMenuDetected == true;
         bool currentUsesSimplifiedMenu = effectiveScan?.IsSimplifiedNsGbaMenuDetected == true;
         return selection switch

@@ -17,8 +17,6 @@ public partial class Form1
         return GetSelectedGbaMenuSelection() switch
         {
             GbaMenuSelection.Universal or GbaMenuSelection.Simplified => true,
-            GbaMenuSelection.Auto => currentScanResult?.IsUniversalGbaMenuDetected == true ||
-                currentScanResult?.IsSimplifiedNsGbaMenuDetected == true,
             _ => false,
         };
     }
@@ -75,8 +73,7 @@ public partial class Form1
             CoverPath = row.PendingItem.CoverPath,
             CoverCleared = row.PendingItem.CoverCleared,
         }).ToList();
-        GbaMenuType menuType = GetSelectedGbaMenuSelection() == GbaMenuSelection.Simplified ||
-            (GetSelectedGbaMenuSelection() == GbaMenuSelection.Auto && currentScanResult?.IsSimplifiedNsGbaMenuDetected == true)
+        GbaMenuType menuType = GetSelectedGbaMenuSelection() == GbaMenuSelection.Simplified
             ? GbaMenuType.SimplifiedNsMenu : GbaMenuType.NsMenu;
         using var dialog = new GbaMultiMenuBuilder.GbaMenuCoverEditorDialog(
             games, menuType, IsBatteryPresentForSelectedMode(GetSelectedBurnProfileMode()), TranslatePendingCoverText);

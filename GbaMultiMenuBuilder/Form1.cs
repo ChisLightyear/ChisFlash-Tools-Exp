@@ -14,7 +14,7 @@ public partial class Form1 : DpiAwareForm
 {
     private const string SequenceColumnName = "sequence";
     private const string DefaultOutputFileName = "LK_MULTIMENU_OUTPUT.gba";
-    private const string AppVersion = "v0.91.2 MIX";
+    private const string AppVersion = "v0.92.2";
     private const string AppAuthor = "chisflash@mori";
     private const long BytesPerMiB = 1024L * 1024L;
     private static readonly Size DefaultWindowSize = new(1184, 761);
@@ -142,7 +142,7 @@ public partial class Form1 : DpiAwareForm
         {
             FlashCartMode.NsMenu => GbaMenuType.NsMenu,
             FlashCartMode.SimplifiedNsMenu => GbaMenuType.SimplifiedNsMenu,
-            _ => GbaMenuType.Classic,
+            _ => GbaMenuType.SimplifiedNsMenu,
         };
         RestoreGbaMenuTypeSelection(initialMenuType);
         var initialFlashCartMode = settings.FlashCartMode is null or FlashCartMode.NsMenu or FlashCartMode.SimplifiedNsMenu
@@ -305,15 +305,15 @@ public partial class Form1 : DpiAwareForm
 
     private List<GbaMenuTypeOption> BuildGbaMenuTypeOptions() =>
     [
-        new(T("ui", "gba_menu_classic", "Classic Menu"), GbaMenuType.Classic),
-        new(T("ui", "gba_menu_ns", "NS Menu"), GbaMenuType.NsMenu),
         new(T("ui", "gba_menu_ns_simplified", "Simplified NS Menu"), GbaMenuType.SimplifiedNsMenu),
+        new(T("ui", "gba_menu_ns", "NS Menu"), GbaMenuType.NsMenu),
+        new(T("ui", "gba_menu_classic", "Classic Menu"), GbaMenuType.Classic),
     ];
 
     private GbaMenuType GetSelectedGbaMenuType() =>
         _comboBoxGbaMenuType.SelectedItem is GbaMenuTypeOption option
             ? option.Type
-            : GbaMenuType.Classic;
+            : GbaMenuType.SimplifiedNsMenu;
 
     private void RestoreGbaMenuTypeSelection(GbaMenuType menuType)
     {
@@ -5951,7 +5951,7 @@ private void BindUiDataSources()
         {
             FlashCartMode.NsMenu => GbaMenuType.NsMenu,
             FlashCartMode.SimplifiedNsMenu => GbaMenuType.SimplifiedNsMenu,
-            _ => GbaMenuType.Classic,
+            _ => GbaMenuType.SimplifiedNsMenu,
         };
         var selectedFlashCartMode = settings.FlashCartMode is null or FlashCartMode.NsMenu or FlashCartMode.SimplifiedNsMenu
             ? GetDefaultFlashCartMode(_currentCompilationFamily)

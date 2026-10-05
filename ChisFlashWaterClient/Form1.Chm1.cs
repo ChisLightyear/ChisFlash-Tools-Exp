@@ -19,9 +19,6 @@ public partial class Form1
         bool magic = UsesChm1Mode(GetSelectedBurnProfileMode());
         bool battery = IsBatteryPresentForSelectedMode(GetSelectedBurnProfileMode());
         GbaMenuSelection selection = GetSelectedGbaMenuSelection();
-        if (selection == GbaMenuSelection.Auto)
-            selection = scan.IsSimplifiedNsGbaMenuDetected ? GbaMenuSelection.Simplified
-                : scan.IsUniversalGbaMenuDetected ? GbaMenuSelection.Universal : GbaMenuSelection.Legacy;
         byte[] menu = suppliedMenuPath is null
             ? LoadSelectedGbaMenuRom(magic, selection, out _)
             : LoadMenuRomForUpdate(suppliedMenuPath, magic, out _);

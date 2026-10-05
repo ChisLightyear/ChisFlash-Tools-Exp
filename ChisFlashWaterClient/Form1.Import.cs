@@ -1532,7 +1532,7 @@ public partial class Form1
         string? gbcFontPathSnapshot = null,
         string? gbcBackgroundPathSnapshot = null,
         GbcMenuLanguageMode gbcMenuLanguageSnapshot = GbcMenuLanguageMode.Chinese,
-        GbaMenuSelection gbaMenuSelection = GbaMenuSelection.Auto,
+        GbaMenuSelection gbaMenuSelection = GbaMenuSelection.Simplified,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

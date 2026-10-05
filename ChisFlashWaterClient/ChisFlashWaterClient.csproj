@@ -7,10 +7,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.40</Version>
-    <AssemblyVersion>2.0.40.0</AssemblyVersion>
-    <FileVersion>2.0.40.0</FileVersion>
-    <InformationalVersion>2.040 Capacity-based cartridge selection</InformationalVersion>
+    <Version>2.0.41</Version>
+    <AssemblyVersion>2.0.41.0</AssemblyVersion>
+    <FileVersion>2.0.41.0</FileVersion>
+    <InformationalVersion>2.041 Explicit GBA menu and preview</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
