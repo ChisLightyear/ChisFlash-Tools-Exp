@@ -4,7 +4,7 @@
 
 ## 1. 下载与准备
 
-下载[所需的程序包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)，解压整个文件夹：
+下载[所需的程序包](https://github.com/ChisLightyear/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)，解压整个文件夹：
 
 - `ChisFlashWaterClient.exe`：上位机，配合丐中丐或已明确识别的 WaterLink 使用。
 - `Chis合卡制作器.exe`：合卡器，离线生成镜像，交给兼容烧录器完整写入。

@@ -4,7 +4,7 @@
 
 ## 1. Download and preparation
 
-Download the [Windows x64 application package you need](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) and extract the whole folder. The repository and downloads are public. Tutorials, screenshots and source stay in the repository; application packages contain compiled programs and required runtime files.
+Download the [Windows x64 application package you need](https://github.com/ChisLightyear/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) and extract the whole folder. The repository and downloads are public. Tutorials, screenshots and source stay in the repository; application packages contain compiled programs and required runtime files.
 
 - `ChisFlashWaterClient.exe`: Client for a compatible Beggar programmer or explicitly identified WaterLink.
 - `Chis合卡制作器.exe`: offline Builder; write its complete images with a compatible programmer.

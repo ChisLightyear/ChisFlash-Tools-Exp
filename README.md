@@ -2,7 +2,7 @@
 
 ChisFlash 烧录卡工具集：**上位机 2.046 r15 / 合卡器 0.92.5**。
 
-- [下载完整工具包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)
+- [下载完整工具包](https://github.com/ChisLightyear/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)
 - [简体中文教程](TUTORIAL.zh-CN.md) · [English guide](TUTORIAL.en.md)
 - [本次更新](docs/CHANGELOG-2.046-r15-0.92.5.md)
 - [GBC 自由合卡固件、菜单和教程](https://github.com/ChisLightyear/ChisFlash-GBC-FreeMulticart)
@@ -51,7 +51,7 @@ dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
 
 ## English
 
-**Client 2.046 r15 / Builder 0.92.5**. [Download](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) · [User guide](TUTORIAL.en.md) · [Release notes](docs/CHANGELOG-2.046-r15-0.92.5.md).
+**Client 2.046 r15 / Builder 0.92.5**. [Download](https://github.com/ChisLightyear/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) · [User guide](TUTORIAL.en.md) · [Release notes](docs/CHANGELOG-2.046-r15-0.92.5.md).
 
 The Client works with supported programmers; the Builder creates complete images for compatible programmers. Keep both source directories side by side: the Client links shared Builder sources. Separate Windows x64 compiled downloads are provided for the Client and Builder, each with its .NET runtime. Tutorials, screenshots and sources remain in the repository.
 
