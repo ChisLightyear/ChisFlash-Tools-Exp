@@ -76,6 +76,7 @@ public static class FcMbcxCodec
     private static uint U32(ReadOnlySpan<byte> b,int p)=>BinaryPrimitives.ReadUInt32LittleEndian(b[p..]);
     private static void W16(Span<byte>b,int p,int n)=>BinaryPrimitives.WriteUInt16LittleEndian(b[p..],checked((ushort)n));
     private static void W32(Span<byte>b,int p,int n)=>BinaryPrimitives.WriteUInt32LittleEndian(b[p..],checked((uint)n));
+    private static void W32(Span<byte>b,int p,uint n)=>BinaryPrimitives.WriteUInt32LittleEndian(b[p..],n);
     public static int FilePrefixBytes(FcGame game)=>16+((game.Data[6]&4)!=0?512:0);
     public static void CopyStoredData(FcGame game,int offset,Span<byte> target)
     {
@@ -185,7 +186,7 @@ public static class FcMbcxCodec
         W32(b,56,0x2000000/info.PrgBytes);
         W32(b,60,chrCapacity-1);
         var snapshot=FcSnapshotPlan.Create(info.Mapper,info.ChrBytes,info.ChrRamBytes+info.SaveChrRamBytes,info.StoredRamBytes);
-        W32(b,64,snapshot.TotalBytes);W32(b,68,snapshot.WritableChrBytes);W32(b,72,snapshot.SpillBase);W32(b,76,(int)FcSnapshotPlan.Layout);
+        W32(b,64,snapshot.TotalBytes);W32(b,68,snapshot.WritableChrBytes);W32(b,72,snapshot.SpillBase);W32(b,76,FcSnapshotPlan.Layout);
         "RC01"u8.CopyTo(b.AsSpan(80));b[84]=info.CorrectionKind;
         W32(b,88,info.WorkRamBytes);W32(b,92,info.SaveChrRamBytes);
         string SizeLabel(int bytes)

@@ -115,8 +115,12 @@ public partial class Form1
 
     private async Task SelectRomFilesForQueueAsync()
     {
+        if (SupportsGbaCardMode()) { await SelectGbaListSlotAsync(); return; }
+        if (IsSelectedGbaMenuRow()) { await SelectGbaMenuAsync(); return; }
+        if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
+        if (IsChisFlash10Mode()) { await SelectChisFlash10FileAsync(); return; }
         if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
-        if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
+        if (IsMbc5FixedSlotMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy)
         {
             return;
@@ -140,8 +144,13 @@ public partial class Form1
 
     private async Task AddPendingRomFilesAsync(IEnumerable<string> filePaths)
     {
+        if (SupportsGbaCardMode() && !appendingGbaListGames) { await ImportGbaListFilesAsync(filePaths); return; }
+        if (IsSelectedGbaMenuRow()) { await ImportGbaMenuFilesAsync(filePaths); return; }
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("已识别碎片表但目录异常，不能导入游戏。");
+        if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(filePaths); return; }
+        if (IsChisFlash10Mode()) { await AddChisFlash10FilesAsync(filePaths); return; }
         if (IsGbcRawImageMode()) { await AddGbcImageFilesAsync(filePaths); return; }
-        if (IsMbc5EightMiBMode()) { await AddMbc5FilesAsync(filePaths); return; }
+        if (IsMbc5FixedSlotMode()) { await AddMbc5FilesAsync(filePaths); return; }
         if (isBusy)
         {
             return;
@@ -677,7 +686,7 @@ public partial class Form1
 
     private void RebuildWorkspaceRows(int selectedIndex)
     {
-        if (IsMbc5EightMiBMode()) { RefreshMbc5Grid(selectedIndex); return; }
+        if (IsMbc5FixedSlotMode()) { RefreshMbc5Grid(selectedIndex); return; }
         workspaceRows.Clear();
 
         if (currentScanResult is not null)
@@ -709,6 +718,7 @@ public partial class Form1
 
     private IEnumerable<WaterCartEntry> GetWorkspaceBaseEntries(WaterCartScanResult scanResult)
     {
+        if (IsGbaConversionDraft()) return gbaKeepCurrentGame?.Checked == true && GetGbaSingleGame() is { } single ? [single] : [];
         IEnumerable<WaterCartEntry> baseEntries = scanResult.Entries
             .Where(entry => !entry.IsMenu);
 
@@ -727,9 +737,13 @@ public partial class Form1
 
     private void RefreshWorkspaceGrid(int selectedIndex = -1)
     {
-        if (IsMbc5EightMiBMode()) { RefreshMbc5Grid(selectedIndex); return; }
+        if (IsGbaSingleCardMode()) { gbaSingleGridActive = false; RefreshGbaCardModeUi(); return; }
+        if (IsChisFlash10Mode()) { RefreshChisFlash10Grid(); return; }
+        dataGridViewRoms.ReadOnly = false;
+        if (IsMbc5FixedSlotMode()) { RefreshMbc5Grid(selectedIndex); return; }
         RestoreMbc5GridColumns();
         dataGridViewRoms.Rows.Clear();
+        if (SupportsGbaCardMode()) AddGbaMenuGridRow();
         if (dataGridViewRoms.Columns["GbcDedicatedSave"] is DataGridViewColumn dedicatedSaveColumn)
         {
             dedicatedSaveColumn.Visible = IsGbcWorkspaceMode();
@@ -802,10 +816,20 @@ public partial class Form1
             {
                 ApplyLoadingPlaceholderRowStyle(gridRow);
             }
+            if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null)
+            {
+                gridRow.Cells["AllocSize"].Value = GetCurrentSingleGameLength() > 0 ? FormatMiBSize(GetCurrentSingleGameLength()) : "未确定";
+                gridRow.Cells["SaveType"].Value = "未分析";
+                gridRow.Cells["PatchStatus"].Value = "待保留；烧录时读取并安排到游戏区";
+            }
         }
+
+        if (SupportsGbaCardMode() && !IsGbaDirectoryDamaged()) AddGbaEmptyGameRow(workspaceRows.Count + 1);
 
         UpdateWorkspaceGroupTitle();
 
+        selectedIndex = GridIndexFromWorkspace(selectedIndex);
+        if (selectedIndex < 0 && SupportsGbaCardMode() && dataGridViewRoms.Rows.Count > 1) selectedIndex = 1;
         if (selectedIndex >= 0 && selectedIndex < dataGridViewRoms.Rows.Count)
         {
             dataGridViewRoms.ClearSelection();
@@ -818,10 +842,12 @@ public partial class Form1
 
         dataGridViewRoms.Enabled = !isBusy;
         UpdateActionButtons(isBusy);
+        RefreshGbaCardModeUi();
     }
 
     private string FormatWorkspaceOrderText(WorkspaceListRow row, int rowIndex)
     {
+        if (SupportsGbaCardMode()) return "游戏" + (rowIndex + 1);
         string orderText = (rowIndex + 1).ToString("000", CultureInfo.CurrentCulture);
         return row.CartEntry is not null && IsCurrentChipSaveEntry(row.CartEntry)
             ? orderText + "★"
@@ -1019,6 +1045,19 @@ public partial class Form1
     private bool TryValidateWorkspaceCapacity(IReadOnlyList<WorkspaceListRow> workspaceSnapshot, out string errorMessage)
     {
         errorMessage = string.Empty;
+        if (IsGbaConversionDraft())
+        {
+            long bytes = 0x400000L + workspaceSnapshot.Where(row => row.PendingItem is not null)
+                .Sum(row => ((GetEstimatedPreparedRomLengthBytes(row.PendingItem!, row.PendingItem!.FileSizeBytes, GetSelectedBurnProfileMode()) + 0x3fffffL) / 0x400000) * 0x400000);
+            if (gbaKeepCurrentGame?.Checked == true)
+            {
+                var source = GetGbaSingleGame();
+                bytes += source is not null && (source.FoundInMenuConfig || source.FoundInWlMapping)
+                    ? (long)source.LogicalBucketCount * WaterCartScanner.BucketSizeBytes : Math.Max(0x400000, GetCurrentSingleGameLength());
+            }
+            if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) { errorMessage = "合卡列表超过实际NOR容量。"; return false; }
+            return true;
+        }
         if(HasUnreadyPlatformImports(workspaceSnapshot)){errorMessage="列表含其他平台或尚未开放的核心，请选择对应模式后烧录。";return false;}
 
         if (currentScanResult is null)
@@ -1032,7 +1071,7 @@ public partial class Form1
         }
 
         BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
-        ProgrammerKind programmerKind = GetSelectedProgrammerKind() ?? ProgrammerKind.WaterLink;
+        ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
 
         if (currentScanResult.IsBeggarMaxGbcMode)
         {
@@ -1138,8 +1177,8 @@ public partial class Form1
         }
 
         DataGridViewRow selectedRow = dataGridViewRoms.SelectedRows[0];
-        rowIndex = selectedRow.Index;
         row = selectedRow.Tag as WorkspaceListRow;
+        rowIndex = row is null ? -1 : workspaceRows.IndexOf(row);
         return row is not null;
     }
 
@@ -1152,8 +1191,11 @@ public partial class Form1
 
     private void RemoveSelectedQueuedRom()
     {
+        if (SupportsGbaCardMode()) { RemoveGbaListSelection(); return; }
+        if (IsGbaSingleCardMode()) { ClearSingleGbaPending(); return; }
+        if (IsChisFlash10Mode()) { ClearChisFlash10Image(); return; }
         if (IsGbcRawImageMode()) { ClearGbcImage(); return; }
-        if (IsMbc5EightMiBMode()) { RemoveMbc5Slot(); return; }
+        if (IsMbc5FixedSlotMode()) { RemoveMbc5Slot(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.RemoveSelected(); return; }
         if (isBusy)
         {
@@ -1191,8 +1233,11 @@ public partial class Form1
 
     private void ClearQueuedRoms()
     {
+        if (SupportsGbaCardMode()) { ClearGbaList(); return; }
+        if (IsGbaSingleCardMode()) { ClearSingleGbaPending(); return; }
+        if (IsChisFlash10Mode()) { ClearChisFlash10Image(); return; }
         if (IsGbcRawImageMode()) { ClearGbcImage(); return; }
-        if (IsMbc5EightMiBMode()) { ClearMbc5Slots(); return; }
+        if (IsMbc5FixedSlotMode()) { ClearMbc5Slots(); return; }
         if (IsFcWorkspaceActive) { fcWorkspace!.ClearGames(); return; }
         if (isBusy)
         {
@@ -1278,7 +1323,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -1295,7 +1340,7 @@ public partial class Form1
 
         bool metadataOnly = pendingRows.Count == 0;
         bool updatesGbaMenu = HasGbaMenuSelectionChanges(currentScanResult);
-        ProgrammerKind programmerKind = GetSelectedProgrammerKind() ?? ProgrammerKind.WaterLink;
+        ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
         bool applyWaitcntPatch = !metadataOnly && checkBoxWaitcntPatch.Checked && !IsGbcWorkspaceMode();
         if (!TryValidateWorkspaceCapacity(workspaceSnapshot, out string capacityErrorMessage))
         {
@@ -2732,8 +2777,6 @@ public partial class Form1
                             sectorSize));
                 }
             }
-
-            VerifyMenuSector(protocol, programmerKind, sectorAddress, sectorData, cancellationToken);
             if (sectorCount <= 4 || sectorIndex == 0 || sectorIndex == sectorCount - 1 || (sectorIndex + 1) % 8 == 0)
             {
                 AppendProgressLog(writeProgressLogKey, Tf(
@@ -2758,6 +2801,7 @@ public partial class Form1
     private void DataGridViewRoms_MouseDown(object? sender, MouseEventArgs e)
     {
         workspaceDragSourceIndex = -1;
+        if (IsChisFlash10Mode()) return;
         workspaceDragStartPoint = e.Location;
 
         DataGridView.HitTestInfo hit = dataGridViewRoms.HitTest(e.X, e.Y);
@@ -2766,7 +2810,7 @@ public partial class Form1
             return;
         }
 
-        workspaceDragSourceIndex = hit.RowIndex;
+        workspaceDragSourceIndex = WorkspaceIndexFromGrid(hit.RowIndex);
         dataGridViewRoms.ClearSelection();
         dataGridViewRoms.Rows[hit.RowIndex].Selected = true;
         if (hit.ColumnIndex >= 0)
@@ -2777,7 +2821,9 @@ public partial class Form1
 
     private void DataGridViewRoms_MouseMove(object? sender, MouseEventArgs e)
     {
-        if (IsMbc5EightMiBMode()) return;
+        if (IsGbaSingleCardMode()) return;
+        if (IsChisFlash10Mode()) return;
+        if (IsMbc5FixedSlotMode()) return;
         if (isBusy ||
             isAnalyzingQueueImports ||
             IsWorkspaceModificationLocked() ||
@@ -2807,7 +2853,8 @@ public partial class Form1
 
     private void DataGridViewRoms_DragEnter(object? sender, DragEventArgs e)
     {
-        if (IsMbc5EightMiBMode()) { e.Effect = !isBusy && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None; return; }
+        if (IsGbaSingleCardMode()) { UpdateGbaSingleDragEffect(e); return; }
+        if (IsMbc5FixedSlotMode()) { e.Effect = !isBusy && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None; return; }
         if (isBusy)
         {
             e.Effect = DragDropEffects.None;
@@ -2836,11 +2883,12 @@ public partial class Form1
 
     private void DataGridViewRoms_DragOver(object? sender, DragEventArgs e)
     {
-        if (IsMbc5EightMiBMode())
+        if (IsGbaSingleCardMode()) { UpdateGbaSingleDragEffect(e); return; }
+        if (IsMbc5FixedSlotMode())
         {
             Point location = dataGridViewRoms.PointToClient(new Point(e.X, e.Y));
             int slot = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
-            e.Effect = !isBusy && slot >= 0 && mbc5Layout.GetSlot(slot).Enabled && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Effect = !isBusy && slot >= 0 && ActiveMbc5Layout.GetSlot(slot).Enabled && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
             return;
         }
         if (isBusy)
@@ -2882,7 +2930,22 @@ public partial class Form1
 
     private async void DataGridViewRoms_DragDrop(object? sender, DragEventArgs e)
     {
-        if (IsMbc5EightMiBMode())
+        if (SupportsGbaCardMode() && e.Data?.GetData(DataFormats.FileDrop) is string[] gbaFiles)
+        {
+            Point location = dataGridViewRoms.PointToClient(new Point(e.X, e.Y));
+            int index = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
+            if (IsGbaDisabledGameRow(index) || IsGbaSingleCardMode() && index < 0) { ShowGbaDisabledGameHint(); return; }
+            if (index >= 0) { dataGridViewRoms.ClearSelection(); dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[index].Cells["Title"]; dataGridViewRoms.Rows[index].Selected = true; }
+            await RunUiActionSafelyAsync(() => ImportGbaListFilesAsync(gbaFiles));
+            return;
+        }
+        if (IsChisFlash10Mode())
+        {
+            if (!isBusy && e.Data?.GetData(DataFormats.FileDrop) is string[] singleFiles)
+                await RunUiActionSafelyAsync(() => AddChisFlash10FilesAsync(singleFiles));
+            return;
+        }
+        if (IsMbc5FixedSlotMode())
         {
             Point location = dataGridViewRoms.PointToClient(new Point(e.X, e.Y));
             int slot = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
@@ -2947,8 +3010,8 @@ public partial class Form1
         {
             Rectangle rowRect = dataGridViewRoms.GetRowDisplayRectangle(hit.RowIndex, false);
             return clientPoint.Y > rowRect.Top + rowRect.Height / 2
-                ? hit.RowIndex + 1
-                : hit.RowIndex;
+                ? Math.Clamp(hit.RowIndex + 1 - (SupportsGbaCardMode() ? 1 : 0), 0, workspaceRows.Count)
+                : Math.Clamp(hit.RowIndex - (SupportsGbaCardMode() ? 1 : 0), 0, workspaceRows.Count);
         }
 
         Rectangle firstRowRect = dataGridViewRoms.GetRowDisplayRectangle(0, false);
@@ -2957,7 +3020,7 @@ public partial class Form1
             return 0;
         }
 
-        return dataGridViewRoms.Rows.Count;
+        return workspaceRows.Count;
     }
 
     private void MoveWorkspaceRow(int sourceIndex, int insertIndex)
@@ -2992,7 +3055,9 @@ public partial class Form1
 
     private void DataGridViewRoms_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
-        if (IsMbc5EightMiBMode()) { if (e.RowIndex >= 0 && mbc5Layout.GetSlot(e.RowIndex).Enabled) _ = RunUiActionSafelyAsync(SelectMbc5FilesAsync); return; }
+        if (SupportsGbaCardMode()) { if (e.RowIndex >= 0) { dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[e.RowIndex].Cells["Title"]; _ = RunUiActionSafelyAsync(SelectGbaListSlotAsync); } return; }
+        if (IsGbaSingleCardMode()) { if (e.RowIndex >= 0) _ = RunUiActionSafelyAsync(SelectSingleGbaFileAsync); return; }
+        if (IsMbc5FixedSlotMode()) { if (e.RowIndex >= 0 && ActiveMbc5Layout.GetSlot(e.RowIndex).Enabled) _ = RunUiActionSafelyAsync(SelectMbc5FilesAsync); return; }
         if (isBusy || isAnalyzingQueueImports || IsWorkspaceModificationLocked() || e.RowIndex < 0)
         {
             return;
@@ -3062,14 +3127,15 @@ public partial class Form1
             return;
         }
 
-        if (e.RowIndex < 0 || e.RowIndex >= workspaceRows.Count)
+        int workspaceIndex = WorkspaceIndexFromGrid(e.RowIndex);
+        if (workspaceIndex < 0)
         {
             e.Cancel = true;
             return;
         }
 
         workspaceTitleEditRowIndex = e.RowIndex;
-        workspaceTitleEditOriginalValue = GetWorkspaceRowDisplayTitle(workspaceRows[e.RowIndex]);
+        workspaceTitleEditOriginalValue = GetWorkspaceRowDisplayTitle(workspaceRows[workspaceIndex]);
     }
 
     private void DataGridViewRoms_EditingControlShowing(object? sender, DataGridViewEditingControlShowingEventArgs e)
@@ -3113,14 +3179,14 @@ public partial class Form1
         if (e.RowIndex < 0 ||
             e.ColumnIndex != dataGridViewRoms.Columns["Title"]?.Index ||
             e.RowIndex != workspaceTitleEditRowIndex ||
-            e.RowIndex >= workspaceRows.Count)
+            WorkspaceIndexFromGrid(e.RowIndex) < 0)
         {
             workspaceTitleEditRowIndex = -1;
             workspaceTitleEditOriginalValue = string.Empty;
             return;
         }
 
-        WorkspaceListRow row = workspaceRows[e.RowIndex];
+        WorkspaceListRow row = workspaceRows[WorkspaceIndexFromGrid(e.RowIndex)];
         string originalTitle = workspaceTitleEditOriginalValue;
         string editedTitle = Convert.ToString(dataGridViewRoms.Rows[e.RowIndex].Cells[e.ColumnIndex].Value) ?? string.Empty;
         string normalizedTitle = NormalizeEditedWorkspaceTitle(editedTitle, originalTitle);
@@ -3142,7 +3208,7 @@ public partial class Form1
             row.DisplayTitleOverride = normalizedTitle;
         }
 
-        RefreshWorkspaceGrid(e.RowIndex);
+        RefreshWorkspaceGrid(WorkspaceIndexFromGrid(e.RowIndex));
         AppendLog(Tf(
             "log",
             "workspace_title_updated",

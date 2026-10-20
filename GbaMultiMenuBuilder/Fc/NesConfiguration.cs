@@ -97,7 +97,7 @@ public static class NesConfiguration
             int work=battery?0:declared,save=battery?(mapper==4&&sub==1?1024:declared):0;
             if(mapper==195||mapper==198&&battery)work=Math.Max(work,12288-save);
             bool chrRom=copy[5]!=0||(copy[9]&240)!=0;
-            int chrRam=!chrRom?(mapper is 176 or 268?262144:8192):mapper is 74 or 253?2048:mapper is 165 or 195?4096:mapper is 176 or 199?8192:0;
+            int chrRam=!chrRom?(mapper is 176 or 268?262144:mapper==30?32768:8192):mapper is 74 or 191 or 253?2048:mapper is 165 or 192 or 195?4096:mapper is 176 or 199?8192:0;
             static int Shift(int bytes){if(bytes==0)return 0;int n=0;while((64<<n)<bytes)n++;return n;}
             copy[10]=(byte)(Shift(work)|(Shift(save)<<4));copy[11]=(byte)Shift(chrRam);
             defaultWork=work;defaultSave=save;defaultChr=chrRam;

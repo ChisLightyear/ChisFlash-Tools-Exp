@@ -24,8 +24,15 @@ public static class FcDirectoryReader
             Capture(records,count*GameLibraryDirectory.RecordBytes);
             for(int index=0;index<count;index++){
                 int record=records+index*GameLibraryDirectory.RecordBytes,launch=Number(record+36),bytes=Word(record+40),info=Number(record+52),map=Number(record+72),banks=Word(record+76);
-                if(bytes is <16 or >144||launch<floor||launch>end-bytes||info<floor||info>end-128||banks>60||banks==0&&map!=0||banks>0&&(map<floor||map>end-banks))throw new InvalidDataException("Invalid MIX v2 launch/name/map range.");
+                if((bytes<16||bytes>(Word(record+42)==LaunchSequence.Flag?LaunchSequence.MaxBlockBytes:144))||launch<floor||launch>end-bytes||info<floor||info>end-128||banks>60||banks==0&&map!=0||banks>0&&(map<floor||map>end-banks))throw new InvalidDataException("Invalid MIX v2 launch/name/map range.");
                 Capture(launch,bytes);Capture(info,128);if(banks>0)Capture(map,banks);
+                int fullTitle=Number(record+88);
+                if(fullTitle!=0){
+                    if(fullTitle<floor||fullTitle>end-FullTitleAsset.HeaderBytes)throw new InvalidDataException("Complete-title header outside metadata.");
+                    Capture(fullTitle,FullTitleAsset.HeaderBytes);var title=FullTitleAsset.Header(prefix.AsSpan(fullTitle,FullTitleAsset.HeaderBytes));
+                    if(fullTitle>end-title.Bytes)throw new InvalidDataException("Complete-title asset outside metadata.");
+                    Capture(fullTitle+FullTitleAsset.HeaderBytes,title.NameBytes);
+                }
             }
         }
         List<FcMetadataRange> merged=[];

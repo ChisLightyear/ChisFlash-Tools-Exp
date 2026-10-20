@@ -15,15 +15,16 @@ public static class GameLibraryDirectory
     private static int U32(ReadOnlySpan<byte> data,int offset)=>checked((int)BinaryPrimitives.ReadUInt32LittleEndian(data[offset..]));
     private static void W16(Span<byte> data,int offset,int value)=>BinaryPrimitives.WriteUInt16LittleEndian(data[offset..],checked((ushort)value));
     private static void W32(Span<byte> data,int offset,int value)=>BinaryPrimitives.WriteUInt32LittleEndian(data[offset..],checked((uint)value));
+    private static void W32(Span<byte> data,int offset,uint value)=>BinaryPrimitives.WriteUInt32LittleEndian(data[offset..],value);
     private static uint Crc(ReadOnlySpan<byte> data){uint crc=uint.MaxValue;foreach(byte value in data){crc^=value;for(int bit=0;bit<8;bit++)crc=(crc>>1)^((crc&1)!=0?0xedb88320u:0u);}return ~crc;}
     private static void Seal(Span<byte> data)=>BinaryPrimitives.WriteUInt32LittleEndian(data[^4..],Crc(data[..^4]));
     private static void Verify(ReadOnlySpan<byte> data){if(Crc(data[..^4])!=BinaryPrimitives.ReadUInt32LittleEndian(data[^4..]))throw new InvalidDataException("Library CRC mismatch.");}
     public static string StableId(FcGame game)=>game.HasRomData?Convert.ToHexString(SHA256.HashData(game.Data).AsSpan(0,16)):game.DirectoryIdentity??throw new InvalidOperationException("Load ROM content before calculating its identity.");
-    private static int PayloadBytes(FcGame game)=>game.IsNes?128:32;
+    private static int PayloadBytes(FcGame game)=>LaunchSequence.MaximumPayloadBytes(game.IsNes);
     private static int SaveMode(FcGame game)=>game.Info.SaveBanks==0?0:game.Info.Battery?1:2;
     public static void ValidateCapacity(IReadOnlyList<FcGame> games)
     {
-        long bytes=Base+HeaderBytes+(long)games.Count*RecordBytes+games.Sum(game=>(long)16+PayloadBytes(game)+game.Info.SaveBanks+512+1024+128);
+        long bytes=Base+HeaderBytes+(long)games.Count*RecordBytes+games.Sum(game=>(long)16+PayloadBytes(game)+game.Info.SaveBanks+512+1024+128+FullTitleAsset.EstimateBytes(game.Name));
         if(games.Count>ushort.MaxValue||bytes>FcMbcxCodec.PrefixBytes)throw new InvalidDataException("Game library metadata exceeds the 1 MiB prefix.");
         var known=games.Where(game=>game.HasRomData||game.DirectoryIdentity is not null).Select(StableId).ToArray();
         if(known.Distinct(StringComparer.Ordinal).Count()!=known.Length)throw new InvalidDataException("Duplicate ROM content identity.");
@@ -55,19 +56,22 @@ public static class GameLibraryDirectory
             if(game.IsNes)payload=FcMbcxCodec.BuildGameConfig(placement);
             else if(game.Snes is not null)payload=SnesMbcxCodec.BuildConfig(placement);
             else {if(md is null||game.Info.StoredRamBytes!=md.SaveBytes||game.Info.Battery!=(md.SaveBytes>0)||MdMbcxCodec.Describe(game.Data,game.Name)!=md)throw new InvalidDataException("MD ROM configuration mismatch.");payload=new byte[32];W16(payload,0,placement.Offset/16384);W16(payload,2,md.Flags);W32(payload,4,game.Data.Length/2);W32(payload,12,md.SaveBytes);}
-            int launch=next;next+=16+payload.Length;
-            var block=prefix.AsSpan(launch,16+payload.Length);block.Clear();"LNC2"u8.CopyTo(block);W32(block,4,core);W16(block,8,LaunchVersion);W16(block,10,payload.Length);BinaryPrimitives.WriteUInt32LittleEndian(block[12..],Crc(payload));payload.CopyTo(block[16..]);
+            byte[] sequence=LaunchSequence.Build((uint)core,payload,placement.SaveMap);
+            int launch=next;next+=16+sequence.Length;
+            var block=prefix.AsSpan(launch,16+sequence.Length);block.Clear();"LNC2"u8.CopyTo(block);W32(block,4,core);W16(block,8,LaunchVersion);W16(block,10,sequence.Length);BinaryPrimitives.WriteUInt32LittleEndian(block[12..],Crc(sequence));sequence.CopyTo(block[16..]);
             int mapAddress=placement.SaveMap.Length==0?0:next;placement.SaveMap.CopyTo(prefix.AsSpan(next));next+=placement.SaveMap.Length;
             int list=next;next+=512;int detail=next;next+=1024;int info=next;next+=128;
             var bitmap=FcTitleRenderer.Render(game.Name);bitmap.List.CopyTo(prefix.AsSpan(list,512));bitmap.Detail.CopyTo(prefix.AsSpan(detail,1024));
             var title=prefix.AsSpan(info,128);title.Clear();string name=string.IsNullOrWhiteSpace(game.Name)?"UNKNOWN":game.Name.Trim();if(name.Length>46)name=name[..46];if(char.IsHighSurrogate(name[^1]))name=name[..^1];W16(title,0,name.Length);Encoding.Unicode.GetBytes(name).CopyTo(title[2..]);
             if(game.IsNes)payload.AsSpan(96,32).CopyTo(title[96..]);
             else {string Size(int bytes)=>bytes==0?"NONE    ":(bytes/1024).ToString().PadLeft(6)+"KB";Encoding.ASCII.GetBytes(game.Snes is not null?"SNES    ":"MD      ").CopyTo(title[96..]);Encoding.ASCII.GetBytes(Size(game.Data.Length)).CopyTo(title[104..]);Encoding.ASCII.GetBytes(Size(game.Info.StoredRamBytes)).CopyTo(title[112..]);Encoding.ASCII.GetBytes(game.Snes is not null?(game.Snes.RegionDisplay=="PAL"?"PAL     ":game.Snes.RegionDisplay=="NTSC"?"NTSC    ":"UNKNOWN "):(md!.Flags&1)!=0?"PAL     ":"NTSC    ").CopyTo(title[120..]);}
+            byte[] fullTitle=FullTitleAsset.Write(bitmap);int fullTitleAddress=next;next+=fullTitle.Length;fullTitle.CopyTo(prefix.AsSpan(fullTitleAddress));
             var record=prefix.AsSpan(Base+HeaderBytes+index*RecordBytes,RecordBytes);record.Clear();SHA256.HashData(game.Data).AsSpan(0,16).CopyTo(record);
             W32(record,16,core);W16(record,20,game.IsNes?3:game.Snes is not null?5:4);W16(record,22,Version);W32(record,24,placement.Offset);W32(record,28,game.Data.Length);W32(record,32,placement.AllocatedBytes);
-            W32(record,36,launch);W16(record,40,block.Length);W32(record,44,list);W32(record,48,detail);W32(record,52,info);
-            W32(record,60,game.Info.StoredRamBytes);W16(record,64,SaveMode(game));record[66]=game.IsNes?(byte)7:(byte)3;W32(record,68,game.IsNes?checked((int)FcSnapshotPlan.Layout):0);
+            W32(record,36,launch);W16(record,40,block.Length);W16(record,42,LaunchSequence.Flag);W32(record,44,list);W32(record,48,detail);W32(record,52,info);
+            W32(record,60,game.Info.StoredRamBytes);W16(record,64,SaveMode(game));record[66]=game.IsNes?(byte)7:(byte)3;W32(record,68,game.IsNes?FcSnapshotPlan.Layout:0u);
             W32(record,72,mapAddress);W16(record,76,placement.SaveMap.Length);W16(record,78,SaveMapAbi);W32(record,80,8192);BinaryPrimitives.WriteUInt32LittleEndian(record[84..],Crc(placement.SaveMap));Seal(record);
+            W32(record,88,fullTitleAddress);Seal(record);
         }
         W32(header,16,next);Seal(header);return prefix;
     }
@@ -92,17 +96,21 @@ public static class GameLibraryDirectory
             int core=U32(record,16),platform=U16(record,20),offset=U32(record,24),length=U32(record,28),allocated=U32(record,32),launchBytes=U16(record,40);
             bool nes=core==(int)FcCore&&platform==3,md=core==(int)MdCore&&platform==4,snes=core==(int)SnesCore&&platform==5;
             if(!nes&&!md&&!snes)throw new InvalidDataException("Unsupported MIX v2 core/platform adapter.");
-            if(U16(record,22)!=Version||U16(record,42)!=0||U32(record,56)!=0||record[67]!=0||U32(record,88)!=0||length<16||length>allocated||offset%16384!=0||allocated%16384!=0||offset<FcMbcxCodec.PrefixBytes||offset>limit-allocated||romRanges.Any(range=>offset<range.End&&range.Start<offset+allocated))throw new InvalidDataException("Invalid MIX v2 record.");
+            if(U16(record,22)!=Version||(U16(record,42)&~LaunchSequence.Flag)!=0||U32(record,56)!=0||record[67]!=0||length<16||length>allocated||offset%16384!=0||allocated%16384!=0||offset<FcMbcxCodec.PrefixBytes||offset>limit-allocated||romRanges.Any(range=>offset<range.End&&range.Start<offset+allocated))throw new InvalidDataException("Invalid MIX v2 record.");
             romRanges.Add((offset,offset+allocated));
-            if(record[66]!=(nes?7:3)||U16(record,64)>2||U32(record,68)!=(nes?(int)FcSnapshotPlan.Layout:0))throw new InvalidDataException("Invalid MIX v2 capabilities or state layout.");
+            if(record[66]!=(nes?7:3)||U16(record,64)>2||BinaryPrimitives.ReadUInt32LittleEndian(record[68..])!=(nes?FcSnapshotPlan.Layout:0u))throw new InvalidDataException("Invalid MIX v2 capabilities or state layout.");
             int mapCount=U16(record,76),mapAddress=U32(record,72);
             if(mapCount>60||U16(record,78)!=SaveMapAbi||U32(record,80)!=8192||mapCount==0&&mapAddress!=0)throw new InvalidDataException("Invalid MIX v2 SRAM map descriptor.");
             byte[] map=mapCount==0?[]:Asset(mapAddress,mapCount).ToArray();
             if(BinaryPrimitives.ReadUInt32LittleEndian(record[84..])!=Crc(map))throw new InvalidDataException("MIX v2 SRAM map CRC mismatch.");
             var block=Asset(U32(record,36),launchBytes);int payloadBytes=nes?128:32;
-            if(launchBytes!=payloadBytes+16||!block[..4].SequenceEqual("LNC2"u8)||U32(block,4)!=core||U16(block,8)!=LaunchVersion||U16(block,10)!=payloadBytes||BinaryPrimitives.ReadUInt32LittleEndian(block[12..])!=Crc(block[16..]))throw new InvalidDataException("Invalid MIX v2 launch block.");
-            var payload=block[16..];_ = Asset(U32(record,44),512);_ = Asset(U32(record,48),1024);var title=Asset(U32(record,52),128);int chars=U16(title,0);
+            if(launchBytes<16||launchBytes>LaunchSequence.MaxBlockBytes||!block[..4].SequenceEqual("LNC2"u8)||U32(block,4)!=core||U16(block,8)!=LaunchVersion||U16(block,10)!=launchBytes-16||BinaryPrimitives.ReadUInt32LittleEndian(block[12..])!=Crc(block[16..]))throw new InvalidDataException("Invalid MIX v2 launch block.");
+            var payload=U16(record,42)==LaunchSequence.Flag?LaunchSequence.Configuration(block[16..],payloadBytes):block[16..];
+            if(payload.Length!=payloadBytes)throw new InvalidDataException("Invalid native configuration size.");
+            _ = Asset(U32(record,44),512);_ = Asset(U32(record,48),1024);var title=Asset(U32(record,52),128);int chars=U16(title,0);
             if(chars is <1 or >46)throw new InvalidDataException("Invalid MIX v2 title.");string name=Encoding.Unicode.GetString(title.Slice(2,chars*2));
+            int fullTitleAddress=U32(record,88);
+            if(fullTitleAddress!=0){int floor=records+count*RecordBytes;if(fullTitleAddress<floor||fullTitleAddress>end-FullTitleAsset.HeaderBytes)throw new InvalidDataException("Complete-title header outside metadata.");var descriptor=FullTitleAsset.Header(prefix.AsSpan(fullTitleAddress,FullTitleAsset.HeaderBytes));name=FullTitleAsset.Read(Asset(fullTitleAddress,descriptor.Bytes),!directoryOnly);}
             string identity=Convert.ToHexString(record[..16]);if(record[..16].IndexOfAnyExcept((byte)0)<0||!identities.Add(identity))throw new InvalidDataException("Empty or duplicate ROM identity.");
             FcGame game;
             if(nes)game=FcMbcxCodec.ReadDirectoryGame(payload,name,length,offset,allocated,map,identity);

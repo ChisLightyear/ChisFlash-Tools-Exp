@@ -450,15 +450,6 @@ internal static class GbcFontService
             yield return Path.Combine(basePath, name);
         }
 
-        var directory = new DirectoryInfo(basePath);
-        while (directory is not null)
-        {
-            yield return Path.Combine(directory.FullName, "xiaodianzhen-pixel-font-master", "build", "outputs", "xiaodianzhen-8px.bdf");
-            yield return Path.Combine(directory.FullName, "ChisFlash_MBCX", "xiaodianzhen-pixel-font-master", "build", "outputs", "xiaodianzhen-8px.bdf");
-            yield return Path.Combine(directory.FullName, "zpix-pixel-font", "dist", "zpix.bdf");
-            yield return Path.Combine(directory.FullName, "ChisFlash_MBCX", "zpix-pixel-font", "dist", "zpix.bdf");
-            directory = directory.Parent;
-        }
     }
 
     private static int DetectGlyphSizePx(string fontPath)

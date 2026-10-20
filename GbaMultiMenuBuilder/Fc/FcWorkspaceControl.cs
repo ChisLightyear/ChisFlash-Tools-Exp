@@ -181,6 +181,7 @@ public sealed class FcWorkspaceControl : UserControl
             var title=FcTitleRenderer.Render(game.Name);
             using var list=FcTitleRenderer.Preview(title.List,208,12);
             using var detail=FcTitleRenderer.Preview(title.Detail,224,28);
+            using var scroll=FcTitleRenderer.Preview(title.Scroll,title.ScrollWidth,12,4,(title.ScrollWidth+7)/8);
             using var dialog=new Form(){Text=L("title_preview","12px title preview"),StartPosition=FormStartPosition.CenterParent,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,MaximizeBox=false,MinimizeBox=false};
             var panel=new FlowLayoutPanel(){FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoSize=true,Padding=new Padding(12)};
             panel.Controls.Add(new Label(){Text=game.Name,AutoSize=true,MaximumSize=new Size(896,0)});
@@ -188,6 +189,9 @@ public sealed class FcWorkspaceControl : UserControl
             panel.Controls.Add(new PictureBox(){Image=list,SizeMode=PictureBoxSizeMode.AutoSize});
             panel.Controls.Add(new Label(){Text=L("title_detail_preview","Details (two 12px lines, 4x zoom)"),AutoSize=true});
             panel.Controls.Add(new PictureBox(){Image=detail,SizeMode=PictureBoxSizeMode.AutoSize});
+            panel.Controls.Add(new Label(){Text=L("title_scroll_preview","Complete name (scroll horizontally to inspect)"),AutoSize=true});
+            var viewport=new Panel(){Width=Math.Min(896,scroll.Width),Height=72,AutoScroll=true};
+            viewport.Controls.Add(new PictureBox(){Image=scroll,SizeMode=PictureBoxSizeMode.AutoSize});panel.Controls.Add(viewport);
             panel.Controls.Add(new Label(){Text=title.MissingCharacters.Length==0?L("title_exact_preview","These exact 12px bitmaps are written to the card."):L("title_missing","Missing glyphs (shown as squares):")+" "+title.MissingCharacters,AutoSize=true});
             dialog.Controls.Add(panel);dialog.ShowDialog(this);
         }

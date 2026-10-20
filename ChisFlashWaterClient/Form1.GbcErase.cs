@@ -5,7 +5,7 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private WaterCartScanResult? GetEntireNorEraseScanSnapshot() => IsFcWorkspaceActive
-        ? fcWorkspace?.Snapshot is not null && CanUseFcDevice ? fcHardwareInfo : null
+        ? fcHardwareInfo
         : HasActiveScanResult() ? currentScanResult : null;
 
     private void EraseEntireGbcNorOnDevice(

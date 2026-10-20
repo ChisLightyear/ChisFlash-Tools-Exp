@@ -164,6 +164,7 @@ public partial class Form1
         comboBoxPorts.DropDown += (_, _) => AdjustPortDropDownWidth();
         comboBoxPorts.SelectedIndexChanged += (_, _) =>
         {
+            ResetGbaMenuDraft();
             ClearGbcProfileCapacity();
             RefreshBurnProfileModeOptions(GetSelectedBeggarCartMode() == BeggarCartMode.Gb
                 ? BurnProfileMode.GbcUnselected : GetSelectedBurnProfileMode());
@@ -601,8 +602,10 @@ public partial class Form1
         };
         comboBoxGbcMenuLanguage.SelectedIndexChanged += (_, _) => GbcMenuLanguageChanged();
 
-        comboBoxBurnProfileMode = new GbaMultiMenuBuilder.Fc.ModeAlignedComboBox
+        comboBoxBurnProfileMode = new BurnProfileComboBox
         {
+            CanSelectItem = item => item is BurnProfileModeOption { IsSelectable: true },
+            IsGroupItem = item => item is BurnProfileModeOption { IsGroup: true },
             DropDownStyle = ComboBoxStyle.DropDownList,
             IntegralHeight = false,
             Width = 220,
@@ -615,9 +618,11 @@ public partial class Form1
                 return;
             }
 
+            gbaSingleGridActive = false;
             buttonQueueAdd.Text = T("ui", "queue_add", "Add ROMs");
             buttonQueueClear.Text = T("ui", "queue_clear", "Clear Queue");
             ApplyGbcProfileWorkspace();
+            ApplyChisFlash10Workspace();
             if(GetSelectedBurnProfileMode()==BurnProfileMode.FcMbcx){ShowFcWorkspace();return;}
             HideFcWorkspace();
             HandleMbc5ProfileSelection();
@@ -644,6 +649,12 @@ public partial class Form1
 
             ClientAppConfigService.SaveGbaMenuSelection(
                 GetGbaMenuSelectionConfigValue(GetSelectedGbaMenuSelection()));
+            if (!updatingGbaMenuDraft && SupportsGbaCardMode() && (gbaDraftMenu is not null || currentScanResult?.MenuConfig.IsDetected == true))
+            {
+                gbaDraftMenu = LoadBundledGbaMenuRom(UsesWlTargetPlanningMode(GetSelectedBurnProfileMode()), GetSelectedGbaMenuSelection(), out _);
+                gbaDraftMenuName = comboBoxGbaMenu.SelectedItem!.ToString()!;
+                RefreshWorkspaceGrid();
+            }
             UpdateMenuBackgroundPreview(currentScanResult);
             UpdateActionButtons(isBusy);
         };
@@ -678,6 +689,7 @@ public partial class Form1
         }
 
         BuildWorkspaceGrid();
+        BuildGbaCardModeControls(settingsPanel);
 
         listLayout.Controls.Add(settingsPanel, 0, 0);
         listLayout.Controls.Add(dataGridViewRoms, 0, 1);
@@ -705,7 +717,7 @@ public partial class Form1
         };
         components.Add(dataGridViewRoms);
         dataGridViewRoms.SizeChanged += (_, _) => ResizeMbc5Rows();
-        dataGridViewRoms.SelectionChanged += (_, _) => UpdateActionButtons(isBusy);
+        dataGridViewRoms.SelectionChanged += (_, _) => { if (!rebuildingMbc5Grid && !rebuildingGbaSingleGrid) UpdateActionButtons(isBusy); };
         dataGridViewRoms.CellMouseDown += DataGridViewRoms_CellMouseDown;
         dataGridViewRoms.CellContentClick += DataGridViewRoms_CellContentClick;
         dataGridViewRoms.CellDoubleClick += DataGridViewRoms_CellDoubleClick;
@@ -1023,7 +1035,7 @@ public partial class Form1
         labelMenuItemCountValue.Text = "0";
         labelMenuTitleValue.Text = T("ui", "not_detected", "Not Detected");
         labelScanMethodValue.Text = T("ui", "scan_method_nor_only", "NOR 4MiB Header Scan");
-        if (IsMbc5EightMiBMode()) RefreshMbc5Preview();
+        if (IsMbc5FixedSlotMode()) RefreshMbc5Preview();
         else UpdateMenuBackgroundPreview(null);
     }
 
@@ -1051,7 +1063,7 @@ public partial class Form1
     private void UpdateMenuBackgroundPreview(WaterCartScanResult? result)
     {
         currentGbaPreviewUsesSelectedMenu = false;
-        if (IsMbc5EightMiBMode()) { RefreshMbc5Preview(); return; }
+        if (IsMbc5FixedSlotMode()) { RefreshMbc5Preview(); return; }
         if (result?.IsBeggarMaxGbcMode == true || IsGbcWorkspaceMode())
         {
             currentPreviewUsesGbcListMode = true;
@@ -2031,7 +2043,7 @@ public partial class Form1
 
     private void ShowMenuBackgroundPreviewDialog()
     {
-        if (IsMbc5EightMiBMode()) return;
+        if (IsMbc5FixedSlotMode()) return;
         if (CanEditPendingGbaCovers())
         {
             ShowPendingGbaCoverEditor();
@@ -3135,9 +3147,10 @@ public partial class Form1
 
     private void UpdateWorkspaceGroupTitle()
     {
+        if (IsGbaSingleCardMode() || IsGbaConversionDraft()) { RefreshGbaCardModeUi(); return; }
         if (IsGbcRawImageMode()) { RefreshGbcImageDetails(); return; }
         if (IsGbcProfileUnselected()) { groupBoxList.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
-        if (IsMbc5EightMiBMode()) { groupBoxList.Text = "MBC5 8M · " + Mbc5LayoutDescription(); return; }
+        if (IsMbc5FixedSlotMode()) { groupBoxList.Text = Mbc5ProfileName + " · " + Mbc5LayoutDescription(); return; }
         var usage = GetWorkspaceUsageSummary();
         var saveUsage = GetWorkspaceSaveUsageSummary();
         int pendingCount = GetPendingWorkspaceItemCount();

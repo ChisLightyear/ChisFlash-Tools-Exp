@@ -281,7 +281,7 @@ public static class WaterMagicUpgradeBuilder
             LocalizedText.T(
                 "error",
                 "magic_menu_not_found",
-                "Magic menu ROM resource was not found. Build GBA_MultiMenu_extended_WL first, or make sure Assets\\wl_magic_menu.gba exists."));
+                "Magic menu ROM resource was not found. Make sure Assets\\wl_magic_menu.gba exists."));
     }
 
     public static byte[] BuildMenuAreaImage(byte[] menuRomBytes, WaterMenuConfigInfo menuConfig, NorGeometryInfo geometry)
@@ -1037,19 +1037,5 @@ public static class WaterMagicUpgradeBuilder
         yield return Path.Combine(AppContext.BaseDirectory, "wl_magic_menu.gba");
         yield return Path.Combine(AppContext.BaseDirectory, "lk_multimenu_wl.gba");
 
-        string? current = AppContext.BaseDirectory;
-        while (!string.IsNullOrWhiteSpace(current))
-        {
-            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "rom_builder", "lk_multimenu_wl.gba");
-            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "GBA_MultiMenu_extended_WL.gba");
-
-            DirectoryInfo? parent = Directory.GetParent(current);
-            if (parent is null)
-            {
-                break;
-            }
-
-            current = parent.FullName;
-        }
     }
 }

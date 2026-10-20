@@ -33,7 +33,7 @@ public partial class Form1
         _ => [BurnProfileMode.GbcUnselected],
     };
 
-    private bool IsGbcRawImageMode() => GetSelectedBurnProfileMode() is BurnProfileMode.MbcxRtcEightMiB or BurnProfileMode.MbcxRtcThirtyTwoMiB or BurnProfileMode.GbcSixteenInOne;
+    private bool IsGbcRawImageMode() => GetSelectedBurnProfileMode() is BurnProfileMode.MbcxRtcEightMiB or BurnProfileMode.MbcxRtcThirtyTwoMiB;
     private bool IsGbcProfileUnselected() => GetSelectedBurnProfileMode() == BurnProfileMode.GbcUnselected;
     private int SelectedGbcImageCapacity() => GetSelectedBurnProfileMode() == BurnProfileMode.MbcxRtcEightMiB ? 0x800000 : 0x2000000;
 }

@@ -8,9 +8,12 @@ public partial class Form1
     private void UpdateMixRebuildMenu(bool busy,bool standalone=false)
     {
         menuCartridge.Enabled=true;
-        foreach(ToolStripItem item in menuCartridge.DropDownItems)item.Enabled=false;
+        // Disable only the legacy card commands on the MIX surface. The MIX
+        // commands must be restored on every refresh, including menu opening.
+        foreach(ToolStripItem item in menuCartridge.DropDownItems)
+            item.Enabled=!busy && (item==menuFcScan || item==menuFcTools);
         menuUpdateMenu.Text=T("ui","force_rebuild_menu","重建菜单");
-        menuUpdateMenu.Enabled=!busy&&fcWorkspace?.CanRebuildConfiguration==true;
+        menuUpdateMenu.Enabled=!busy;
         menuEraseEntireNor.Enabled=!busy&&CanEraseEntireNorCurrentScan(out _);
         if(standalone){menuRom.Enabled=false;menuSave.Enabled=false;menuScan.Enabled=false;}
     }
@@ -20,7 +23,7 @@ public partial class Form1
     {
         RememberGbcProfileCapacity(result);
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
-        if (GetSelectedBurnProfileMode() != BurnProfileMode.FcMbcx) return false;
+        if (!result.IsFcMbcxContent || GetSelectedBurnProfileMode() != BurnProfileMode.FcMbcx) return false;
         ResetCurrentCartAnalysisView();
         SetBusy(false, T("fc", "ready", "MIX ready"));
         await ActivateFcWorkspaceAsync();
@@ -36,8 +39,6 @@ public partial class Form1
     private IFcCardBackend CreateFcBackend()
     {
         if(fcBackendOverride is not null)return fcBackendOverride();
-        if(GetRequiredSelectedProgrammerKind()!=ProgrammerKind.BeggarLegacy||GetSelectedBeggarCartMode()!=BeggarCartMode.Gb)
-            throw new InvalidOperationException(T("fc","programmer_required","Select the existing GB/MAX MBCX programmer and GB physical mode first."));
         string port=GetSelectedPortName()??throw new InvalidOperationException("Select a programmer port first.");
         return new FcBackend(this,port);
     }

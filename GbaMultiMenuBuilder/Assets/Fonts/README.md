@@ -11,3 +11,5 @@ No external font files are distributed in this package. Follow your font's licen
 TTF/OTF 文件名必须含 `12px` 或 `_12`，例如 `myfont_12.ttf`。BDF 文件内部声明的字形尺寸必须为 12px。8px 字库及没有尺寸标记的 TTF/OTF 不予接受。英文菜单使用内置字库。
 
 本包不分发外部字体文件，请遵守自备字体的许可。
+
+MIX 标题当前固定使用用户提供的 `mplus_hzk_12.ttf`；请放在所用工具的 `Assets/Fonts/`。MIX titles currently use the user-provided `mplus_hzk_12.ttf` in the tool's `Assets/Fonts/` directory.

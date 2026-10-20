@@ -8,6 +8,23 @@ public partial class Form1
     private Label? gbcImageDetails;
     private byte[]? gbcImageData;
     private string gbcImageName = string.Empty;
+    private string RtcText(string key, string chinese, string english) =>
+        T("rtc", key, language.Code.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? chinese : english);
+
+    private GbcRtcRomInspection InspectRtcGame(byte[]? data)
+    {
+        try { return GbcRtcRomValidator.Inspect(data ?? []); }
+        catch (InvalidDataException exception)
+        {
+            throw new InvalidDataException(exception.Message == "RTC_ROM_SIZE"
+                ? RtcText("size_error", "RTC模式只允许一个32K～2M的GB/GBC游戏；文件大小和头部声明的寻址大小均不能超过2M。", "RTC mode accepts one 32 KiB–2 MiB GB/GBC game. Neither the file nor its declared addressable size may exceed 2 MiB.")
+                : RtcText("header_error", "未找到有效GB/GBC头部，请检查ROM文件。", "The GB/GBC ROM header is invalid; check the ROM file."));
+        }
+    }
+
+    private string RtcHeaderNotice(GbcRtcRomInspection inspection) => inspection.HasMbc3Rtc
+        ? RtcText("detected", "头部已识别为MBC3 RTC游戏", "Header identifies an MBC3 RTC game") + $" (0x{inspection.CartridgeType:X2})"
+        : RtcText("not_rtc", "提示：头部未标记当前卡型使用的MBC3 RTC（0x0F/0x10），请确认所选游戏；仍可继续导出或烧录。", "Warning: the header does not identify MBC3 RTC (0x0F/0x10) for this cartridge profile. Check the game; export/programming remain available.") + $" (0x{inspection.CartridgeType:X2})";
     private bool IsGbcImageWorkspaceActive => gbcImageWorkspace is not null && workspaceLayout.Controls.Contains(gbcImageWorkspace);
 
     private void ApplyGbcProfileWorkspace()
@@ -50,13 +67,26 @@ public partial class Form1
     private void RefreshGbcImageDetails()
     {
         if (gbcImageDetails is null) return;
-        string note = T("gbc_profile", "raw_notice", "Full-image mode: import one ROM or prepared BIN. Bytes remain unchanged; no free-multicart menu or save directory is inserted.");
+        string note = RtcText("single_notice", "RTC单游戏：最多2M，检查GB/GBC头部及RTC类型；不添加合卡菜单。", "RTC single game: maximum 2 MiB; checks the GB/GBC header and RTC type. No multicart menu is added.");
         gbcImageDetails.Text = GetBurnProfileModeDisplayName(GetSelectedBurnProfileMode()) + Environment.NewLine + Environment.NewLine + note + Environment.NewLine + Environment.NewLine +
             (gbcImageData is null ? T("gbc_profile", "add_image", "Import one ROM / BIN") : gbcImageName + " · " + FormatMiBSize(gbcImageData.Length)) + Environment.NewLine +
-            T("ui", "capacity", "Capacity") + ": " + FormatMiBSize(SelectedGbcImageCapacity());
-        if (gbcImageData is not null && gbcImageData.Length > SelectedGbcImageCapacity())
-            gbcImageDetails.Text += Environment.NewLine + T("gbc_profile", "image_too_large", "Image exceeds the selected cartridge capacity.");
-        groupBoxList.Text = GetBurnProfileModeDisplayName(GetSelectedBurnProfileMode()) + " · " + T("gbc_profile", "full_image", "Full ROM image");
+            RtcText("physical_capacity", "NOR容量", "NOR capacity") + ": " + FormatMiBSize(SelectedGbcImageCapacity());
+        gbcImageDetails.ForeColor = SystemColors.ControlText;
+        if (gbcImageData is not null)
+        {
+            try
+            {
+                var inspection = InspectRtcGame(gbcImageData);
+                gbcImageDetails.Text += Environment.NewLine + Environment.NewLine + RtcHeaderNotice(inspection);
+                if (!inspection.HasMbc3Rtc) gbcImageDetails.ForeColor = Color.DarkOrange;
+            }
+            catch (InvalidDataException exception)
+            {
+                gbcImageDetails.Text += Environment.NewLine + exception.Message;
+                gbcImageDetails.ForeColor = Color.Firebrick;
+            }
+        }
+        groupBoxList.Text = GetBurnProfileModeDisplayName(GetSelectedBurnProfileMode()) + " · " + RtcText("single_title", "单游戏 ≤2M", "Single game ≤2 MiB");
     }
 
     private async Task SelectGbcImageFileAsync()
@@ -70,15 +100,30 @@ public partial class Form1
     {
         if (isBusy || !IsGbcRawImageMode()) return;
         string[] files = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (files.Length != 1) throw new InvalidDataException(T("gbc_profile", "one_image", "Select exactly one ROM or prepared BIN image."));
+        if (files.Length != 1) throw new InvalidDataException(RtcText("one_game", "RTC模式每次只允许导入一个游戏ROM。", "RTC mode accepts exactly one game ROM."));
         long length = new FileInfo(files[0]).Length;
-        if (length <= 0 || length > SelectedGbcImageCapacity()) throw new InvalidDataException(T("gbc_profile", "image_too_large", "Image is empty or exceeds the selected cartridge capacity."));
-        byte[] data = await File.ReadAllBytesAsync(files[0]);
-        if (data.Length == 0 || data.Length > SelectedGbcImageCapacity()) throw new InvalidDataException(T("gbc_profile", "image_too_large", "Image is empty or exceeds the selected cartridge capacity."));
-        gbcImageData = data;
-        gbcImageName = Path.GetFileName(files[0]);
-        RefreshGbcImageDetails();
-        UpdateActionButtons(isBusy);
+        if (length < 0x8000 || length > GbcRtcRomValidator.MaximumGameBytes) throw new InvalidDataException(RtcText("size_error", "RTC游戏必须为32K～2M，不能导入整卡合卡镜像。", "RTC games must be 32 KiB–2 MiB; complete multicart images cannot be imported."));
+        SetBusy(true, RtcText("reading", "正在检查RTC游戏ROM…", "Checking RTC game ROM…"));
+        try
+        {
+            byte[] data = await File.ReadAllBytesAsync(files[0]);
+            void ApplyImportedRom()
+            {
+                GbcRtcRomInspection inspection = InspectRtcGame(data);
+                gbcImageData = data;
+                gbcImageName = Path.GetFileName(files[0]);
+                AppendLog(RtcHeaderNotice(inspection));
+                RefreshGbcImageDetails();
+            }
+            if (InvokeRequired) Invoke(new Action(ApplyImportedRom));
+            else ApplyImportedRom();
+        }
+        finally
+        {
+            void CompleteImport() => SetBusy(false, RtcText("ready", "RTC单游戏：最大2M", "RTC single game: maximum 2 MiB"));
+            if (InvokeRequired) Invoke(new Action(CompleteImport));
+            else CompleteImport();
+        }
     }
 
     private void ClearGbcImage()
@@ -93,11 +138,10 @@ public partial class Form1
     private byte[] BuildGbcImage()
     {
         int capacity = SelectedGbcImageCapacity();
-        if (gbcImageData is null || gbcImageData.Length == 0 || gbcImageData.Length > capacity)
-            throw new InvalidDataException(T("gbc_profile", "image_too_large", "Image is empty or exceeds the selected cartridge capacity."));
+        InspectRtcGame(gbcImageData);
         byte[] image = new byte[capacity];
         Array.Fill(image, (byte)255);
-        gbcImageData.CopyTo(image, 0);
+        gbcImageData!.CopyTo(image, 0);
         return image;
     }
 
@@ -108,7 +152,7 @@ public partial class Form1
         if (dialog.ShowDialog(this) == DialogResult.OK) await File.WriteAllBytesAsync(dialog.FileName, BuildGbcImage());
     }
 
-    private bool CanWriteGbcImage() => IsGbcRawImageMode() && GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy &&
+    private bool CanWriteGbcImage() => IsGbcRawImageMode() &&
         GetSelectedBeggarCartMode() == BeggarCartMode.Gb && HasActiveScanResult() &&
         currentScanResult is { IsBeggarMaxGbcMode: true, IsWriteProtected: false } scan && scan.Geometry.DeviceSizeBytes == SelectedGbcImageCapacity() &&
         scan.Geometry.PrimaryCommandSetId == 2 && scan.Geometry.RegionCount == 1 &&
@@ -119,8 +163,9 @@ public partial class Form1
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
         if (isBusy || gbcImageData is null) return;
+        GbcRtcRomInspection inspection = InspectRtcGame(gbcImageData);
         if (!CanWriteGbcImage()) { await ExportGbcImageAsync(); return; }
-        if (MessageBox.Show(this, T("gbc_profile", "burn_confirm", "Erase the entire detected NOR, write the imported image (unused bytes filled FF), and verify it? Existing ROM content is replaced; SRAM is not erased. Back up first."),
+        if (MessageBox.Show(this, RtcHeaderNotice(inspection) + Environment.NewLine + Environment.NewLine + T("gbc_profile", "burn_confirm", "Erase the entire detected NOR, write the imported image (unused bytes filled FF), and verify it? Existing ROM content is replaced; SRAM is not erased. Back up first."),
             GetBurnProfileModeDisplayName(GetSelectedBurnProfileMode()), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         byte[] image = BuildGbcImage();
         WaterCartScanResult scan = currentScanResult!;
@@ -144,11 +189,13 @@ public partial class Form1
     {
         bool raw = IsGbcRawImageMode();
         bool idle = !busy && !isAnalyzingQueueImports;
-        bool hasImage = raw && gbcImageData is { Length: > 0 } && gbcImageData.Length <= SelectedGbcImageCapacity();
+        bool hasImage = raw && gbcImageData is not null && GbcRtcRomValidator.IsValid(gbcImageData);
+        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
+        menuFcScan.Enabled = idle;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
         if (menuFcTools is not null) menuFcTools.Visible = false;
-        buttonScan.Enabled = menuScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName()) && TryGetSelectedKnownProgrammerKind(out _, out _);
+        buttonScan.Enabled = menuScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         buttonRefreshPorts.Enabled = menuRefreshPorts.Enabled = idle;
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = idle;
         comboBoxBurnProfileMode.Enabled = idle;
@@ -161,7 +208,7 @@ public partial class Form1
             ? T("gbc_profile", "burn_image", "Burn complete ROM") : T("gbc_profile", "export_image", "Export complete ROM");
         buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && hasImage;
         menuExportSelectedRom.Enabled = idle && hasImage;
-        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
+        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = item == menuFcScan && idle;
         menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);
         menuPendingGbaCovers.Enabled = menuDeleteSelectedMapping.Enabled = menuFragmentTest.Enabled = false;
         menuItemReplaceRom.Enabled = menuItemExportRom.Enabled = false;

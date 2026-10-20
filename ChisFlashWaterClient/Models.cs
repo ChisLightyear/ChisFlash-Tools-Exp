@@ -385,12 +385,15 @@ public sealed class WaterCartEntry
 
 public sealed class WaterCartScanResult
 {
+    public bool IsNorProbeOnly { get; set; }
+    public bool HasGbaHeaderScan { get; set; }
     public bool IsChm1 { get; set; }
     public bool UsesChm1Layout => WlMapping.IsDetected &&
         (WlMapping.Header.Flags & GbaMultiMenuBuilder.Services.Chm1Layout.LocalSaveFlag) != 0;
     public bool NoCartridgeDetected { get; set; }
     public bool IsBeggarMaxGbcMode { get; set; }
     public byte[]? Mbc5EightMiBRomImage { get; set; }
+    public byte[]? Mbc5FixedSlotRomImage { get; set; }
     public bool IsFcMbcxContent { get; set; }
     public bool IsMdMbcxContent { get; set; }
     public bool HasBeggarMaxDirectoryHeaders { get; set; }

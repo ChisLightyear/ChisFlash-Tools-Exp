@@ -10,20 +10,40 @@ public partial class Form1
     private bool mbc5LayoutChanged;
     private readonly Dictionary<string, bool> mbc5ColumnVisibility = new();
     private ToolStripMenuItem? menuExportMbc5Image;
-    private bool mbc5ProfileActive;
+    private BurnProfileMode? mbc5ActiveProfile;
+    private Mbc5EightMiBLayout mbc5MaxLayout = new Mbc5MaxThirtyTwoMiBLayout();
+    private bool mbc5MaxLayoutChanged;
+    private bool IsMbc5MaxMode() => GetSelectedBurnProfileMode() == BurnProfileMode.GbcSixteenInOne;
+    private bool IsMbc5FixedSlotMode() => IsMbc5EightMiBMode() || IsMbc5MaxMode();
+    private Mbc5EightMiBLayout ActiveMbc5Layout
+    {
+        get => IsMbc5MaxMode() ? mbc5MaxLayout : mbc5Layout;
+        set { if (IsMbc5MaxMode()) mbc5MaxLayout = value; else mbc5Layout = value; }
+    }
+    private bool ActiveMbc5LayoutChanged
+    {
+        get => IsMbc5MaxMode() ? mbc5MaxLayoutChanged : mbc5LayoutChanged;
+        set { if (IsMbc5MaxMode()) mbc5MaxLayoutChanged = value; else mbc5LayoutChanged = value; }
+    }
+    private string Mbc5ProfileName => IsMbc5MaxMode() ? "MBC5 MAX 32M" : "MBC5 8M";
+    private string Mbc5ImageSize => IsMbc5MaxMode() ? "32M" : "8M";
     private byte[]? mbc5LoadedScanImage;
+    private bool rebuildingMbc5Grid;
+    private bool resizingMbc5Rows;
 
     private bool IsMbc5EightMiBMode() => GetSelectedBurnProfileMode() == BurnProfileMode.Mbc5EightMiB;
 
     private void HandleMbc5ProfileSelection()
     {
-        bool selected = IsMbc5EightMiBMode();
-        if (selected != mbc5ProfileActive)
+        bool selected = IsMbc5FixedSlotMode();
+        BurnProfileMode? profile = selected ? GetSelectedBurnProfileMode() : null;
+        if (profile != mbc5ActiveProfile)
         {
             currentScanResult = null;
             lastScannedPortName = string.Empty;
         }
-        mbc5ProfileActive = selected;
+        mbc5ActiveProfile = profile;
+        if (!selected) mbc5LoadedScanImage = null;
         if (selected && GetSelectedProgrammerKind() != ProgrammerKind.WaterLink)
         {
             bool initialized = beggarCartModeSelectionInitialized;
@@ -34,7 +54,7 @@ public partial class Form1
     }
 
     private string Mbc5Text(string key, string chinese, string english) =>
-        T("mbc5", key, language.Code.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? chinese : english);
+        T(IsMbc5MaxMode() ? "mbc5_max" : "mbc5", key, language.Code.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? chinese : english);
 
     private string Mbc5SlotName(int slot) => slot == 0
         ? Mbc5Text("menu", "菜单", "Menu")
@@ -45,16 +65,24 @@ public partial class Form1
 
     private void ResizeMbc5Rows()
     {
-        if (!IsMbc5EightMiBMode() || dataGridViewRoms.Rows.Count != 5) return;
-        int available = dataGridViewRoms.ClientSize.Height - dataGridViewRoms.ColumnHeadersHeight - SystemInformation.HorizontalScrollBarHeight - 4;
-        int height = Math.Clamp(available / 5, Math.Max(22, dataGridViewRoms.Font.Height + 6), 46);
-        foreach (DataGridViewRow row in dataGridViewRoms.Rows) row.Height = height;
-        dataGridViewRoms.FirstDisplayedScrollingRowIndex = 0;
+        if (rebuildingMbc5Grid || resizingMbc5Rows || !IsMbc5FixedSlotMode() || dataGridViewRoms.Rows.Count != ActiveMbc5Layout.NumberOfSlots) return;
+        resizingMbc5Rows = true;
+        try
+        {
+            int available = dataGridViewRoms.ClientSize.Height - dataGridViewRoms.ColumnHeadersHeight - SystemInformation.HorizontalScrollBarHeight - 4;
+            int height = Math.Clamp(available / ActiveMbc5Layout.NumberOfSlots, Math.Max(22, dataGridViewRoms.Font.Height + 6), 46);
+            foreach (DataGridViewRow row in dataGridViewRoms.Rows) row.Height = height;
+            dataGridViewRoms.FirstDisplayedScrollingRowIndex = 0;
+        }
+        finally { resizingMbc5Rows = false; }
     }
 
-    private string Mbc5LayoutDescription() => !mbc5Layout.HasMenu
+    private string Mbc5LayoutDescription() => IsMbc5MaxMode()
+        ? !ActiveMbc5Layout.HasMenu ? Mbc5Text("single_layout", "单卡：游戏1可放32K～32M；添加菜单后进入16合1", "Single ROM: Game 1 accepts 32 KiB–32 MiB; add a menu for 16in1")
+        : Mbc5Text("fixed_layout", "16in1：游戏1为1M，游戏2～16各2M；菜单预留1M", "16in1: Game 1 = 1 MiB, Games 2–16 = 2 MiB each; 1 MiB for menu")
+        : !ActiveMbc5Layout.HasMenu
         ? Mbc5Text("single_layout", "单卡：游戏1可放32K～8M；添加菜单后进入固定合卡", "Single ROM: Game 1 accepts 32 KiB–8 MiB; add a menu for fixed multicart")
-        : mbc5Layout.IsThreeInOne ? "3in1: 1M + 2M + 4M · " + Mbc5Text("menu_reserved", "菜单另预留1M", "1 MiB reserved for menu")
+        : ActiveMbc5Layout.IsThreeInOne ? "3in1: 1M + 2M + 4M · " + Mbc5Text("menu_reserved", "菜单另预留1M", "1 MiB reserved for menu")
         : "4in1: 1M + 2M + 2M + 2M · " + Mbc5Text("menu_reserved", "菜单另预留1M", "1 MiB reserved for menu");
 
     private string Mbc5ErrorMessage(Mbc5LayoutError error) => error switch
@@ -62,73 +90,94 @@ public partial class Form1
         Mbc5LayoutError.RomTooLarge => Mbc5Text("too_large", "ROM实际大小或头部声明的寻址大小超过槽容量。添加菜单时，已有游戏1必须不超过1M。", "The file or its declared ROM size exceeds the slot. Adding a menu requires Game 1 to fit within 1 MiB."),
         Mbc5LayoutError.RomTooSmall => Mbc5Text("too_small", "游戏ROM至少需要32K；菜单必须包含有效GB头部。", "Game ROMs must be at least 32 KiB; a menu must contain a valid GB header."),
         Mbc5LayoutError.FourthSlotOccupied => Mbc5Text("overlap", "游戏3超过2M会占用第四槽。请先移除游戏4，或改用不超过2M的游戏3；不会自动覆盖。", "Game 3 above 2 MiB occupies Game 4's region. Remove Game 4 first or use a smaller Game 3; nothing is overwritten automatically."),
-        Mbc5LayoutError.GamesRequireMenu => Mbc5Text("menu_required", "游戏2～4需要菜单。移除菜单前，请先移除这些游戏。", "Games 2–4 require a menu. Remove those games before removing the menu."),
+        Mbc5LayoutError.GamesRequireMenu => Mbc5Text("menu_required", $"游戏2～{ActiveMbc5Layout.NumberOfSlots - 1}需要菜单。移除菜单前，请先移除这些游戏。", $"Games 2–{ActiveMbc5Layout.NumberOfSlots - 1} require a menu. Remove those games before removing the menu."),
         Mbc5LayoutError.SaveTooLarge => Mbc5Text("save_too_large", "此ROM需要的存档超过当前布局：合卡每游戏32K，单卡最多128K。", "The ROM's save requirement exceeds this layout: 32 KiB per multicart game, or 128 KiB for a single ROM."),
         _ => Mbc5Text("slot_unavailable", "此槽当前不可用，请先添加菜单或调整游戏3。", "This slot is unavailable; add a menu or adjust Game 3 first."),
     };
 
     private void RefreshMbc5Grid(int selectedSlot = -1)
     {
-        HandleMbc5ProfileSelection();
-        if (mbc5ColumnVisibility.Count == 0)
-            foreach (DataGridViewColumn column in dataGridViewRoms.Columns)
-                mbc5ColumnVisibility[column.Name] = column.Visible;
-        foreach (string name in new[] { "Source", "Kind", "GbcDedicatedSave" })
-            dataGridViewRoms.Columns[name]!.Visible = false;
-        dataGridViewRoms.Columns["Order"]!.HeaderText = Mbc5Text("slot", "固定槽位", "Fixed Slot");
-        dataGridViewRoms.Columns["HeaderTitle"]!.HeaderText = Mbc5Text("rom_size", "ROM大小", "ROM Size");
-        dataGridViewRoms.Columns["AllocSize"]!.HeaderText = Mbc5Text("slot_capacity", "槽容量上限", "Slot Capacity");
-        dataGridViewRoms.Columns["SaveType"]!.HeaderText = Mbc5Text("save_capacity", "存档空间", "Save Capacity");
-        dataGridViewRoms.Columns["PatchStatus"]!.HeaderText = Mbc5Text("layout_hint", "布局说明", "Layout Hint");
-        dataGridViewRoms.Columns["SpiSlot"]!.HeaderText = Mbc5Text("nor_offset", "NOR起点", "NOR Offset");
-        dataGridViewRoms.Columns["SaveStatus"]!.HeaderText = Mbc5Text("slot_hint", "槽位状态", "Slot Status");
-        dataGridViewRoms.Rows.Clear();
-        for (int slot = 0; slot < Mbc5EightMiBLayout.SlotCount; slot++)
+        if (InvokeRequired)
         {
-            Mbc5SlotDefinition definition = mbc5Layout.GetSlot(slot);
-            Mbc5SlotContent? content = mbc5Layout.GetContent(slot);
-            string reason = definition.Enabled ? string.Empty : !mbc5Layout.HasMenu
-                ? Mbc5Text("add_menu_first", "添加菜单后开放", "Available after adding a menu")
-                : Mbc5Text("merged_into_game3", "已并入游戏3", "Merged into Game 3");
-            string hint = slot == 3 && mbc5Layout.HasMenu
-                ? Mbc5Text("game3_hint", "超过2M将占用第四槽", "Above 2 MiB occupies Game 4")
-                : slot == 0 ? Mbc5Text("menu_hint", "需使用匹配的3/4in1菜单", "Use a matching 3/4in1 menu") : string.Empty;
-            int rowIndex = dataGridViewRoms.Rows.Add(Mbc5SlotName(slot),
-                !definition.Enabled ? Mbc5Text("disabled", "不可用", "Unavailable") : content is null ? Mbc5Text("empty", "可添加", "Empty") : content.Source == "cart" ? T("value", "row_state_cart", "On Cart") : T("value", "source_file", "File"),
-                content?.Source ?? string.Empty, slot == 0 ? "Menu" : "Game", content?.Title ?? Mbc5Text("not_added", "未添加", "Not added"),
-                content is null ? "—" : FormatMbc5Size(content.Data.Length),
-                definition.Enabled ? "≤ " + FormatMbc5Size(definition.CapacityBytes) : "—",
-                slot == 0 || !definition.Enabled ? "—" : FormatMbc5Size(definition.SaveCapacityBytes), false, hint,
-                definition.Enabled ? $"0x{definition.OffsetBytes:X6}" : "—", reason);
-            DataGridViewRow row = dataGridViewRoms.Rows[rowIndex];
-            row.Tag = slot;
-            row.ReadOnly = true;
-            row.Height = 46;
-            row.DefaultCellStyle.BackColor = definition.Enabled ? slot == 0 ? Color.FromArgb(230, 241, 252) : Color.White : Color.FromArgb(235, 235, 235);
-            row.DefaultCellStyle.ForeColor = definition.Enabled ? Color.FromArgb(35, 45, 60) : Color.Gray;
-            if (!definition.Enabled)
+            Invoke(new Action<int>(RefreshMbc5Grid), selectedSlot);
+            return;
+        }
+        if (rebuildingMbc5Grid) return;
+        rebuildingMbc5Grid = true;
+        dataGridViewRoms.SuspendLayout();
+        try
+        {
+            HandleMbc5ProfileSelection();
+            if (mbc5ColumnVisibility.Count == 0)
+                foreach (DataGridViewColumn column in dataGridViewRoms.Columns)
+                    mbc5ColumnVisibility[column.Name] = column.Visible;
+            foreach (string name in new[] { "Source", "Kind", "GbcDedicatedSave" })
+                dataGridViewRoms.Columns[name]!.Visible = false;
+            dataGridViewRoms.Columns["Order"]!.HeaderText = Mbc5Text("slot", "固定槽位", "Fixed Slot");
+            dataGridViewRoms.Columns["HeaderTitle"]!.HeaderText = Mbc5Text("rom_size", "ROM大小", "ROM Size");
+            dataGridViewRoms.Columns["AllocSize"]!.HeaderText = Mbc5Text("slot_capacity", "槽容量上限", "Slot Capacity");
+            dataGridViewRoms.Columns["SaveType"]!.HeaderText = Mbc5Text("save_capacity", "存档空间", "Save Capacity");
+            dataGridViewRoms.Columns["PatchStatus"]!.HeaderText = Mbc5Text("layout_hint", "布局说明", "Layout Hint");
+            dataGridViewRoms.Columns["SpiSlot"]!.HeaderText = Mbc5Text("nor_offset", "NOR起点", "NOR Offset");
+            dataGridViewRoms.Columns["SaveStatus"]!.HeaderText = Mbc5Text("slot_hint", "槽位状态", "Slot Status");
+            dataGridViewRoms.Rows.Clear();
+            for (int slot = 0; slot < ActiveMbc5Layout.NumberOfSlots; slot++)
             {
-                row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(210, 210, 210);
-                row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(85, 85, 85);
+                Mbc5SlotDefinition definition = ActiveMbc5Layout.GetSlot(slot);
+                Mbc5SlotContent? content = ActiveMbc5Layout.GetContent(slot);
+                string reason = definition.Enabled ? string.Empty : !ActiveMbc5Layout.HasMenu
+                    ? Mbc5Text("add_menu_first", "添加菜单后开放", "Available after adding a menu")
+                    : Mbc5Text("merged_into_game3", "已并入游戏3", "Merged into Game 3");
+                string hint = slot == 3 && ActiveMbc5Layout.HasMenu && !IsMbc5MaxMode()
+                    ? Mbc5Text("game3_hint", "超过2M将占用第四槽", "Above 2 MiB occupies Game 4")
+                    : slot == 0 ? Mbc5Text("menu_hint", IsMbc5MaxMode() ? "需使用匹配的16in1菜单" : "需使用匹配的3/4in1菜单", IsMbc5MaxMode() ? "Use a matching 16in1 menu" : "Use a matching 3/4in1 menu") : string.Empty;
+                int rowIndex = dataGridViewRoms.Rows.Add(Mbc5SlotName(slot),
+                    !definition.Enabled ? Mbc5Text("disabled", "不可用", "Unavailable") : content is null ? Mbc5Text("empty", "可添加", "Empty") : content.Source == "cart" ? T("value", "row_state_cart", "On Cart") : T("value", "source_file", "File"),
+                    content?.Source ?? string.Empty, slot == 0 ? "Menu" : "Game", content?.Title ?? Mbc5Text("not_added", "未添加", "Not added"),
+                    content is null ? "—" : FormatMbc5Size(content.Data.Length),
+                    definition.Enabled ? "≤ " + FormatMbc5Size(definition.CapacityBytes) : "—",
+                    slot == 0 || !definition.Enabled ? "—" : FormatMbc5Size(definition.SaveCapacityBytes), false, hint,
+                    definition.Enabled ? $"0x{definition.OffsetBytes:X6}" : "—", reason);
+                DataGridViewRow row = dataGridViewRoms.Rows[rowIndex];
+                row.Tag = slot;
+                row.ReadOnly = true;
+                row.Height = 46;
+                row.DefaultCellStyle.BackColor = definition.Enabled ? slot == 0 ? Color.FromArgb(230, 241, 252) : Color.White : Color.FromArgb(235, 235, 235);
+                row.DefaultCellStyle.ForeColor = definition.Enabled ? Color.FromArgb(35, 45, 60) : Color.Gray;
+                if (!definition.Enabled)
+                {
+                    row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(210, 210, 210);
+                    row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(85, 85, 85);
+                }
+                row.Cells["SaveStatus"].Style.Font = dataGridViewRoms.Font;
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.ToolTipText = string.Join("\n", new[] { reason, hint, content?.Source, Mbc5LayoutDescription() }.Where(text => !string.IsNullOrWhiteSpace(text)));
             }
-            row.Cells["SaveStatus"].Style.Font = dataGridViewRoms.Font;
-            foreach (DataGridViewCell cell in row.Cells)
-                cell.ToolTipText = string.Join("\n", new[] { reason, hint, content?.Source, Mbc5LayoutDescription() }.Where(text => !string.IsNullOrWhiteSpace(text)));
+            groupBoxList.Text = Mbc5ProfileName + " · " + Mbc5LayoutDescription();
+            int gameCount = Enumerable.Range(1, ActiveMbc5Layout.NumberOfSlots - 1)
+                .Count(slot => ActiveMbc5Layout.GetContent(slot) is not null);
+            labelRomCountValue.Text = labelMenuItemCountValue.Text = gameCount.ToString();
+            labelMenuTitleValue.Text = ActiveMbc5Layout.GetContent(0)?.Title ?? T("ui", "not_detected", "Not Detected");
+            int selection = selectedSlot >= 0 && selectedSlot < ActiveMbc5Layout.NumberOfSlots ? selectedSlot : 1;
+            dataGridViewRoms.ClearSelection();
+            dataGridViewRoms.Rows[selection].Selected = true;
+            dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[selection].Cells["Title"];
+            ResizeMbc5Rows();
+            if (menuExportMbc5Image is null)
+            {
+                menuExportMbc5Image = new ToolStripMenuItem();
+                menuExportMbc5Image.Click += async (_, _) => await RunUiActionSafelyAsync(ExportMbc5ImageAsync);
+                menuRom.DropDownItems.Add(menuExportMbc5Image);
+            }
+            RefreshMbc5Preview();
+            UpdateMbc5ActionButtons(isBusy);
         }
-        groupBoxList.Text = "MBC5 8M · " + Mbc5LayoutDescription();
-        int selection = selectedSlot >= 0 && selectedSlot < 5 ? selectedSlot : 1;
-        dataGridViewRoms.ClearSelection();
-        dataGridViewRoms.Rows[selection].Selected = true;
-        dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[selection].Cells["Title"];
-        ResizeMbc5Rows();
-        if (menuExportMbc5Image is null)
+        finally
         {
-            menuExportMbc5Image = new ToolStripMenuItem();
-            menuExportMbc5Image.Click += async (_, _) => await RunUiActionSafelyAsync(ExportMbc5ImageAsync);
-            menuRom.DropDownItems.Add(menuExportMbc5Image);
+            dataGridViewRoms.ResumeLayout();
+            rebuildingMbc5Grid = false;
+            ResizeMbc5Rows();
         }
-        RefreshMbc5Preview();
-        UpdateMbc5ActionButtons(isBusy);
     }
 
     private void RestoreMbc5GridColumns()
@@ -147,32 +196,34 @@ public partial class Form1
 
     private int SelectedMbc5Slot() => dataGridViewRoms.SelectedRows.Count > 0 ? dataGridViewRoms.SelectedRows[0].Index : 1;
 
-    private bool CanWriteMbc5Image() => GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy &&
+    private bool CanWriteMbc5Image() => IsMbc5FixedSlotMode() &&
         GetSelectedBeggarCartMode() == BeggarCartMode.Gb && HasActiveScanResult() &&
-        currentScanResult?.IsBeggarMaxGbcMode == true && currentScanResult.Geometry.DeviceSizeBytes == Mbc5EightMiBLayout.CapacityBytes &&
+        currentScanResult?.IsBeggarMaxGbcMode == true && currentScanResult.Geometry.DeviceSizeBytes == ActiveMbc5Layout.ImageCapacityBytes &&
         !currentScanResult.IsWriteProtected && currentScanResult.Geometry.PrimaryCommandSetId == 2 &&
         currentScanResult.Geometry.RegionCount == 1 && currentScanResult.Geometry.BufferWriteBytes is > 0 and <= ushort.MaxValue &&
         currentScanResult.Geometry.SectorSizeBytes >= Mbc5EightMiBWriter.BankBytes &&
-        (long)currentScanResult.Geometry.SectorSizeBytes * currentScanResult.Geometry.SectorCount == Mbc5EightMiBLayout.CapacityBytes;
+        (long)currentScanResult.Geometry.SectorSizeBytes * currentScanResult.Geometry.SectorCount == ActiveMbc5Layout.ImageCapacityBytes;
 
     private void UpdateMbc5ActionButtons(bool busy)
     {
         bool idle = !busy && !isAnalyzingQueueImports;
         int selected = SelectedMbc5Slot();
-        bool enabled = mbc5Layout.GetSlot(selected).Enabled;
-        bool occupied = mbc5Layout.GetContent(selected) is not null;
+        bool enabled = ActiveMbc5Layout.GetSlot(selected).Enabled;
+        bool occupied = ActiveMbc5Layout.GetContent(selected) is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
+        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
+        menuFcScan.Enabled = idle;
         menuSave.Enabled = false;
-        buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName()) && TryGetSelectedKnownProgrammerKind(out _, out _);
+        buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         menuScan.Enabled = buttonScan.Enabled;
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && enabled;
         buttonQueueAdd.Text = selected == 0 ? Mbc5Text("add_menu", "添加菜单", "Add Menu") : Mbc5Text("add_game", "添加游戏", "Add Game");
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied;
-        buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && mbc5Layout.HasContent;
+        buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && ActiveMbc5Layout.HasContent;
         buttonQueueClear.Text = Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && mbc5Layout.HasContent;
+        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && ActiveMbc5Layout.HasContent;
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : CanWriteMbc5Image()
-            ? Mbc5Text("burn_image", "烧录完整ROM", "Burn Full ROM") : Mbc5Text("export_image", "导出完整8M ROM", "Export Full 8 MiB ROM");
+            ? Mbc5Text("burn_image", "烧录完整ROM", "Burn Full ROM") : Mbc5Text("export_image", $"导出完整{Mbc5ImageSize} ROM", $"Export Full {ActiveMbc5Layout.ImageCapacityBytes / Mbc5EightMiBLayout.MiB} MiB ROM");
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = idle && enabled;
         menuExportSelectedRom.Enabled = menuItemExportRom.Enabled = idle && occupied;
         foreach (ToolStripMenuItem item in new[] { menuUpdateMenu, menuReplaceMenuFile, menuRepairMenu, menuUpdateBackground, menuEraseConfig, menuDetectMagic, menuUnlockPpb, menuPendingGbaCovers, menuDeleteSelectedMapping, menuItemDeleteMapping, menuExportSelectedSave, menuImportSelectedSave, menuClearSelectedSave, menuExportChipSave, menuImportChipSave, menuClearChipSave, menuItemExportSave, menuItemImportSave, menuItemClearSave, menuItemExportChipSaveContext, menuItemImportChipSaveContext, menuItemClearChipSaveContext, menuFragmentTest })
@@ -186,8 +237,8 @@ public partial class Form1
         if (menuExportMbc5Image is not null)
         {
             menuExportMbc5Image.Visible = true;
-            menuExportMbc5Image.Text = Mbc5Text("export_image", "导出完整8M ROM", "Export Full 8 MiB ROM");
-            menuExportMbc5Image.Enabled = idle && mbc5Layout.HasContent;
+            menuExportMbc5Image.Text = Mbc5Text("export_image", $"导出完整{Mbc5ImageSize} ROM", $"Export Full {ActiveMbc5Layout.ImageCapacityBytes / Mbc5EightMiBLayout.MiB} MiB ROM");
+            menuExportMbc5Image.Enabled = idle && ActiveMbc5Layout.HasContent;
         }
         UpdateProgrammerModeSelectorUi(idle);
         labelScanMethodValue.Text = Mbc5Text("scan_method", "GB NOR固定槽位扫描", "GB NOR fixed-slot scan");
@@ -197,7 +248,7 @@ public partial class Form1
     private Task SelectMbc5FilesAsync()
     {
         int slot = SelectedMbc5Slot();
-        if (isBusy || !mbc5Layout.GetSlot(slot).Enabled)
+        if (isBusy || !ActiveMbc5Layout.GetSlot(slot).Enabled)
             return Task.CompletedTask;
         using var dialog = new OpenFileDialog
         {
@@ -206,12 +257,14 @@ public partial class Form1
         return dialog.ShowDialog(this) == DialogResult.OK ? AddMbc5FilesAsync(dialog.FileNames, slot) : Task.CompletedTask;
     }
 
-    private Mbc5SlotContent ReadMbc5File(string path)
+    private Mbc5SlotContent ReadMbc5File(string path, bool menuSlot, int capacity, bool maxMode)
     {
         FileInfo file = new(path);
-        if (file.Length < 0x150 || file.Length > Mbc5EightMiBLayout.CapacityBytes)
-            throw new InvalidOperationException(Mbc5Text("invalid_rom", "文件必须是包含有效头部的GB/GBC ROM，大小不能超过8M。", "Use a GB/GBC ROM with a valid header, no larger than 8 MiB."));
+        if (file.Length < 0x150 || file.Length > capacity)
+            throw new InvalidOperationException(Mbc5Text("invalid_rom", $"文件必须是包含有效头部的GB/GBC ROM，大小不能超过{Mbc5ImageSize}。", $"Use a GB/GBC ROM with a valid header, no larger than {Mbc5ImageSize}."));
         byte[] bytes = File.ReadAllBytes(path);
+        if (menuSlot && maxMode && Mbc5MaxMenuIdentity.IsKnownExtendedMenu(bytes))
+            return new(bytes, bytes.Length, 0, Path.GetFileName(path), Path.GetFileName(path));
         var metadata = GameBoyRomHeaderService.Read(path, bytes);
         if (!metadata.HasValidNintendoLogo)
             throw new InvalidOperationException(Mbc5Text("invalid_header", "未找到有效GB ROM标志，请检查文件。", "The GB ROM logo is invalid; check the file."));
@@ -224,16 +277,18 @@ public partial class Form1
         if (isBusy || isAnalyzingQueueImports) return;
         string[] files = paths.ToArray();
         int slot = targetSlot ?? SelectedMbc5Slot();
-        if (!mbc5Layout.GetSlot(slot).Enabled)
+        if (!ActiveMbc5Layout.GetSlot(slot).Enabled)
             throw new InvalidOperationException(Mbc5ErrorMessage(Mbc5LayoutError.FourthSlotUnavailable));
-        if (mbc5Layout.GetContent(slot) is not null && MessageBox.Show(this,
+        if (ActiveMbc5Layout.GetContent(slot) is not null && MessageBox.Show(this,
             Mbc5Text("replace_confirm", "替换选中槽的工作区内容？此时不会写入卡带。", "Replace this workspace slot? This does not write to the cartridge."),
             Mbc5SlotName(slot), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        Mbc5EightMiBLayout proposed = mbc5Layout.Snapshot();
+        Mbc5EightMiBLayout proposed = ActiveMbc5Layout.Snapshot();
+        int capacity = proposed.ImageCapacityBytes;
+        bool maxMode = proposed.IsMaxThirtyTwoMiB;
         SetBusy(true, Mbc5Text("loading", "正在读取ROM…", "Reading ROM…"));
         try
         {
-            Mbc5SlotContent[] contents = await Task.Run(() => files.Select(ReadMbc5File).ToArray());
+            Mbc5SlotContent[] contents = await Task.Run(() => files.Select((path, index) => ReadMbc5File(path, slot == 0 && index == 0, capacity, maxMode)).ToArray());
             foreach (Mbc5SlotContent content in contents)
             {
                 if (!proposed.GetSlot(slot).Enabled)
@@ -242,12 +297,12 @@ public partial class Form1
                     throw new InvalidOperationException(Mbc5ErrorMessage(error));
                 if (!ReferenceEquals(content, contents[^1]))
                 {
-                    slot = Enumerable.Range(slot + 1, 4 - slot).FirstOrDefault(index => proposed.GetSlot(index).Enabled && proposed.GetContent(index) is null, -1);
+                    slot = Enumerable.Range(slot + 1, proposed.NumberOfSlots - slot - 1).FirstOrDefault(index => proposed.GetSlot(index).Enabled && proposed.GetContent(index) is null, -1);
                     if (slot < 0) throw new InvalidOperationException(Mbc5Text("no_slot", "没有足够的可用槽位，本次文件未加入。", "Not enough available slots; this batch was not added."));
                 }
             }
-            mbc5Layout = proposed;
-            mbc5LayoutChanged = true;
+            ActiveMbc5Layout = proposed;
+            ActiveMbc5LayoutChanged = true;
         }
         finally
         {
@@ -260,46 +315,46 @@ public partial class Form1
     {
         if (isBusy) return;
         int slot = SelectedMbc5Slot();
-        if (!mbc5Layout.TrySet(slot, null, out Mbc5LayoutError error))
+        if (!ActiveMbc5Layout.TrySet(slot, null, out Mbc5LayoutError error))
         {
             MessageBox.Show(this, Mbc5ErrorMessage(error), Mbc5SlotName(slot), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        mbc5LayoutChanged = true;
+        ActiveMbc5LayoutChanged = true;
         RefreshMbc5Grid(slot);
     }
 
     private void ClearMbc5Slots()
     {
-        if (isBusy || MessageBox.Show(this, Mbc5Text("clear_confirm", "清空五个工作区槽位？不会擦除卡带。", "Clear all workspace slots? The cartridge will not be erased."),
-            "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        mbc5Layout.Clear();
-        mbc5LayoutChanged = true;
+        if (isBusy || MessageBox.Show(this, Mbc5Text("clear_confirm", $"清空{ActiveMbc5Layout.NumberOfSlots}个工作区槽位？不会擦除卡带。", "Clear all workspace slots? The cartridge will not be erased."),
+            Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        ActiveMbc5Layout.Clear();
+        ActiveMbc5LayoutChanged = true;
         RefreshMbc5Grid();
     }
 
     private async Task ExportMbc5ImageAsync()
     {
-        if (isBusy || !mbc5Layout.HasContent) return;
-        using var dialog = new SaveFileDialog { Filter = "GB ROM (*.gb)|*.gb", FileName = "MBC5_8M.gb" };
+        if (isBusy || !ActiveMbc5Layout.HasContent) return;
+        using var dialog = new SaveFileDialog { Filter = "GB ROM (*.gb)|*.gb", FileName = $"MBC5_{Mbc5ImageSize}.gb" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        byte[] image = mbc5Layout.BuildImage();
+        byte[] image = ActiveMbc5Layout.BuildImage();
         SetBusy(true, Mbc5Text("exporting", "正在导出完整ROM…", "Exporting full ROM…"));
         try { await File.WriteAllBytesAsync(dialog.FileName, image); }
         finally { SetBusy(false, Mbc5LayoutDescription()); }
-        AppendLog(Mbc5Text("export_done", "已导出完整8M ROM，空白和预留区域填充FF；可交给其他烧录器完整烧录。", "Exported a full 8 MiB ROM, with unused areas filled with FF, for whole-image programming."));
+        AppendLog(Mbc5Text("export_done", $"已导出完整{Mbc5ImageSize} ROM，空白和预留区域填充FF；可交给其他烧录器完整烧录。", $"Exported a full {Mbc5ImageSize} ROM, with unused areas filled with FF, for whole-image programming."));
     }
 
     private async Task ExportMbc5SlotAsync()
     {
-        if (isBusy || mbc5Layout.GetContent(SelectedMbc5Slot()) is not { } content) return;
+        if (isBusy || ActiveMbc5Layout.GetContent(SelectedMbc5Slot()) is not { } content) return;
         using var dialog = new SaveFileDialog { Filter = "GB ROM (*.gb)|*.gb", FileName = Mbc5SlotName(SelectedMbc5Slot()) + ".gb" };
         if (dialog.ShowDialog(this) == DialogResult.OK) await File.WriteAllBytesAsync(dialog.FileName, content.Data.ToArray());
     }
 
-    private byte[] ReadMbc5ImageFromDevice(WaterDeviceProtocol protocol)
+    private byte[] ReadMbc5ImageFromDevice(WaterDeviceProtocol protocol, int capacity)
     {
-        byte[] image = new byte[Mbc5EightMiBLayout.CapacityBytes];
+        byte[] image = new byte[capacity];
         try
         {
             for (int bank = 0; bank < image.Length / Mbc5EightMiBWriter.BankBytes; bank++)
@@ -314,15 +369,22 @@ public partial class Form1
 
     private void LoadMbc5ScanImage(byte[] image)
     {
-        var proposed = new Mbc5EightMiBLayout();
+        Mbc5EightMiBLayout proposed = IsMbc5MaxMode() ? new Mbc5MaxThirtyTwoMiBLayout() : new Mbc5EightMiBLayout();
+        if (image.Length != proposed.ImageCapacityBytes) throw new InvalidDataException("Fixed-slot image capacity does not match the selected profile.");
         bool hasMenu = false;
-        if (TryReadMbc5CartContent(image, 0, Mbc5EightMiBLayout.CapacityBytes, out Mbc5SlotContent? first))
+        Mbc5SlotContent? first;
+        if (IsMbc5MaxMode() && Mbc5MaxMenuIdentity.IsKnownExtendedMenu(image.AsSpan(0, 0x8000)))
+        {
+            first = new(image.AsSpan(0, 0x8000).ToArray(), 0x8000, 0, "MoriMENU 16in1 EX", "cart");
+            hasMenu = true;
+        }
+        else if (TryReadMbc5CartContent(image, 0, proposed.ImageCapacityBytes, out first))
             hasMenu = first!.Title.Equals("MULTICARTLDR", StringComparison.OrdinalIgnoreCase);
         if (hasMenu)
         {
             if (!proposed.TrySet(0, first, out Mbc5LayoutError menuError))
                 throw new InvalidOperationException(Mbc5ErrorMessage(menuError));
-            for (int slot = 1; slot < 5; slot++)
+            for (int slot = 1; slot < proposed.NumberOfSlots; slot++)
             {
                 Mbc5SlotDefinition definition = proposed.GetSlot(slot);
                 if (definition.Enabled && TryReadMbc5CartContent(image, definition.OffsetBytes, definition.CapacityBytes, out Mbc5SlotContent? content) &&
@@ -332,8 +394,8 @@ public partial class Form1
         }
         else if (first is not null && !proposed.TrySet(1, first, out Mbc5LayoutError error))
             throw new InvalidOperationException(Mbc5ErrorMessage(error));
-        mbc5Layout = proposed;
-        mbc5LayoutChanged = false;
+        ActiveMbc5Layout = proposed;
+        ActiveMbc5LayoutChanged = false;
     }
 
     private static bool TryReadMbc5CartContent(byte[] image, int offset, int capacity, out Mbc5SlotContent? content)
@@ -351,12 +413,12 @@ public partial class Form1
     private async Task HandleMbc5PrimaryActionAsync()
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
-        if (isBusy || !mbc5Layout.HasContent) return;
+        if (isBusy || !ActiveMbc5Layout.HasContent) return;
         if (!CanWriteMbc5Image()) { await ExportMbc5ImageAsync(); return; }
-        if (!mbc5LayoutChanged && MessageBox.Show(this, Mbc5Text("unchanged_confirm", "工作区没有修改，仍要完整擦写吗？", "The workspace is unchanged. Rewrite the entire ROM anyway?"), "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        if (MessageBox.Show(this, Mbc5Text("burn_confirm", "将全擦除8M NOR并烧录当前五槽布局，最后逐字节校验。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请先备份ROM和存档，并确认卡带已安装匹配的MBC5 3/4in1固件。继续？", "Erase the entire 8 MiB NOR, write this layout, and verify every byte? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nBack up ROMs and saves and confirm matching MBC5 3/4in1 firmware before continuing."),
-            "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        byte[] image = mbc5Layout.BuildImage();
+        if (!ActiveMbc5LayoutChanged && MessageBox.Show(this, Mbc5Text("unchanged_confirm", "工作区没有修改，仍要完整擦写吗？", "The workspace is unchanged. Rewrite the entire ROM anyway?"), Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        if (MessageBox.Show(this, Mbc5Text("burn_confirm", $"将全擦除{Mbc5ImageSize} NOR并烧录当前固定槽位布局，最后逐字节校验。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请先备份ROM和存档，并确认卡带已安装匹配的{(IsMbc5MaxMode() ? "MBC5 MAX 16in1" : "MBC5 3/4in1")}固件。继续？", $"Erase the entire {Mbc5ImageSize} NOR, write this layout, and verify every byte? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nBack up ROMs and saves and confirm matching fixed-slot firmware before continuing."),
+            Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        byte[] image = ActiveMbc5Layout.BuildImage();
         WaterCartScanResult scan = currentScanResult!;
         string port = GetSelectedPortName()!;
         using var cancellation = new CancellationTokenSource();
@@ -366,8 +428,8 @@ public partial class Form1
         try
         {
             await Task.Run(() => WriteMbc5ImageOnDevice(port, scan, image, cancellation.Token));
-            mbc5LayoutChanged = false;
-            AppendLog(Mbc5Text("verified", "完整8M ROM写入并逐字节校验通过；游戏运行兼容性仍需实机测试。", "The full 8 MiB ROM passed byte-for-byte verification; game compatibility still requires hardware testing."));
+            ActiveMbc5LayoutChanged = false;
+            AppendLog(Mbc5Text("verified", $"完整{Mbc5ImageSize} ROM写入并逐字节校验通过；游戏运行兼容性仍需实机测试。", $"The full {Mbc5ImageSize} ROM passed byte-for-byte verification; game compatibility still requires hardware testing."));
         }
         finally
         {
@@ -425,20 +487,36 @@ public partial class Form1
         using (var pen = new Pen(Color.White, 2F))
         {
             graphics.Clear(Color.FromArgb(245, 248, 252));
-            graphics.DrawString(mbc5Layout.HasMenu ? mbc5Layout.IsThreeInOne ? "3in1 · 1+2+4" : "4in1 · 1+2+2+2" : "Single ROM · 32K–8M", font, Brushes.Black, 5, 8);
-            int[] slots = !mbc5Layout.HasMenu ? [1] : mbc5Layout.IsThreeInOne ? [0, 1, 2, 3] : [0, 1, 2, 3, 4];
-            float start = 8;
-            foreach (int slot in slots)
+            if (IsMbc5MaxMode())
             {
-                int size = !mbc5Layout.HasMenu ? 8 : slot <= 1 ? 1 : slot == 3 && mbc5Layout.IsThreeInOne ? 4 : 2;
-                float width = size * 16;
-                using var brush = new SolidBrush(slot == 0 ? Color.LightSlateGray : mbc5Layout.GetContent(slot) is null ? Color.FromArgb(192, 213, 237) : Color.FromArgb(111, 167, 221));
-                graphics.FillRectangle(brush, start, 32, width, 42);
-                graphics.DrawRectangle(pen, start, 32, width, 42);
-                graphics.DrawString((slot == 0 ? "M" : slot.ToString()) + "\n" + size, font, Brushes.Black, new RectangleF(start + 2, 36, width - 2, 36));
-                start += width;
+                graphics.DrawString(ActiveMbc5Layout.HasMenu ? "16in1 · 1M + 15×2M" : "Single ROM · 32K–32M", font, Brushes.Black, 3, 3);
+                for (int slot = 1; slot <= 16; slot++)
+                {
+                    int x = 4 + ((slot - 1) % 8) * 17;
+                    int y = 27 + ((slot - 1) / 8) * 27;
+                    using var brush = new SolidBrush(!ActiveMbc5Layout.GetSlot(slot).Enabled ? Color.LightGray : ActiveMbc5Layout.GetContent(slot) is null ? Color.FromArgb(192, 213, 237) : Color.FromArgb(111, 167, 221));
+                    graphics.FillRectangle(brush, x, y, 16, 24);
+                    graphics.DrawString(slot.ToString(), font, Brushes.Black, x, y + 3);
+                }
+                graphics.DrawString(Mbc5Text("preview_hint", "菜单预留1M；每游戏32K存档", "Menu: 1 MiB; saves: 32 KiB/game"), font, Brushes.Black, new RectangleF(3, 84, 138, 27));
             }
-            graphics.DrawString(Mbc5Text("preview_hint", "单位M；M为菜单\n小ROM余量不跨槽共享", "MiB; M = menu\nUnused space is not shared"), font, Brushes.Black, new RectangleF(5, 80, 136, 30));
+            else
+            {
+                graphics.DrawString(ActiveMbc5Layout.HasMenu ? ActiveMbc5Layout.IsThreeInOne ? "3in1 · 1+2+4" : "4in1 · 1+2+2+2" : "Single ROM · 32K–8M", font, Brushes.Black, 5, 8);
+                int[] slots = !ActiveMbc5Layout.HasMenu ? [1] : ActiveMbc5Layout.IsThreeInOne ? [0, 1, 2, 3] : [0, 1, 2, 3, 4];
+                float start = 8;
+                foreach (int slot in slots)
+                {
+                    int size = !ActiveMbc5Layout.HasMenu ? 8 : slot <= 1 ? 1 : slot == 3 && ActiveMbc5Layout.IsThreeInOne ? 4 : 2;
+                    float width = size * 16;
+                    using var brush = new SolidBrush(slot == 0 ? Color.LightSlateGray : ActiveMbc5Layout.GetContent(slot) is null ? Color.FromArgb(192, 213, 237) : Color.FromArgb(111, 167, 221));
+                    graphics.FillRectangle(brush, start, 32, width, 42);
+                    graphics.DrawRectangle(pen, start, 32, width, 42);
+                    graphics.DrawString((slot == 0 ? "M" : slot.ToString()) + "\n" + size, font, Brushes.Black, new RectangleF(start + 2, 36, width - 2, 36));
+                    start += width;
+                }
+                graphics.DrawString(Mbc5Text("preview_hint", "单位M；M为菜单\n小ROM余量不跨槽共享", "MiB; M = menu\nUnused space is not shared"), font, Brushes.Black, new RectangleF(5, 80, 136, 30));
+            }
         }
         Image? previous = pictureBoxMenuBackgroundPreview.Image;
         pictureBoxMenuBackgroundPreview.Image = bitmap;

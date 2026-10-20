@@ -149,7 +149,7 @@ public static class WaterLegacyMenuRepairBuilder
             LocalizedText.T(
                 "error",
                 "legacy_menu_not_found",
-                "Legacy menu ROM resource was not found. Build GBA_MultiMenu_extended-main first, or make sure Assets\\lk_multimenu.gba exists."));
+                "Legacy menu ROM resource was not found. Make sure Assets\\lk_multimenu.gba exists."));
     }
 
     public static WaterLegacyMenuRepairPlan BuildRepairPlan(WaterCartScanResult scanResult, bool batteryPresent = false)
@@ -508,21 +508,6 @@ public static class WaterLegacyMenuRepairBuilder
         yield return Path.Combine(AppContext.BaseDirectory, "lk_multimenu.gba");
         yield return Path.Combine(AppContext.BaseDirectory, "lk_multimenu_for_chisflash_01_02G.gba");
 
-        string? current = AppContext.BaseDirectory;
-        while (!string.IsNullOrWhiteSpace(current))
-        {
-            yield return Path.Combine(current, "GBA_MultiMenu_extended-main", "rom_builder", "lk_multimenu.gba");
-            yield return Path.Combine(current, "GbaMultiMenuBuilder", "Assets", "lk_multimenu.gba");
-            yield return Path.Combine(current, "GBA_MultiMenu_GUI-main", "lk_multimenu.gba");
-
-            DirectoryInfo? parent = Directory.GetParent(current);
-            if (parent is null)
-            {
-                break;
-            }
-
-            current = parent.FullName;
-        }
     }
 
     private static int AlignPastBoundary(int value, int alignment)

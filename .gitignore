@@ -40,3 +40,11 @@ ChisFlashWaterClient/covers/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 独立发布输出及用户自备字体
+/dist/
+*.ttf
+*.otf
+*.bdf
+*.sav
+last_game_list*.ini

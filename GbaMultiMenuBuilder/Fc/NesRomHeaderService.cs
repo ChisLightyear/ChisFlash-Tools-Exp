@@ -99,7 +99,7 @@ public static class NesRomHeaderService
                 int declaredRam=h[8]==0?(mapper is 176 or 178?32768:mapper==198&&!battery?4096:8192):h[8]*8192;
                 work=w<0?(battery?0:declaredRam):w;
                 save=s<0?(battery?(mapper==4&&sub==1?1024:declaredRam):0):s;
-                cram=c<0?(chr==0?(mapper is 176 or 268?262144:8192):mapper is 74 or 253?2048:mapper is 165 or 195?4096:mapper is 176 or 199?8192:0):c;
+                cram=c<0?(chr==0?(mapper is 176 or 268?262144:mapper==30?32768:8192):mapper is 74 or 191 or 253?2048:mapper is 165 or 192 or 195?4096:mapper is 176 or 199?8192:0):c;
                 if(mapper==195 || mapper==198&&battery)work=Math.Max(work,12288-save);
             }
             // NES-001/FS304/cy2000 boards have fixed external work RAM even in

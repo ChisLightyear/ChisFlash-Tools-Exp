@@ -1,6 +1,10 @@
 # MIX v2：统一存储与启动协议
 
-适用：上位机2.042、合卡器0.92.3。本文为桌面端已实现的数据合同，也是 MCU／FPGA 的接口依据。NES、MD、SNES 均作为已接入平台；桌面端不检查已安装核心或核心 Mapper 白名单，不以 SNES 接入状态阻止合卡、BIN 导出或烧录。本轮只验证桌面与模拟卡流程，不宣称实际运行、特殊芯片兼容或硬件写卡通过。
+MCU 2.88：游戏卡运行时目录、条目、标题及存档表按配套格式直接读取，不进行 CRC、素材重叠或全库存档表审计。此条替代本文旧的 MCU 运行时校验要求；桌面格式、字段和写卡流程不变。
+
+2026-10-09：合卡器 0.92.5／上位机 2.046／MCU 2.86 增加完整名称 TTL1 素材，记录偏移 88 为可选地址，0 保留无扩展 v2 读取。MIX 完整名称不按 46 个 UTF-16 单元截断。该条替代下表偏移 88 必须为 0 的旧说明；详见 [MIX-FULL-TITLES.md](MIX-FULL-TITLES.md)。
+
+适用：上位机2.046 r15、合卡器0.92.5。本文为桌面端已实现的数据合同，也是 MCU／FPGA 的接口依据。NES、MD、SNES 均作为已接入平台；桌面端不检查已安装核心或核心 Mapper 白名单，不以 SNES 接入状态阻止合卡、BIN 导出或烧录。本轮只验证桌面与模拟卡流程，不宣称实际运行、特殊芯片兼容或硬件写卡通过。
 
 ## 1. 不再兼容旧格式
 
@@ -200,3 +204,7 @@ CRC32使用反射多项式0xedb88320、初值0xffffffff、最终按位取反。�
 ## English summary
 
 Client2.042 and Builder0.92.3 write/read GLB2 version2 and LNC2 version2 only. No legacy decoding, migration or downgrade. NES, MD and SNES use the same 8 KiB noncontiguous SRAM map, stored as a bounded per-record asset with its own CRC. Dedicated banks0–59 cannot overlap; shared working banks60–63 remain reserved. Map length follows RAM demand, so128 KiB uses16 entries. Preserve existing logical prefixes; initialize/restore by the full map, never by first-bank-plus-offset. NES, MD and SNES are integrated platforms. The desktop accepts encodable NES mapper/submapper values (0–4095 / 0–15) without checking installed cores or runtime support whitelists; no SNES synchronization gate is added to packing, export or programming. File validity, actual storage capacity, bank overlap and card write protection remain checked. Runtime implementations follow this contract; successful packing is not evidence of gameplay or coprocessor compatibility.
+
+## CSQ1 启动序列扩展
+
+记录偏移42的bit0现在表示通用启动序列，其他位仍为0。LNC2仍为v2，负载保留原平台配置前缀，追加操作及尾头；总块长度上限1024B。没有扩展的既有v2卡继续可读，不涉及被撤回的v1/LNC1等旧格式。完整规则见[MIX-LAUNCH-SEQUENCE.md](MIX-LAUNCH-SEQUENCE.md)。本节替代前文该字段必须为0和启动块固定长度的说明。

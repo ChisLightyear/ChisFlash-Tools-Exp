@@ -1,575 +1,114 @@
-# ChisFlash Tools — User Guide (English)
+# ChisFlash Tools User Guide
 
-The repository holds two programs. **They are independent — just pick the one you need.**
+**Client 2.046 r15 / Builder 0.92.5** · [简体中文](TUTORIAL.zh-CN.md)
 
-## 🔥 Client `ChisFlashWaterClient` (recommended)
+## 1. Download and preparation
 
-**Talk to the cartridge directly and change it however you like.** Pick the flashcart
-type and everything else is automatic:
+Download the [complete Windows x64 package](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) and extract the whole folder. Repository access is currently required.
 
-- **Add or remove any game** — games already on the cart can be added or deleted freely, independently of each other
-- **Update freely** — swap games, menus or backgrounds; rewrite any time, no full rebuild
-- **Export saves freely** — each game's save can be exported / imported on its own
-- **Automatic patching** — **no manual steps**; SRAM / batteryless patches are chosen and applied automatically from the flashcart type
+- `client/ChisFlashWaterClient.exe`: Client for a compatible Beggar programmer or explicitly identified WaterLink.
+- `builder/Chis合卡制作器.exe`: offline Builder; write its complete images with a compatible programmer.
 
-## 📦 Builder `GbaMultiMenuBuilder`
+The package includes the .NET runtime. Keep the DLLs, `Languages`, `Assets` and rule files alongside each executable. Supply your cartridge, programmer, USB data cable and game ROMs. Export any existing ROMs and saves you need to keep before changing a cartridge.
 
-**Build multiple games into one multicart ROM file offline**, then flash it with **any**
-GBA burner. Suits traditional burners, or when you want a finished file up front.
+Covers and backgrounds are optional and are not bundled. Chinese GBC menus need a user-supplied 12px font in the tool's `Assets/Fonts/`; English menus use built-in glyphs. MIX titles currently require the user-provided `Assets/Fonts/mplus_hzk_12.ttf`.
 
-中文版: [TUTORIAL.zh-CN.md](TUTORIAL.zh-CN.md)
+## 2. Connect and identify
 
----
+1. Refresh and select the serial port.
+2. Choose `GBA` or `GB` to match the cartridge.
+3. Use `Analyze Cart` to inspect NOR capacity and contents. On large GBA cartridges this scans game headers; use the configuration-analysis action for directory, mapping and save details.
+4. Select the actual cartridge configuration under `Flash Cart`.
 
-## Quick start (Client only)
+GBA/GB controls stay visible. An explicitly identified WaterLink forces GBA and disables switching. Generic AG32/CDC names are not treated as WaterLink. For other ports, GBA/GB selects the command mode; it does not prove which firmware is installed.
 
-1. [Install the .NET 9 runtime](#1-prerequisites) (skip [Part 1](#part-1-build) if you don't want to build from source)
-2. Plug in the Beggar burner over USB
-3. Open the Client → **pick the port** → **pick the mode (GBA/GB)** → **pick the flashcart type**
-4. Add games → **Start Burn** (patches are applied automatically)
+![Client: single game and empty menu row](docs/images/en/client_01_main.png)
 
----
+## 3. GBA single-game workflow
 
-## Contents
+The profile selector groups multicart and single-game profiles. Group headings cannot be clicked. Single-game choices include generic cartridges, ChisFlash 1.0, 1.1 without/with RTC, 1.2 and 1.0V. The unconfirmed 1.1V entry is disabled. NOR identity does not identify save hardware or RTC capabilities.
 
-- 📦 **Part 1: Build** (collapsed — [click to expand](#part-1-build)) ← skip this if you only want to *use* the tools
-  - [1. Prerequisites](#1-prerequisites)
-  - [2. Getting the source](#2-getting-the-source)
-  - [3. Building](#3-building)
-  - [4. Running](#4-running)
-  - [5. Build troubleshooting](#5-build-troubleshooting)
-- 🔧 [Hardware setup](#hardware-setup)
-- 🔥 [Using the Client](#using-the-client)
-  - [1. Client interface areas](#1-client-interface-areas)
-  - [2. Connect](#2-connect)
-  - [3. Add games and burn](#3-add-games-and-burn)
-  - [4. Saves](#4-saves)
-- 📦 [Using the Builder](#using-the-builder)
-  - [1. Builder interface areas](#1-builder-interface-areas)
-  - [2. Builder files you must supply yourself](#2-builder-files-you-must-supply-yourself)
-  - [3. Steps](#3-steps)
-  - [4. Other features and capacity overflow](#4-other-features-and-capacity-overflow)
-- 🔬 [Advanced operations](#advanced-operations)
-- ⚠️ [Precautions](#precautions)
-- 📚 [Appendix: Quick reference](#appendix-quick-reference)
+Recognized 256 Mbit NOR models with a measured 32 MiB capacity show only single-game choices and Game 1. Import or replace the ROM, review it and start programming. The original ROM is written from address zero without automatically adding a menu or SRAM/batteryless patch. Newly listed models use this raw-ROM flow; no new FLASH-ID, RTC or RTS patches are implied.
 
----
+Clearing the workspace changes the local draft; it does not erase the cartridge. A header-only scan cannot determine the ROM's full length. Supply the requested export length instead of assuming it equals NOR capacity.
 
-<details>
-<summary><b>📦 Part 1: Build — click to expand / collapse</b></summary>
+## 4. GBA multicart workflow
 
-<a id="part-1-build"></a>
-<a id="第一部分编译"></a>
+For a multicart-capable cartridge:
 
-## 1. Prerequisites
+1. Add or select a menu in the menu row. Simplified NS is the default; Classic and full NS are explicit alternatives.
+2. Without a menu, only Game 1 is available. Adding a menu opens further game rows.
+3. Import your ROMs and check ordering, space, saves, patches and optional covers. Import/replace/remove operations edit a draft.
+4. When converting an existing single game, explicitly choose whether to keep it and provide its read length when asked.
+5. Start programming and confirm the operation. Keep power and USB connected until completion.
+6. Rescan and test game startup, saving and reload after a power cycle on the console.
 
-### 1. Required: .NET 9 SDK
+![Client: pending menu and three games](docs/images/en/client_02_multicart.png)
 
-Both programs are **.NET 9 + WinForms** projects. They can only be built and run on **Windows**.
+A menu cannot be removed while multiple games remain. A preview marked as pending has not been written. GBA/CHM1/WaterLink writes retain protocol acknowledgements and completion waits without reintroducing the removed byte-for-byte post-write comparison. GB/GBC full-image and full-erase workflows keep their separate verification rules.
 
-Download: https://dotnet.microsoft.com/download/dotnet/9.0
+## 5. GB/GBC profiles
 
-Pick the **.NET 9.0 SDK** (SDK, not Runtime — the SDK includes the compiler), **Windows x64**.
+Choose GB, detect NOR, then select the cartridge configuration. Capacity filters candidates; it does not choose firmware.
 
-Verify after installation:
+| NOR | Profile | Layout |
+|---|---|---|
+| 8 MiB | MBC5 3in1 / 4in1 | Menu plus four game slots; Game 3 above 2 MiB occupies Game 4 space |
+| 8 MiB | MBCX RTC 8M | One GB/GBC game, at most 2 MiB |
+| 32 MiB | MBC5 MAX 16in1 | Menu plus sixteen games; Game 1 at most 1 MiB, others 2 MiB each |
+| 32 MiB | MBCX RTC 32M | One GB/GBC game, at most 2 MiB |
+| 32 MiB | Free multicart · MAX/MBCX 32M | Matching free-multicart firmware, menu, directory and saves |
+| 32 MiB | MIX · NES / MD / SNES | Matching MIX firmware and workspace |
 
-```bash
-dotnet --version
-```
+See the [GBC free-multicart guide](https://github.com/ChisLightyear/ChisFlash-GBC-FreeMulticart/blob/main/TUTORIAL.en.md):
 
-**Expected output**: `9.x.xxx` (anything starting with 9)
+- Beggar + Client: erase all NOR, install the menu, add games and program.
+- Another compatible programmer + Builder: build a complete ROM, erase NOR, then write the complete image.
 
-If you get "command not found", the installer did not add it to PATH. Re-run the installer with that option checked, or restart your terminal.
+Full NOR erase removes menus, directories and games, but does not erase the separate GB/GBC SRAM chip. Fixed-slot, RTC and free-multicart layouts are different; do not interchange their menus or images.
 
-### 2. Optional: Visual Studio
+## 6. MIX
 
-If you prefer a GUI over the command line, install **Visual Studio 2022 (17.12 or newer)** and select:
+Select MIX and import supported NES, MD, SNES or ZIP files. Review the games, ROM/SRAM space and titles before exporting BIN or programming.
 
-- The **.NET desktop development** workload
+NES/MD/SNES share allocators and support noncontiguous SRAM banks. The tools use GLB2 v2 / LNC2 v2 only; retired formats are not read or automatically migrated. Full-title and launch-sequence extensions require matching firmware. Successful import or packing does not establish hardware gameplay compatibility.
 
-This gives you both the `dotnet` command and a graphical build environment.
+Technical references: [storage contract](docs/MIX-V2-STORAGE-CONTRACT.md), [full titles](docs/MIX-FULL-TITLES.md), [launch sequence](docs/MIX-LAUNCH-SEQUENCE.md).
 
-### 3. Optional: Git
+## 7. Builder
 
-For cloning the repository: https://git-scm.com/download/win
+![Builder settings](docs/images/en/builder_01_main.png)
 
-If you would rather not install Git, you can also use **Code → Download ZIP** on the GitHub page.
+1. Select platform, actual cartridge type and capacity. Default menu binaries are included in `Assets/`.
+2. Choose an output file, add ROMs, and adjust titles, ordering, saves and patch options.
+3. Optionally configure covers/backgrounds. Chinese GBC menus also need your own 12px font.
+4. Preview, check space and start building.
+5. Confirm success and that no games were unexpectedly skipped. Write the resulting complete image with a compatible programmer; the Builder itself does not flash hardware.
 
----
+![Builder with synthetic ROMs](docs/images/en/builder_02_romlist.png)
 
-## 2. Getting the source
+All screenshots come from these versions and use synthetic ROMs or simulated scan data. No cartridge was connected or programmed during capture. Some recent controls retain Chinese labels in the current English UI.
 
-### 1. Clone (recommended)
+## 8. Saves and updates
 
-```bash
-git clone https://github.com/moribaka/ChisFlash-Tools-Exp.git
-cd ChisFlash-Tools-Exp
-```
+Select a game and use the save import/export actions supported by that mode. When moving to another cartridge, establish its game layout before restoring matching saves. Dedicated save space does not provide power-off retention by itself; that depends on the hardware.
 
-### 2. Download ZIP
+For a menu update that preserves games, answer No to clearing configuration. If a directory is damaged or the layout must change, back up before rebuilding. Removing a draft entry, clearing an image, clearing configuration and erasing all NOR are different operations.
 
-Click **Code → Download ZIP** on the repository page, then extract anywhere.
+## 9. Build from source
 
-### 3. ⚠️ Do not change the directory layout
+Use Windows with .NET 9 SDK or a newer SDK supporting `net9.0-windows`. Keep `ChisFlashWaterClient/` and `GbaMultiMenuBuilder/` side by side; the Client links shared Builder code.
 
-After cloning or extracting, the directory **must** look exactly like this:
-
-```
-ChisFlash-Tools-Exp/
-├── ChisFlashWaterClient/     ← Client
-└── GbaMultiMenuBuilder/      ← Builder
-```
-
-**Both folders must sit side by side under the same parent folder, and their names must not change.**
-
-**Why?** When building, the Client reads **29 source files** from the sibling `GbaMultiMenuBuilder` folder (see the `Include="..\GbaMultiMenuBuilder\..."` entries in `ChisFlashWaterClient.csproj`).
-
-That `..\` means "one level up" — it is a **relative path**. Therefore:
-
-- ✅ Both folders side by side → found, build succeeds
-- ❌ Move one folder elsewhere → not found, build fails with "file not found"
-- ❌ Rename either folder → same failure
-
-**Even if you only want to build one program**, you must keep both folders intact. You cannot download just one.
-
----
-
-## 3. Building
-
-### 1. Build both programs
-
-Open a terminal (Command Prompt / PowerShell) in the `ChisFlash-Tools-Exp` directory and run:
-
-**Build the Client:**
-
-```bash
+```powershell
 dotnet build ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release
-```
-
-**Build the Builder:**
-
-```bash
 dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
 ```
 
-**The first build downloads NuGet dependencies** and takes a few minutes. Subsequent builds are much faster.
+Outputs are under each project's `bin/Release/net9.0-windows/`. Initial builds restore NuGet packages. Menu/patch resources are in the repository; no developer-drive paths, GBDK, Quartus or external menu source trees are required.
 
-A successful build ends with something like:
-
-```
-Build succeeded.
-    0 Warning(s)
-    0 Error(s)
+```powershell
+dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r win-x64 --self-contained true -o dist/client
+dotnet publish GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release -r win-x64 --self-contained true -o dist/builder
 ```
 
-### 2. Build output location
-
-| Program | Output path |
-|---|---|
-| Client | `ChisFlashWaterClient/bin/Release/net9.0-windows/ChisFlashWaterClient.exe` |
-| Builder | `GbaMultiMenuBuilder/bin/Release/net9.0-windows/Chis合卡制作器.exe` |
-
-### 3. Building with Visual Studio (alternative)
-
-1. Double-click `ChisFlashWaterClient/ChisFlashWaterClient.sln` or `GbaMultiMenuBuilder/GbaMultiMenuBuilder.sln`
-2. Switch the configuration dropdown from `Debug` to `Release`
-3. Menu **Build → Build Solution** (or press `Ctrl+Shift+B`)
-
----
-
-## 4. Running
-
-### 1. Run the build output directly
-
-Go to the output folder and double-click the `.exe`:
-
-```bash
-## Client
-ChisFlashWaterClient/bin/Release/net9.0-windows/ChisFlashWaterClient.exe
-
-## Builder
-GbaMultiMenuBuilder/bin/Release/net9.0-windows/Chis合卡制作器.exe
-```
-
-### 2. Packaging into a standalone folder (publish)
-
-To hand the program to someone else, use the `publish` command:
-
-```bash
-## Client (framework-dependent, small — target machine needs .NET 9 Desktop Runtime)
-dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r win-x64 -o dist/client
-
-## Builder
-dotnet publish GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release -r win-x64 -o dist/builder
-```
-
-The output folders (`dist/client`, `dist/builder`) contain a complete distributable program. Copy the whole folder.
-
-**Default is "framework-dependent"**: small (tens of MB), but the target machine must have the .NET 9 Desktop Runtime installed.
-
-To make it **run anywhere with no runtime dependency**, add `--self-contained true`:
-
-```bash
-dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r win-x64 --self-contained true -o dist/client-standalone
-```
-
-The trade-off is size — it grows past 100 MB, so it is generally not recommended.
-
-### 3. Files the programs need at runtime
-
-**Client** needs these next to the executable:
-
-- `Languages/` folder (UI language files)
-- `Assets/` folder (menu ROM resources)
-- `save_types.ini` (save-type detection rules)
-- `covers/` folder (**optional** — game cover library; missing only disables cover display)
-
-**Builder** needs these next to the executable:
-
-- `Languages/` folder
-- `Assets/` folder (including `Fonts/`)
-- `save_types.ini`, `save_type_overrides.ini`
-
-`dotnet publish` copies all of these automatically — no manual copying needed.
-
----
-
-## 5. Build troubleshooting
-
-### "Could not find ../GbaMultiMenuBuilder/..."
-
-**Cause**: Wrong directory layout — the two folders are not side by side.
-
-**Fix**: Make sure `ChisFlashWaterClient` and `GbaMultiMenuBuilder` are under the same parent directory with exactly matching names (watch the casing).
-
-### "The current .NET SDK does not support targeting .NET 9.0"
-
-**Cause**: .NET 9 SDK is not installed, or an older version is.
-
-**Fix**: Run `dotnet --list-sdks` to list installed versions. Make sure one starts with `9.`. If not, install it from the official site.
-
-### Builds fine but the app crashes on launch
-
-**Cause**: Usually missing runtime files (e.g. `Languages/`).
-
-**Fix**: Run from the entire `bin/Release/net9.0-windows/` folder. Do not copy just the `.exe` out on its own.
-
-### NuGet download times out / stuck on "Restoring"
-
-**Cause**: Unstable connection to nuget.org.
-
-**Fix**: Configure a local NuGet mirror, or check your proxy settings.
-
-### Antivirus flags or deletes the .exe
-
-**Cause**: Self-compiled unsigned executables are commonly false-flagged.
-
-**Fix**: Add an exclusion for the folder, or temporarily disable real-time protection.
-
-</details>
-
-## Hardware setup
-
-### 1. What you need
-
-| Item | Notes |
-|---|---|
-| **Burner** | A ChisFlash-series burner (Beggar), connected over USB |
-| **Cartridge** | A flashable ChisFlash cart — see the table below |
-| **USB cable** | Connects the burner to the PC |
-
-#### Supported cart models and capacities
-
-| Cart | Supported capacity |
-|---|---|
-| **ChisFlash 1.0G** | **128 MiB** (01G) / **256 MiB** (02G) |
-| **ChisFlash WaterLink** | **128 MiB (01G)** / **256 MiB (02G)** |
-| **ChisFlash MAX/MBCX** (free-multicart firmware) | **32 MiB NOR** + **512 KiB SRAM** |
-
-### 2. Files you must supply yourself
-
-The repository ships the tools and menu kernels. Games, cover libraries and external Chinese fonts must be supplied separately where required:
-
-| Item | Required? | Notes |
-|---|---|---|
-| **Game ROMs** | ✅ Yes | `.gba` game files (or `.zip`). No substitute — you must have these |
-| **Base menu** | ⚙️ Optional | The Builder bundles default menus under `Assets/` and selects one automatically |
-| **Covers / background** | ⭕ Optional | Cosmetic only — the cart still builds and flashes without them |
-| **CJK font** | Required for Chinese menus | Supply a 12px font in `Assets/Fonts/`, reopen the tool and select it. 8px fonts are not supported |
-
-### 3. Detecting the device
-
-Plug the burner into the PC with a USB cable, then **open the Client**:
-
-1. Click **Refresh** (or just open the app — it scans automatically)
-2. In the **Port** dropdown, pick the entry that shows the **burner's name** — e.g. `ChisFlash Beggar`, `ChisFlash WaterLink`
-3. It is detected automatically once selected
-
----
-
-## Using the Client
-
-Talk to the cartridge directly — **no multicart file needed first**. Once the flashcart
-type is set, patches, mapping and save slots are all handled automatically.
-
-### 1. Client interface areas
-
-Screenshots use synthetic ROMs and simulated cartridge data. No physical cartridge was connected or programmed.
-
-![Client main window](docs/images/client_01_main.png)
-
-| Area | Contents |
-|---|---|
-| **Top toolbar** | Port selection, Refresh, Scan cartridge, Mode (GBA/GB), function menus |
-| **ROM workspace** | Burn queue |
-| **Cartridge ROM list** | Games already on the cartridge |
-| **Log** | Operation history and errors |
-
-The Client ships its own menu ROMs under the **`Assets\` folder next to the program** (`lk_multimenu.gba`, `wl_magic_menu.gba`, `universal_menu.gba`, `simplified_ns_menu.gba`, …). The release package already includes them — **nothing to prepare**. To swap in your own menu, see [Advanced operations · Menu operations](#1-menu-operations).
-
-### 2. Connect
-
-1. **Port** → pick the entry showing the **burner's name** (e.g. `ChisFlash Beggar`); click **Refresh** if missing
-2. **Mode** → `GBA` or `GB`, matching your cartridge
-3. **Flashcart type** → match your actual cart (a wrong choice patches the wrong way)
-4. Click **Scan cartridge** → games on the cart appear in **Cartridge ROM list**
-
-Starting with Client 2.035, a shared USB ID does not identify every AG32 device as WaterLink. An explicit WaterLink USB product identity is required. Composite-device parent product names are read instead of relying on CDC interface labels, manufacturer names or Windows friendly names. Unconfirmed devices display their actual product name but do not gain cartridge-command access. Older firmware that reports only a generic AG32/CDC name needs a dedicated product identity for reliable automatic identification.
-
-The GBA / GB selector remains visible. Confirmed WaterLink devices automatically select GBA and disable both options. Beggar devices still allow GBA or GB selection while idle.
-
-### 3. Add games and burn
-
-- In the **ROM workspace** click **Add ROM** and pick `.gba` files (multiple allowed)
-- Click **Start burning** — **do not unplug or close the window during the process**
-- Afterwards, scan the cartridge again to confirm the games are on it
-
-### 4. Saves
-
-| Feature | Notes |
-|---|---|
-| **Export / Import save** | Export one game's save to `.sav`, or write it back |
-| **Export / Import chip save** | Read or write the flash chip's save area directly |
-| **Clear save** | Erase the save data on the cartridge |
-
----
-## Using the Builder
-
-**Goal**: pack multiple `.gba` games into a **single** multicart ROM file, built offline
-ahead of time. The resulting file can be flashed with **any** GBA burner — this route
-suits traditional burners.
-
-### 1. Builder interface areas
-
-After launching, the window has three main sections:
-
-![Builder main window](docs/images/builder_01_main.png)
-
-| Area | Contents |
-|---|---|
-| **Build settings** | Base menu, output ROM, custom background, cover directory, CJK font, capacity, flashcart type, menu type |
-| **ROM list** | Add games, reorder, assign save slots |
-| **Build log** | Progress and results |
-
-### 2. Builder files you must supply yourself
-
-The repository ships **the program only** — no games, covers, or menu artwork. These items need to come from you:
-
-| Item | Required? | What you need | How to set it |
-|---|---|---|---|
-| **Game ROMs** | ✅ Yes | `.gba` or `.zip` game files | Click **Add ROMs**, or drag them into the list (any location) |
-| **Base menu** | ⚙️ Optional | Menu kernel ROM (`.gba`) | The **`Assets\` folder next to the program** — see below |
-| **Cover directory** | ⭕ Optional | `cover_index.csv` + cover images | Pick the folder via **Browse** next to **Cover directory** |
-| **Custom background** | ⭕ Optional | A background image of the required size | Pick the image via **Browse** next to **Custom background** |
-| **CJK font** | Required for Chinese menus | User-supplied 12px Chinese font | Copy into `Assets/Fonts/`, reopen the tool and select it from the font list |
-
-**Where the base menu goes**: the **`Assets\` folder next to the program**, with fixed file names — picked automatically from the *menu type* + *flashcart type*:
-
-| Menu type | Flashcart type | File name |
-|---|---|---|
-| Classic menu | Normal / no battery | `lk_multimenu.gba` |
-| Classic menu | Waterline (virtual FRAM) | `lk_multimenu_wl.gba` |
-| NS menu | **Any** (all supported) | `universal_menu.gba` |
-| Simplified NS menu | **Any** (all supported) | `simplified_ns_menu.gba` |
-
-The shipped package already contains all four — **nothing to prepare**. Only replace them if you want to use a self-built menu: drop the file into `Assets\` under the matching name above.
-
-### 3. Steps
-
-**① Set parameters** (⬅️ must match the physical cartridge)
-
-| Option | Notes |
-|---|---|
-| **Capacity** | GBA side: **01G (128 MiB)** / **02G (256 MiB)**; GBC side: **32 / 128 / 256 MiB**. Must match the physical cartridge |
-| **Flashcart type** | `GBA \| 01G/02G (battery/FRAM)`, `GBA \| 01G/02G (no battery)`, `GBA \| Waterline (virtual FRAM)`, `GBC \| MAX/MBCX (512K)` |
-| **Menu type** | `Classic menu` / `NS menu` / `Simplified NS menu` |
-| **Base menu** | **Usually leave alone** — uses the default menu in the program's `Assets\` folder, switched automatically with *menu type* / *flashcart type* |
-| **Output ROM** | Where to write the generated file (e.g. `output/my-multicart.gba`) |
-
-**② Add games** (⬅️ requires your own `.gba` files)
-
-- Click **Add ROMs**, or **drag and drop** `.gba` files in; multi-select, whole folders, and `.zip` extraction all work
-- Use **Move up / Move down** to reorder the menu, **Remove selected** to drop games, **Auto save slots** to assign SRAM
-
-
-**③ Build**
-
-- Click **Start build**, watch the **Build log** until it reports success, then **Open output folder**
-
-![ROM list populated](docs/images/builder_02_romlist.png)
-
-**④ (optional) Set up covers** (⬅️ requires your own cover images and `cover_index.csv`)
-
-- **Cover directory** → point at the folder of cover `.png` files → **Auto match** pairs them by filename
-
-### 4. Other features and capacity overflow
-
-| Feature | Notes |
-|---|---|
-| **Split into 32 MiB parts** | Splits a very large cart into multiple files |
-| **Apply SRAM patch** | Patches games to work with SRAM saves |
-| **Preview menu** | Preview the menu display before building |
-| **View config** | Inspect capacity usage and configuration details |
-| **Export font** | Export the CJK bitmap font |
-
-When the build log shows an **"over capacity"** message: reduce the number of games, or
-use a larger cartridge. The **"before patch / after patch / capacity"** figures in the log
-help pinpoint the cause (some games change size after patching).
-
----
-
-## Advanced operations
-
-These live under the **Cartridge** / **ROM** / **Save** menus. **They carry risk — back up your saves first.**
-
-### 1. Menu operations
-
-| Feature | Notes |
-|---|---|
-| **Update menu** | Update the cart menu to the current bundled menu ROM |
-| **Rebuild menu** | Force a menu rebuild (for display problems) |
-| **Rebuild with a specified menu file** | Opens a file dialog to pick a `.gba` menu ROM (any location) and uses it to replace the cartridge's menu |
-| **Repair menu** | Fix a corrupted menu directory / metadata |
-| **Repair Magic metadata** | Fix the WL (WaterLink) mapping |
-| **Upgrade to Magic mode** | Convert an old menu to Magic management |
-| **Update background image** | Replace the menu background (240×160 PNG, ≤256 colors) |
-| **Erase config** | Clear the menu config area (games are preserved) |
-
-### 2. Chip operations
-
-| Feature | Notes |
-|---|---|
-| **Detect Magic metadata** | Check whether the cart uses Magic-management format |
-| **Unlock PPB** | Remove flash PPB write protection (needed for some locked chips) |
-| **Erase entire NOR** | ⚠️ **Wipes the whole NOR — all data including games is gone** |
-| **Fragment test** | Test the fragment management feature |
-| **Timing settings** | View current NOR read/write timing parameters |
-
-Starting with Client 2.034, GB/MAX and scanned MIX cartridges also support Cartridge > Erase Entire NOR. A valid menu or multicart directory is not required, and existing GB/GBC, FC or MD contents do not restrict erase. A connected programmer, a scan with valid capacity and two confirmations are still required. The GB path uses byte commands for chip erase, followed by byte-for-byte verification of the entire detected NOR capacity; separate SRAM is not erased. Starting erase invalidates the previous scan. Rescan after failure or after erasing a MIX cartridge. Offline checks pass; physical-cartridge validation is pending.
-
----
-
-## Precautions
-
-### 1. Data safety
-
-- **Losing power or unplugging mid-flash can leave a cartridge half-written**, requiring a full erase and retry
-- **Do not close the Client window while flashing**
-- Before working on an important cartridge, use **Export save** to back it up
-- Before erasing the entire NOR, use **Export ROM** to back up the games
-
-### 2. Matching parameters
-
-- The Builder's **capacity and flashcart type** must match the physical cartridge
-- The Client's **mode (GBA / GB)** must match the cartridge type
-- Timing parameters differ per chip; if reads or writes are unstable, try **Timing settings**
-
-### 3. Game compatibility
-
-- Not every game works in a multicart — some use unusual mappers or save mechanisms
-- Batteryless patching is not universal across all flash chip models
-- A successful build does not guarantee every game plays through; test them individually
-
-### 4. Version pairing
-
-**The Builder and the Client must be used as a matched pair**, because they share source code.
-
-- Both version numbers are visible in the window title bar or the About dialog
-- A large version gap may produce multicarts the Client cannot handle correctly
-
----
-
-## Appendix: Quick reference
-
-### Files you must supply
-
-| File | Required? | Can you skip it? |
-|---|---|---|
-| Game ROMs (`.gba` / `.zip`) | ✅ Yes | ❌ No — without games there is nothing to pack |
-| Base menu ROM | ⚙️ Optional | ✅ Yes — the bundled one under `Assets/` is used |
-| Covers + `cover_index.csv` | ⭕ Optional | ✅ Yes — the menu simply has no covers |
-| Custom background image | ⭕ Optional | ✅ Yes — the default background is used |
-| GBC CJK font | Required for Chinese menus | GBA and English GBC menus need no external font; Chinese requires a 12px font |
-
-### Two routes at a glance
-
-**A. Client route (recommended — change things as you go)**
-
-```
-1. Build (or use an existing exe)
-   dotnet build ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release
-
-2. Plug in the burner → launch the Client → pick port → mode → flashcart type → Scan cartridge
-
-3. Add ROMs → Start burning (patches applied automatically)
-
-4. To change things: delete games in the cart list, add new ones, re-burn any time —
-   no need to rebuild a whole multicart
-```
-
-**B. Builder route (offline file, for traditional burners)**
-
-```
-1. Build
-   dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
-
-2. Launch the Builder → pick base menu + cartridge params → add games → Start build
-   → produces output/my-multicart.gba
-
-3. Flash that .gba with any GBA burner
-```
-
-### Directory cheat sheet
-
-```
-ChisFlash-Tools-Exp/
-├── ChisFlashWaterClient/         Client
-│   ├── ChisFlashWaterClient.sln
-│   ├── Languages/                UI languages
-│   ├── Assets/                   ★ the Client's menu ROMs (bundled)
-│   │   ├── lk_multimenu.gba        Classic menu
-│   │   ├── wl_magic_menu.gba       Classic menu (Waterline)
-│   │   ├── universal_menu.gba      NS menu
-│   │   ├── simplified_ns_menu.gba  Simplified NS menu
-│   │   └── menu_zh.gb / menu_en.gb GBC menu
-│   └── covers/                   cover library (not shipped)
-└── GbaMultiMenuBuilder/          Builder
-    ├── GbaMultiMenuBuilder.sln
-    ├── Fc/                       NES cartridge support
-    ├── Md/                       MD cartridge support
-    ├── Languages/                UI languages
-    └── Assets/                   ★ the Builder's menu ROMs (bundled)
-        ├── lk_multimenu.gba        Classic menu
-        ├── lk_multimenu_wl.gba     Classic menu (Waterline)
-        ├── universal_menu.gba      NS menu
-        ├── simplified_ns_menu.gba  Simplified NS menu
-        ├── menu_zh.gb / menu_en.gb GBC menu
-        └── Fonts/                  fonts
-```
-
-Each program keeps its **own, independent** menu files under its own `Assets\` folder; the release package already includes them.
-
-### Third-party assets
-
-- `GbaMultiMenuBuilder/Fc/MesenNesDB.csv` comes from [Mesen2](https://github.com/SourMesen/Mesen2); the license text is retained in `Fc/Mesen-LICENSE` (GPL v3)
-- Fonts under `GbaMultiMenuBuilder/Assets/Fonts/` are copyright their respective authors
+Supply fonts/covers separately. See [verification instructions](tests/README.md).

@@ -64,7 +64,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 

@@ -6,7 +6,7 @@ using GbaMultiMenuBuilder.Services;
 
 namespace GbaMultiMenuBuilder.Fc;
 
-public sealed record FcTitleBitmap(byte[] List, byte[] Detail, string MissingCharacters);
+public sealed record FcTitleBitmap(byte[] List, byte[] Detail, string MissingCharacters, byte[] Scroll, int ScrollWidth, string Name);
 
 // Final row-major 1bpp strips, rendered with the same 12px font as GBC.
 public static class FcTitleRenderer
@@ -26,10 +26,7 @@ public static class FcTitleRenderer
     public static FcTitleBitmap Render(string name)
     {
         name=string.IsNullOrWhiteSpace(name)?"UNKNOWN":name.Trim();
-        // The Unicode card entry holds 46 UTF-16 units; preview and raster must
-        // use that same stored name so a later scan/rewrite stays identical.
-        if(name.Length>46)name=name[..46];
-        if(name.Length>0&&char.IsHighSurrogate(name[^1]))name=name[..^1];
+        _=new UTF8Encoding(false,true).GetByteCount(name);
         lock(Gate)
         {
             if(Titles.TryGetValue(name,out var existing))return existing;
@@ -96,23 +93,35 @@ public static class FcTitleRenderer
                 foreach(var glyph in placed)Blit(target,glyph.Code,glyph.X,top,width);
                 return i;
             }
+            var allCodes=codes;
+            int scrollWidth=0;
+            foreach(int code in allCodes)scrollWidth=checked(scrollWidth+(code==32?4:code<128?6:12));
+            int scrollStride=(scrollWidth+7)/8;byte[] scrollPixels=new byte[scrollStride*12];
+            int scrollX=0;
+            foreach(int code in allCodes){var bits=Glyph(code);int advance=code==32?4:code<128?6:12;
+                for(int y=0;y<12;y++)for(int bit=0;bit<advance;bit++)if((bits[y*2+(bit>>3)]&(128>>(bit&7)))!=0)scrollPixels[y*scrollStride+((scrollX+bit)>>3)]|=(byte)(128>>((scrollX+bit)&7));
+                scrollX+=advance;
+            }
+            // Existing short strips remain usable by older gallery renderers.
+            string shortName=name.Length>46?name[..46]:name;if(char.IsHighSurrogate(shortName[^1]))shortName=shortName[..^1];
+            codes=shortName.EnumerateRunes().Select(r=>Rune.IsControl(r)?32:r.Value).ToArray();
             byte[] listPixels=new byte[ListBytes],detailPixels=new byte[DetailBytes];
             Line(listPixels,0,0,ListWidth,true,true);
             int second=Line(detailPixels,0,0,DetailWidth,false,false);
             Line(detailPixels,second,16,DetailWidth,false,true);
-            var result=new FcTitleBitmap(listPixels,detailPixels,string.Concat(codes.Where(Missing.Contains).Distinct().Select(char.ConvertFromUtf32)));
+            var result=new FcTitleBitmap(listPixels,detailPixels,string.Concat(allCodes.Where(Missing.Contains).Distinct().Select(char.ConvertFromUtf32)),scrollPixels,scrollWidth,name);
             if(Titles.Count>=512)Titles.Clear();
             Titles[name]=result;return result;
         }
     }
 
-    public static Bitmap Preview(byte[] pixels,int width,int height,int scale=4)
+    public static Bitmap Preview(byte[] pixels,int width,int height,int scale=4,int stride=RowBytes)
     {
         var image=new Bitmap(width*scale,height*scale);
         using var g=Graphics.FromImage(image);g.Clear(Color.White);
         using var ink=new SolidBrush(Color.Black);
         for(int y=0;y<height;y++)for(int x=0;x<width;x++)
-            if((pixels[y*RowBytes+(x>>3)]&(0x80>>(x&7)))!=0)g.FillRectangle(ink,x*scale,y*scale,scale,scale);
+            if((pixels[y*stride+(x>>3)]&(0x80>>(x&7)))!=0)g.FillRectangle(ink,x*scale,y*scale,scale,scale);
         return image;
     }
 }

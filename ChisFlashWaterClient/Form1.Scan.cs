@@ -16,6 +16,7 @@ public partial class Form1
     private const int SaveStatusChunkBytes = 0x2000;
 
     private sealed record ScanReadAttempt(WaterCartScanResult? Result, string FailureMessage);
+    private bool applyingSelectedConfiguration;
 
     private void RefreshPorts(bool allowFallbackSelection = true, bool resetAnalysisState = false)
     {
@@ -56,10 +57,6 @@ public partial class Form1
                 }
 
                 AddSerialPortEntry(portName, pnpDeviceId, kind, productName);
-                if (kind == ProgrammerKind.Unknown && UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface))
-                    AppendLog(Tf("log", "shared_usb_product_unconfirmed",
-                        "Shared USB ID detected ({0}), but no explicit WaterLink product identity was found. The device remains Unknown; no programmer commands will be sent.",
-                        string.IsNullOrWhiteSpace(productName) ? T("value", "programmer_unknown", "Unknown") : productName));
             }
         }
         catch (ManagementException ex)
@@ -98,14 +95,10 @@ public partial class Form1
 
     private async Task ScanSelectedPortAsync()
     {
-        if (IsMbc5EightMiBMode() && !isBusy && mbc5LayoutChanged && mbc5Layout.HasContent && MessageBox.Show(this,
-            Mbc5Text("rescan_confirm", "扫描会用卡带内容替换当前五槽工作区。继续？", "Scanning replaces the five-slot workspace with cartridge contents. Continue?"),
-            "MBC5 8M", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -114,7 +107,7 @@ public partial class Form1
             return;
         }
 
-        if (!TryGetSelectedKnownProgrammerKind(out _, out string programmerReason))
+        if (!TryGetSelectedProgrammerKind(out _, out string programmerReason))
         {
             AppendLog(programmerReason);
             return;
@@ -131,7 +124,7 @@ public partial class Form1
 
         try
         {
-            ScanReadAttempt attempt = await ReadScanResultAsync(activePortName);
+            ScanReadAttempt attempt = await ReadScanResultAsync(activePortName, analyzeConfiguration: false);
             if (attempt.Result is not WaterCartScanResult result)
             {
                 ResetCurrentCartAnalysisView();
@@ -140,7 +133,12 @@ public partial class Form1
                 return;
             }
 
-            if (await OpenDetectedFcCardAsync(result)) return;
+            if (IsFcWorkspaceActive)
+            {
+                UpdateFcHardwareInfo(result);
+                SetBusy(false, T("status", "scan_complete", "Read complete"));
+                return;
+            }
             ApplyScanResult(result);
             if (result.NoCartridgeDetected)
             {
@@ -242,7 +240,7 @@ public partial class Form1
                 AppendLog(Tf(
                     "log",
                     "selected_port_missing_after_refresh",
-                    "Port {0} is no longer available, and no compatible programmer is currently connected.",
+                    "Port {0} is no longer available, and no serial device is currently connected.",
                     previousPortName));
             }
 
@@ -275,7 +273,29 @@ public partial class Form1
         return string.Equals(ex.Message, T(section, key, fallback), StringComparison.Ordinal);
     }
 
-    private async Task<ScanReadAttempt> ReadScanResultAsync(string portName)
+    private async Task ScanSelectedConfigurationAsync()
+    {
+        if (GetSelectedBurnProfileMode() == BurnProfileMode.FcMbcx)
+        {
+            await ActivateFcWorkspaceAsync();
+            await fcWorkspace!.ScanAsync();
+            return;
+        }
+
+        string port = GetSelectedPortName() ?? throw new InvalidOperationException(T("log", "select_port_first", "Please select a serial port first."));
+        SetBusy(true, T("ui", "analyze_configuration", "分析配置"));
+        try
+        {
+            var attempt = await ReadScanResultAsync(port, analyzeConfiguration: true);
+            if (attempt.Result is null) throw new IOException(attempt.FailureMessage);
+            applyingSelectedConfiguration = true;
+            try { ApplyScanResult(attempt.Result); }
+            finally { applyingSelectedConfiguration = false; }
+        }
+        finally { SetBusy(false, T("status", "ready", "Ready")); }
+    }
+
+    private async Task<ScanReadAttempt> ReadScanResultAsync(string portName, bool analyzeConfiguration = true)
     {
         ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
         BeggarCartMode beggarCartMode = GetSelectedBeggarCartMode();
@@ -297,7 +317,10 @@ public partial class Form1
                             "beggar_scan_mode_gb",
                             "Beggar cart mode is set to GB. Using the GBC/MAX probe."));
 
-                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result, scanContent: burnProfileMode is BurnProfileMode.BeggarMaxSram or BurnProfileMode.FcMbcx))
+                        // The outer Analyze Cart action is intentionally NOR-only.
+                        // MIX metadata is read by the dedicated MIX workspace
+                        // command after the user selects MIX.
+                        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out result, scanContent: analyzeConfiguration))
                         {
                             return new ScanReadAttempt(
                                 null,
@@ -313,9 +336,9 @@ public partial class Form1
                             "log",
                             "beggar_scan_mode_gba",
                             "Beggar cart mode is set to GBA. Using the legacy NOR scan."));
-                        bool isChm1 = ReadDeclaredMagicSupport(protocol, programmerKind);
+                        result = WaterCartScanner.ScanLegacyBeggar(protocol, AppendLog, scanContent: analyzeConfiguration, scanGameHeaders: !analyzeConfiguration);
+                        bool isChm1 = burnProfileMode != BurnProfileMode.ChisFlash10 && analyzeConfiguration && !IsSingleGameOnlyGbaScan(result) && ReadDeclaredMagicSupport(protocol, programmerKind);
                         if (isChm1) AppendLog(T("log", "chm1_detected", "Standalone 01G/02G fragment management cartridge detected."));
-                        result = WaterCartScanner.ScanLegacyBeggar(protocol, AppendLog);
                         result.IsChm1 = isChm1;
                         if (result.UsesChm1Layout)
                             result.MenuConfig.Status.ExplicitSaveAreaAddress = Chm1Layout.SaveAreaOffset;
@@ -326,15 +349,18 @@ public partial class Form1
                     result = WaterCartScanner.Scan(
                         protocol,
                         AppendLog,
-                        useWaterLinkMultiNor: burnProfileMode == BurnProfileMode.WaterLinkMultiNor);
+                        useWaterLinkMultiNor: burnProfileMode == BurnProfileMode.WaterLinkMultiNor,
+                        scanContent: analyzeConfiguration,
+                        scanGameHeaders: !analyzeConfiguration && beggarCartMode == BeggarCartMode.Gba);
                 }
 
-                if (burnProfileMode == BurnProfileMode.Mbc5EightMiB)
+                if (analyzeConfiguration && burnProfileMode is (BurnProfileMode.Mbc5EightMiB or BurnProfileMode.GbcSixteenInOne))
                 {
-                    if (result.IsBeggarMaxGbcMode && result.Geometry.DeviceSizeBytes == Mbc5EightMiBLayout.CapacityBytes)
-                        result.Mbc5EightMiBRomImage = ReadMbc5ImageFromDevice(protocol);
+                    int fixedCapacity = burnProfileMode == BurnProfileMode.GbcSixteenInOne ? 0x2000000 : 0x800000;
+                    if (result.IsBeggarMaxGbcMode && result.Geometry.DeviceSizeBytes == fixedCapacity)
+                        result.Mbc5FixedSlotRomImage = ReadMbc5ImageFromDevice(protocol, fixedCapacity);
                 }
-                else if ((!result.IsBeggarMaxGbcMode || burnProfileMode == BurnProfileMode.BeggarMaxSram) && !result.IsFcMbcxContent && !result.IsMdMbcxContent)
+                else if (analyzeConfiguration && !IsSingleGameOnlyGbaScan(result) && (!result.IsBeggarMaxGbcMode || burnProfileMode == BurnProfileMode.BeggarMaxSram) && !result.IsFcMbcxContent && !result.IsMdMbcxContent)
                 {
                     PopulateSavePresenceForScan(protocol, result, programmerKind);
                     PopulateMenuBackgroundPreviewForScan(protocol, result, programmerKind);
@@ -1150,8 +1176,8 @@ public partial class Form1
             return true;
         }
 
-        // Keep unmatched COM devices selectable, but classify them as Unknown so they do not
-        // silently fall back to WaterLink or Beggar behavior.
+        // Keep unmatched COM devices selectable. The selected GBA/GB mode
+        // resolves the command family later; identity alone never blocks use.
         return true;
     }
 
@@ -1224,7 +1250,7 @@ public partial class Form1
                 continue;
             }
 
-            if (entry.Kind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy)
+            if (entry.Kind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy or ProgrammerKind.Unknown)
             {
                 comboBoxPorts.SelectedIndex = i;
                 return true;
@@ -1241,7 +1267,7 @@ public partial class Form1
     {
         comboBoxPorts.SelectedIndex = -1;
 
-        bool previousWasRecognized = previousProgrammerKind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy;
+        bool previousWasRecognized = previousProgrammerKind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy or ProgrammerKind.Unknown;
 
         if (previousWasRecognized)
         {
@@ -1301,6 +1327,14 @@ public partial class Form1
         return entry.Kind;
     }
 
+    // USB identity is only a hint. Unknown COM ports remain usable and follow
+    // the command family selected by the GBA/GB controls.
+    private static bool IsBeggarCompatibleProgrammer(ProgrammerKind? kind) =>
+        kind is ProgrammerKind.BeggarLegacy or ProgrammerKind.Unknown;
+
+    private bool IsBeggarCompatibleSelectedProgrammer() =>
+        IsBeggarCompatibleProgrammer(GetSelectedProgrammerKind());
+
     private string GetSelectedProgrammerDisplayName()
     {
         ProgrammerKind? kind = GetSelectedProgrammerKind();
@@ -1319,12 +1353,17 @@ public partial class Form1
         BurnProfileMode defaultMode = GetDefaultBurnProfileMode(programmerKind);
         BeggarCartMode beggarCartMode = GetSelectedBeggarCartMode();
 
-        burnProfileModeOptions = programmerKind is null or ProgrammerKind.Unknown ||
-            programmerKind != ProgrammerKind.WaterLink && beggarCartMode == BeggarCartMode.Gb
+        burnProfileModeOptions = programmerKind != ProgrammerKind.WaterLink && beggarCartMode == BeggarCartMode.Gb
             ? GetGbcProfileModes(GetGbcProfileCapacity()).Select(mode => new BurnProfileModeOption(GetBurnProfileModeDisplayName(mode), mode)).ToList()
             : programmerKind switch
             {
                 ProgrammerKind.BeggarLegacy =>
+                [
+                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
+                ],
+                ProgrammerKind.Unknown =>
                 [
                     new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
                     new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
@@ -1335,30 +1374,43 @@ public partial class Form1
                     new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
                     new BurnProfileModeOption(T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"), BurnProfileMode.WaterLinkMultiNor),
                 ],
-                _ => [new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram)],
+                _ =>
+                [
+                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
+                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
+                ],
             };
 
         burnProfileModeSelectionInitialized = false;
-        if (programmerKind == ProgrammerKind.BeggarLegacy && beggarCartMode == BeggarCartMode.Gba && currentScanResult?.IsChm1 == true)
+        if (beggarCartMode == BeggarCartMode.Gba)
+            burnProfileModeOptions.AddRange(GetGbaSingleProfileOptions());
+        if (IsBeggarCompatibleProgrammer(programmerKind) && beggarCartMode == BeggarCartMode.Gba && currentScanResult?.IsChm1 == true)
         {
             burnProfileModeOptions.RemoveAll(option => UsesWaterLinkTargetMode(option.Mode));
             burnProfileModeOptions.Insert(0, new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1), BurnProfileMode.Chm1));
             burnProfileModeOptions.Insert(1, new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1NoBattery), BurnProfileMode.Chm1NoBattery));
         }
+        if (IsGbaSingleGameOnlyHardware())
+        {
+            burnProfileModeOptions = GetGbaSingleProfileOptions().ToList();
+            if (!IsGbaSingleProfile(preferredMode)) preferredMode = BurnProfileMode.GbaSingle;
+        }
         comboBoxBurnProfileMode.DataSource = null;
-        comboBoxBurnProfileMode.DataSource = burnProfileModeOptions.ToList();
+        BindBurnProfileOptions();
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.FirstOrDefault(option => option.Mode == preferredMode)
             ?? burnProfileModeOptions.FirstOrDefault(option => option.Mode == defaultMode)
             ?? burnProfileModeOptions.FirstOrDefault();
         burnProfileModeSelectionInitialized = true;
         comboBoxBurnProfileMode.Enabled = !isBusy && burnProfileModeOptions.Count > 0;
-        if (IsMbc5EightMiBMode()) RefreshMbc5Grid();
-        else if (mbc5ProfileActive)
+        if (IsMbc5FixedSlotMode()) RefreshMbc5Grid();
+        else if (mbc5ActiveProfile is not null)
         {
             HandleMbc5ProfileSelection();
             RefreshWorkspaceGrid();
         }
         ApplyGbcProfileWorkspace();
+        ApplyChisFlash10Workspace();
     }
 
     private void AdjustPortDropDownWidth()
@@ -1399,11 +1451,14 @@ public partial class Form1
             return;
         }
 
+        // 新扫描结果按实际菜单重新建立工作区；同一结果的界面刷新保留草稿。
+        if (!ReferenceEquals(currentScanResult, result)) ResetGbaMenuDraft();
         RememberGbcProfileCapacity(result);
-        RefreshBurnProfileModeOptions(GetDetectedBurnProfileMode(result, GetSelectedProgrammerKind(), GetSelectedBurnProfileMode()));
         lastScannedPortName = GetSelectedPortName() ?? string.Empty;
         currentScanResult = result;
-        if (IsMbc5EightMiBMode() && result.Mbc5EightMiBRomImage is { } mbc5Image && !ReferenceEquals(mbc5LoadedScanImage, mbc5Image))
+        RefreshBurnProfileModeOptions(applyingSelectedConfiguration ? GetSelectedBurnProfileMode() :
+            GetDetectedBurnProfileMode(result, GetSelectedProgrammerKind(), GetSelectedBurnProfileMode()));
+        if (IsMbc5FixedSlotMode() && (result.Mbc5FixedSlotRomImage ?? result.Mbc5EightMiBRomImage) is { } mbc5Image && !ReferenceEquals(mbc5LoadedScanImage, mbc5Image))
         {
             try { LoadMbc5ScanImage(mbc5Image); mbc5LoadedScanImage = mbc5Image; }
             catch { currentScanResult = null; lastScannedPortName = string.Empty; throw; }
@@ -1455,20 +1510,43 @@ public partial class Form1
         RebuildWorkspaceRows();
         UpdateMenuBackgroundPreview(result);
 
+        if (result.IsNorProbeOnly)
+        {
+            labelScanMethodValue.Text = GetNorProbeScanMethodText(result);
+            labelMenuConfigValue.Text = T("ui", "configuration_not_read", "Configuration not analyzed");
+            labelMenuItemCountValue.Text = labelMenuTitleValue.Text = T("ui", "not_read", "Not Read");
+            if (!result.HasGbaHeaderScan) labelRomCountValue.Text = T("ui", "not_read", "Not Read");
+        }
+
         if (result.IsWriteProtected && !string.IsNullOrWhiteSpace(result.WriteProtectionReason))
         {
             AppendLog(result.WriteProtectionReason);
         }
 
         UpdateActionButtons(isBusy);
+        if (GetSelectedBeggarCartMode() == BeggarCartMode.Gba && IsSingleGameOnlyGbaScan(result))
+        {
+            labelScanMethodValue.Text = GbaCardText("single_header_scan", "NOR ID/CFI＋地址0单ROM头", "NOR ID/CFI + single ROM header at 0");
+            labelMenuConfigValue.Text = GbaCardText("single_no_config", "单卡，不适用", "Single game; not applicable");
+            labelMenuItemCountValue.Text = labelMenuTitleValue.Text = "—";
+        }
+        if (result.IsNorProbeOnly) labelScanMethodValue.Text = GetNorProbeScanMethodText(result);
         if (!appendUpgradeHint)
         {
             return;
         }
 
-        if (IsMbc5EightMiBMode()) return;
+        if (result.IsNorProbeOnly)
+        {
+            AppendLog(result.HasGbaHeaderScan
+                ? GbaCardText("header_scan_configuration_hint", "NOR信息及4MiB游戏头扫描完成。菜单目录和存档信息请使用“卡带 → 分析配置”读取。", "NOR information and 4 MiB headers read. Use Cartridge > Analyze Configuration for menu and save metadata.")
+                : T("log", "nor_probe_configuration_hint", "NOR information read. Use Cartridge > Analyze Configuration to read the selected multicart mode."));
+            return;
+        }
 
-        if (GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy)
+        if (IsMbc5FixedSlotMode()) return;
+
+        if (IsBeggarCompatibleSelectedProgrammer())
         {
             AppendLog(T(
                 "log",
@@ -1576,6 +1654,10 @@ public partial class Form1
         }
     }
 
+    private string GetNorProbeScanMethodText(WaterCartScanResult result) => result.HasGbaHeaderScan
+        ? GbaCardText("nor_headers_probe", "NOR ID/CFI＋4MiB游戏头", "NOR ID/CFI + 4 MiB headers")
+        : T("ui", "scan_method_nor_probe", "NOR ID / CFI");
+
     private string BuildMenuConfigValue(WaterCartScanResult result)
     {
         if (result.IsBeggarMaxGbcMode)
@@ -1644,8 +1726,9 @@ public partial class Form1
 
     private void UpdateSelectionCommandStates()
     {
+        if (IsChisFlash10Mode()) { UpdateChisFlash10ActionButtons(isBusy); return; }
         if (IsGbcRawImageMode() || IsGbcProfileUnselected()) { UpdateGbcProfileActionButtons(isBusy); return; }
-        if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(isBusy); return; }
+        if (IsMbc5FixedSlotMode()) { UpdateMbc5ActionButtons(isBusy); return; }
         _ = TryGetSelectedEntry(out WaterCartEntry? selectedEntry);
         bool hasActiveScan = HasActiveScanResult();
         bool scanCapacityInvalid = IsCurrentScanCapacityInvalid();

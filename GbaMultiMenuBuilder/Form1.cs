@@ -14,7 +14,7 @@ public partial class Form1 : DpiAwareForm
 {
     private const string SequenceColumnName = "sequence";
     private const string DefaultOutputFileName = "LK_MULTIMENU_OUTPUT.gba";
-    private const string AppVersion = "v0.92.3";
+    private static readonly string AppVersion = "v" + typeof(Form1).Assembly.GetName().Version!.ToString(3);
     private const string AppAuthor = "chisflash@mori";
     private const long BytesPerMiB = 1024L * 1024L;
     private static readonly Size DefaultWindowSize = new(1184, 761);
@@ -1507,7 +1507,6 @@ private void BindUiDataSources()
             return
             [
                 Path.Combine(AppContext.BaseDirectory, "Assets", "universal_menu.gba"),
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba")),
             ];
         }
 
@@ -1516,7 +1515,6 @@ private void BindUiDataSources()
             return
             [
                 Path.Combine(AppContext.BaseDirectory, "Assets", "simplified_ns_menu.gba"),
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba")),
             ];
         }
 
@@ -1525,15 +1523,12 @@ private void BindUiDataSources()
             return
             [
                 Path.Combine(AppContext.BaseDirectory, "Assets", "lk_multimenu_wl.gba"),
-                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba")),
             ];
         }
 
         return
         [
             Path.Combine(AppContext.BaseDirectory, "Assets", "lk_multimenu.gba"),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_GUI-main\lk_multimenu.gba")),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba")),
         ];
     }
 

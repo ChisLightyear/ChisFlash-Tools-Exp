@@ -26,7 +26,7 @@ public partial class Form1
 
     private bool IsSelectedBeggarProgrammer()
     {
-        return GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy;
+        return IsBeggarCompatibleSelectedProgrammer();
     }
 
     private bool HasActiveScanResult()
@@ -111,17 +111,8 @@ public partial class Form1
 
     private bool EnsureSelectedProgrammerSupportsMagicUpgradeOrInstall(out string reason)
     {
-        if (!TryGetSelectedKnownProgrammerKind(out ProgrammerKind programmerKind, out reason))
+        if (!TryGetSelectedProgrammerKind(out ProgrammerKind programmerKind, out reason))
         {
-            return false;
-        }
-
-        if (programmerKind == ProgrammerKind.Unknown)
-        {
-            reason = T(
-                "error",
-                "unknown_programmer_selected",
-                "The selected serial port is not a recognized WaterLink or Beggar device.");
             return false;
         }
 
@@ -131,7 +122,7 @@ public partial class Form1
 
     private bool EnsureSelectedProgrammerSupportsCurrentCartWrite(out string reason)
     {
-        if (!TryGetSelectedKnownProgrammerKind(out _, out reason))
+        if (!TryGetSelectedProgrammerKind(out _, out reason))
         {
             return false;
         }
@@ -146,7 +137,7 @@ public partial class Form1
             return false;
         }
 
-        if (!TryGetSelectedKnownProgrammerKind(out _, out reason))
+        if (!TryGetSelectedProgrammerKind(out _, out reason))
         {
             return false;
         }
@@ -170,7 +161,7 @@ public partial class Form1
             return false;
         }
 
-        if (!TryGetSelectedKnownProgrammerKind(out _, out reason))
+        if (!TryGetSelectedProgrammerKind(out _, out reason))
         {
             return false;
         }
@@ -430,6 +421,7 @@ public partial class Form1
 
     private bool IsWorkspaceModificationLocked()
     {
+        if (IsGbaConversionDraft()) return false;
         return !HasActiveScanResult() || currentScanResult is null ||
                currentScanResult.NoCartridgeDetected || currentScanResult.Geometry.DeviceSizeBytes <= 0;
     }
@@ -442,7 +434,7 @@ public partial class Form1
             return T(
                 "log",
                 "select_port_first",
-                "Please select a compatible programmer port first.");
+                "Please select a serial port first.");
         }
 
         if (!HasActiveScanResult())
@@ -711,7 +703,7 @@ public partial class Form1
         entry = null;
         saveSizeBytes = 0;
 
-        if (GetSelectedProgrammerKind() != ProgrammerKind.BeggarLegacy)
+        if (!IsBeggarCompatibleSelectedProgrammer())
         {
             reason = T(
                 "error",
@@ -933,8 +925,11 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        RefreshGbaCardModeUi();
+        if (IsGbaSingleCardMode()) { UpdateGbaSingleButtons(busy); return; }
+        if (IsChisFlash10Mode()) { UpdateChisFlash10ActionButtons(busy); return; }
         if (IsGbcRawImageMode() || IsGbcProfileUnselected()) { UpdateGbcProfileActionButtons(busy); return; }
-        if (IsMbc5EightMiBMode()) { UpdateMbc5ActionButtons(busy); return; }
+        if (IsMbc5FixedSlotMode()) { UpdateMbc5ActionButtons(busy); return; }
         if (IsFcWorkspaceActive)
         {
             UpdateFcActionButtons(busy);
@@ -944,6 +939,8 @@ public partial class Form1
         menuRom.Enabled=true;
         if (menuFcTools is not null) menuFcTools.Visible = false;
         menuCartridge.Enabled = true;
+        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
+        menuFcScan.Enabled = !busy;
         menuSave.Enabled = true;
         bool workspaceUiBusy = busy;
         bool hasMdImports = pendingImportItems.Any(item=>item.MdRom is not null);
@@ -982,8 +979,7 @@ public partial class Form1
         string capacityExceededStatusText = T("status", "workspace_capacity_exceeded", "Current list exceeds cart capacity!");
 
         buttonScan.Enabled = !workspaceUiBusy &&
-            !string.IsNullOrWhiteSpace(GetSelectedPortName()) &&
-            TryGetSelectedKnownProgrammerKind(out _, out _);
+            !string.IsNullOrWhiteSpace(GetSelectedPortName());
         menuRefreshPorts.Enabled = !workspaceUiBusy;
         menuPendingGbaCovers.Enabled = CanEditPendingGbaCovers();
         menuScan.Enabled = buttonScan.Enabled;
@@ -1054,6 +1050,7 @@ public partial class Form1
         dataGridViewRoms.Enabled = (hasCachedScan || hasQueueItems) && !scanCapacityInvalid && !workspaceUiBusy;
         groupBoxList.Enabled = hasCachedScan || burnProfileModeOptions.Count > 0;
 
+        RefreshGbaCardModeUi();
         if (!workspaceUiBusy && !isAnalyzingQueueImports)
         {
             if (scanCapacityInvalid)

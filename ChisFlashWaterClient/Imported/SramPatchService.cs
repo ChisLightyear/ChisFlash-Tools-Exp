@@ -265,6 +265,7 @@ public sealed class SramPatchService
         }
 
         var useMask = markerMask is not null && markerMask.Length == marker.Length;
+        if (!useMask) return data.IndexOf(marker);
         for (var start = 0; start <= data.Length - marker.Length; start++)
         {
             var matched = true;
@@ -319,9 +320,7 @@ public sealed class SramPatchService
         public bool TryMatchAppliedPatch(ReadOnlySpan<byte> romData, out string identifier)
         {
             if (!TryMatchIdentifier(romData, out identifier))
-            {
-                return false;
-            }
+                identifier = _identifierPatterns[0].Identifier;
 
             var missingOriginalMarker = false;
             foreach (var patch in patches)

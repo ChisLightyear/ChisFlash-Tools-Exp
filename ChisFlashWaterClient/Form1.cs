@@ -48,6 +48,12 @@ public partial class Form1 : DpiAwareForm
         MbcxRtcEightMiB,
         MbcxRtcThirtyTwoMiB,
         GbcSixteenInOne,
+        ChisFlash10,
+        GbaSingle,
+        ChisFlashFram10,
+        ChisFlashFlash11,
+        ChisFlashFlash11Rtc,
+        ChisFlashFram12,
     }
 
     private enum GbcMenuLanguageMode
@@ -104,7 +110,7 @@ public partial class Form1 : DpiAwareForm
         public BatterylessPatchInspection? PreparedBatterylessInspection { get; init; }
     }
 
-    private sealed record BurnProfileModeOption(string Name, BurnProfileMode Mode)
+    private sealed record BurnProfileModeOption(string Name, BurnProfileMode Mode, bool IsGroup = false, bool IsSelectable = true)
     {
         public override string ToString() => Name;
     }
@@ -401,6 +407,7 @@ public partial class Form1 : DpiAwareForm
         WaterCartScanResult? scanResult = null,
         GbaMenuSelection? selectionOverride = null)
     {
+        if (SupportsGbaCardMode()) return gbaDraftMenu is not null;
         WaterCartScanResult? effectiveScan = scanResult ?? currentScanResult;
         if (effectiveScan?.IsBeggarMaxGbcMode == true ||
             (selectionOverride is null && IsGbcWorkspaceMode()))
@@ -426,6 +433,12 @@ public partial class Form1 : DpiAwareForm
         bool usesWlLayout,
         GbaMenuSelection selection,
         out string sourcePath)
+    {
+        if (SupportsGbaCardMode() && gbaDraftMenu is not null) { sourcePath = gbaDraftMenuName; return gbaDraftMenu.ToArray(); }
+        return LoadBundledGbaMenuRom(usesWlLayout, selection, out sourcePath);
+    }
+
+    private byte[] LoadBundledGbaMenuRom(bool usesWlLayout, GbaMenuSelection selection, out string sourcePath)
     {
         if (selection == GbaMenuSelection.Universal)
         {
@@ -503,19 +516,20 @@ public partial class Form1 : DpiAwareForm
 
     private void RefreshGbcFontSelectorVisibility()
     {
-        bool imageProfile = IsGbcRawImageMode() || IsGbcProfileUnselected();
-        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
+        if (pictureBoxMenuBackgroundPreview is not null) pictureBoxMenuBackgroundPreview.Visible = !IsChisFlash10Mode();
+        bool imageProfile = IsGbcRawImageMode() || IsGbcProfileUnselected() || IsGbaSingleCardMode();
+        bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
         if (gbcMenuOptions is not null) gbcMenuOptions.Visible = visible;
         labelGbcMenuLanguageCaption.Visible = visible;
         comboBoxGbcMenuLanguage.Visible = visible;
         comboBoxGbcMenuLanguage.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
         if (checkBoxWaitcntPatch is not null)
         {
-            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
-            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile && !isBusy && !isAnalyzingQueueImports;
+            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
+            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile && !isBusy && !isAnalyzingQueueImports;
         }
 
-        bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5EightMiBMode() && !imageProfile;
+        bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
         if (gbaMenuOptions is not null) gbaMenuOptions.Visible = gbaVisible;
         if (labelGbaMenuCaption is not null)
         {
@@ -529,6 +543,7 @@ public partial class Form1 : DpiAwareForm
             comboBoxGbaMenu.Enabled = gbaVisible && !isBusy && !isAnalyzingQueueImports;
         }
         UpdateAdaptiveLayout();
+        RefreshGbaCardModeUi();
     }
 
     private string FormatSectorSummary(NorGeometryInfo geometry)
@@ -621,7 +636,9 @@ public partial class Form1 : DpiAwareForm
 
         return string.IsNullOrWhiteSpace(info.Identifier)
             ? baseText
-            : $"{baseText} ({info.Identifier})";
+            : info.IsSramPatched
+                ? $"{baseText} ({T("value", "save_converted_from", "converted from")} {info.Identifier})"
+                : $"{baseText} ({info.Identifier})";
     }
 
     private static bool HasAppliedSramPatch(string appliedPatchIdentifier) =>
@@ -629,6 +646,8 @@ public partial class Form1 : DpiAwareForm
 
     private static int? ResolveDetectedSaveSizeBytes(PendingRomImportItem item)
     {
+        if (item.SaveTypeInfo.SizeBytes.HasValue) return item.SaveTypeInfo.SizeBytes;
+        if (item.SaveTypeInfo.CodeEvidence == "FLASH_BANK_AND_ID" && string.IsNullOrEmpty(item.SaveTypeInfo.Identifier)) return null;
         int? identifierSizeBytes = ResolveDetectedSaveSizeBytes(item.AppliedSramPatchIdentifier) ??
                                    ResolveDetectedSaveSizeBytes(item.SramPatchTargetIdentifier) ??
                                    ResolveDetectedSaveSizeBytes(item.SaveTypeInfo.Identifier);
@@ -727,6 +746,7 @@ public partial class Form1 : DpiAwareForm
         string appliedPatchIdentifier,
         BatterylessPatchInspection batterylessInspection)
     {
+        if (IsChisFlash10Mode()) return false;
         if (HasPreparedSavePatch(patchTargetIdentifier, appliedPatchIdentifier, batterylessInspection))
         {
             return false;
@@ -994,7 +1014,7 @@ public partial class Form1 : DpiAwareForm
         entry = null;
         saveSizeBytes = 0;
 
-        if (GetSelectedProgrammerKind() != ProgrammerKind.BeggarLegacy ||
+        if (!IsBeggarCompatibleSelectedProgrammer() ||
             currentScanResult is null ||
             currentScanResult.IsChm1 ||
             !currentScanResult.MenuConfig.IsDetected ||
@@ -1215,12 +1235,18 @@ public partial class Form1 : DpiAwareForm
         ProgrammerKind? programmerKind,
         BurnProfileMode fallbackMode)
     {
+        if (GetSelectedBeggarCartMode() == BeggarCartMode.Gba && IsSingleGameOnlyGbaScan(scanResult))
+            return IsGbaSingleProfile(fallbackMode) ? fallbackMode : BurnProfileMode.GbaSingle;
+        if (fallbackMode == BurnProfileMode.GbaSingle) fallbackMode = GetDefaultBurnProfileMode(programmerKind);
+        if (fallbackMode == BurnProfileMode.ChisFlash10 &&
+            IsBeggarCompatibleProgrammer(programmerKind) && GetSelectedBeggarCartMode() == BeggarCartMode.Gba)
+            return fallbackMode;
         if (programmerKind != ProgrammerKind.WaterLink &&
             (GetSelectedBeggarCartMode() == BeggarCartMode.Gb || scanResult?.IsBeggarMaxGbcMode == true))
             return GetGbcProfileModes(scanResult?.Geometry.DeviceSizeBytes > 0
                 ? scanResult.Geometry.DeviceSizeBytes : GetGbcProfileCapacity()).Contains(fallbackMode)
                 ? fallbackMode : BurnProfileMode.GbcUnselected;
-        if (programmerKind == ProgrammerKind.BeggarLegacy && scanResult?.IsChm1 == true &&
+        if (IsBeggarCompatibleProgrammer(programmerKind) && scanResult?.IsChm1 == true &&
             (scanResult.WlMapping.IsDetected || !scanResult.MenuConfig.IsDetected || UsesChm1Mode(fallbackMode)))
             return scanResult.MenuConfig.IsDetected
                 ? scanResult.MenuConfig.Status.BatteryPresent ? BurnProfileMode.Chm1 : BurnProfileMode.Chm1NoBattery
@@ -1239,19 +1265,19 @@ public partial class Form1 : DpiAwareForm
                 : BurnProfileMode.WaterLinkSram;
         }
 
-        if (programmerKind == ProgrammerKind.BeggarLegacy &&
+        if (IsBeggarCompatibleProgrammer(programmerKind) &&
             scanResult?.IsBeggarMaxGbcMode == true)
         {
             return BurnProfileMode.BeggarMaxSram;
         }
 
-        if (programmerKind == ProgrammerKind.BeggarLegacy &&
+        if (IsBeggarCompatibleProgrammer(programmerKind) &&
             UsesWaterLinkTargetMode(fallbackMode))
         {
             return fallbackMode;
         }
 
-        if (programmerKind == ProgrammerKind.BeggarLegacy &&
+        if (IsBeggarCompatibleProgrammer(programmerKind) &&
             scanResult?.MenuConfig.IsDetected == true)
         {
             return scanResult.MenuConfig.Status.BatteryPresent
@@ -1271,7 +1297,7 @@ public partial class Form1 : DpiAwareForm
 
     private BurnProfileMode GetSelectedBurnProfileMode()
     {
-        if (comboBoxBurnProfileMode?.SelectedItem is BurnProfileModeOption option)
+        if (comboBoxBurnProfileMode?.SelectedItem is BurnProfileModeOption { IsSelectable: true } option)
         {
             return option.Mode;
         }
@@ -1290,7 +1316,7 @@ public partial class Form1 : DpiAwareForm
             : T("ui", "cart_mode_gba", "GBA");
 
     private bool IsGbcWorkspaceMode() =>
-        IsMbc5EightMiBMode() ||
+        IsMbc5FixedSlotMode() ||
         GetSelectedBeggarCartMode() == BeggarCartMode.Gb ||
         currentScanResult?.IsBeggarMaxGbcMode == true ||
         GetSelectedBurnProfileMode() == BurnProfileMode.BeggarMaxSram;
@@ -1302,7 +1328,7 @@ public partial class Form1 : DpiAwareForm
 
     private BurnProfileMode GetDefaultBurnProfileMode(ProgrammerKind? programmerKind)
     {
-        if (programmerKind == ProgrammerKind.BeggarLegacy)
+        if (IsBeggarCompatibleProgrammer(programmerKind))
         {
             return GetSelectedBeggarCartMode() == BeggarCartMode.Gb
                 ? BurnProfileMode.GbcUnselected
@@ -1320,7 +1346,10 @@ public partial class Form1 : DpiAwareForm
     private void UpdateProgrammerModeSelectorUi(bool allowInteraction)
     {
         ProgrammerKind? programmerKind = GetSelectedProgrammerKind();
-        bool allowBeggarMode = allowInteraction && programmerKind == ProgrammerKind.BeggarLegacy;
+        // GBA/GB is a user-selected command mode. It must remain available for
+        // Unknown ports (and before identity classification), while WaterLink
+        // keeps its fixed GBA behavior.
+        bool allowBeggarMode = allowInteraction && programmerKind != ProgrammerKind.WaterLink;
 
         if (programmerKind == ProgrammerKind.WaterLink)
         {
@@ -1348,36 +1377,30 @@ public partial class Form1 : DpiAwareForm
         panelBeggarCartMode.Enabled = allowBeggarMode;
     }
 
-    private bool TryGetSelectedKnownProgrammerKind(out ProgrammerKind programmerKind, out string reason)
+    private bool TryGetSelectedProgrammerKind(out ProgrammerKind programmerKind, out string reason)
     {
         programmerKind = ProgrammerKind.Unknown;
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            reason = T("log", "select_port_first", "Please select a compatible programmer port first.");
+            reason = T("log", "select_port_first", "Please select a serial port first.");
             return false;
         }
 
-        ProgrammerKind? selectedKind = GetSelectedProgrammerKind();
-        if (selectedKind is not ProgrammerKind.WaterLink and not ProgrammerKind.BeggarLegacy)
-        {
-            reason = Tf(
-                "error",
-                "unknown_programmer_selected",
-                "The selected serial port {0} is not a recognized WaterLink or Beggar device.",
-                portName);
-            return false;
-        }
-
-        programmerKind = selectedKind.Value;
+        // Port identity is informational only. The selected GBA/GB controls
+        // choose the legacy command family; an explicitly identified
+        // WaterLink keeps its own command family.
+        programmerKind = GetSelectedProgrammerKind() == ProgrammerKind.WaterLink
+            ? ProgrammerKind.WaterLink
+            : ProgrammerKind.BeggarLegacy;
         reason = string.Empty;
         return true;
     }
 
     private ProgrammerKind GetRequiredSelectedProgrammerKind()
     {
-        if (!TryGetSelectedKnownProgrammerKind(out ProgrammerKind programmerKind, out string reason))
+        if (!TryGetSelectedProgrammerKind(out ProgrammerKind programmerKind, out string reason))
         {
             throw new InvalidOperationException(reason);
         }
@@ -1394,15 +1417,21 @@ public partial class Form1 : DpiAwareForm
     private string GetBurnProfileModeDisplayName(BurnProfileMode mode) =>
         mode switch
         {
+            BurnProfileMode.GbaSingle => GbaCardText("single_profile", "单卡 · 32 MiB", "Single game · 32 MiB"),
+            BurnProfileMode.ChisFlashFram10 => "ChisFlash 1.0 · FRAM",
+            BurnProfileMode.ChisFlashFlash11 => "ChisFlash 1.1 · FLASH · 无时钟",
+            BurnProfileMode.ChisFlashFlash11Rtc => "ChisFlash 1.1 · FLASH · 时钟",
+            BurnProfileMode.ChisFlashFram12 => "ChisFlash 1.2 · FRAM · 震动",
+            BurnProfileMode.ChisFlash10 => T("value", "burn_profile_chisflash10", "ChisFlash 1.0V · 32MB"),
             BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"),
             BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
             BurnProfileMode.BeggarWithBattery => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
-            BurnProfileMode.BeggarMaxSram => T("gbc_profile", "free", "Free multicart 32M · GB/GBC"),
+            BurnProfileMode.BeggarMaxSram => T("gbc_profile", "free", "Free multicart · MAX/MBCX 32M"),
             BurnProfileMode.GbcUnselected => T("gbc_profile", GetGbcProfileCapacity() is null ? "pending" : "choose", GetGbcProfileCapacity() is null ? "Capacity not read · choose cartridge type" : "Choose cartridge type"),
             BurnProfileMode.Mbc5EightMiB => "MBC5 8M · 3in1 / 4in1",
             BurnProfileMode.MbcxRtcEightMiB => "MBCX RTC 8M",
             BurnProfileMode.MbcxRtcThirtyTwoMiB => "MBCX RTC 32M",
-            BurnProfileMode.GbcSixteenInOne => "MAX 32M · 16in1",
+            BurnProfileMode.GbcSixteenInOne => "MBC5 MAX 32M · 16in1",
             BurnProfileMode.FcMbcx => T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"),
             BurnProfileMode.Chm1 => T("value", "burn_profile_chm1", "01G/02G Fragment Management (Battery / FRAM)"),
             BurnProfileMode.Chm1NoBattery => T("value", "burn_profile_chm1_no_battery", "01G/02G Fragment Management (Batteryless)"),

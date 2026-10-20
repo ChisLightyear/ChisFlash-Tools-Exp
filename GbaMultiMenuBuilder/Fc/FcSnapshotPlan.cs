@@ -2,8 +2,8 @@ namespace GbaMultiMenuBuilder.Fc;
 
 public sealed record FcSnapshotPlan(int TotalBytes,int WritableChrBytes,int SpillBase)
 {
-    public const uint Layout=0x202f7ea8;
-    public const int FixedBytes=15189,PrimaryBytes=131072,ChrCapacity=524288;
+    public const uint Layout=0xc5083224;
+    public const int FixedBytes=15182,PrimaryBytes=131072,ChrCapacity=524288;
     public bool Enabled=>TotalBytes!=0;
     public int SpillBytes=>Math.Max(0,TotalBytes-PrimaryBytes);
     public static FcSnapshotPlan Create(int mapper,int chrRom,int chrRam,int workRam)

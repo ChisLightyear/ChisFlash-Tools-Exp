@@ -131,7 +131,9 @@ public static class WaterCartScanner
     public static WaterCartScanResult Scan(
         WaterDeviceProtocol device,
         Action<string>? log = null,
-        bool useWaterLinkMultiNor = false)
+        bool useWaterLinkMultiNor = false,
+        bool scanContent = true,
+        bool scanGameHeaders = false)
     {
         if (!device.TryReadLegacyNorId(out byte[] norId, 1500))
         {
@@ -164,7 +166,7 @@ public static class WaterCartScanner
         {
             ApplyWaterLinkMultiNorGeometry(geometry, runtimeStatus, log);
         }
-        LogWaterDirectAddressDiagnostics(device, log);
+        if (scanContent && !IsSingleGameGbaNor(norId, geometry)) LogWaterDirectAddressDiagnostics(device, log);
         string? recognizedChipName = GetChipName(norId, geometry.DeviceSizeBytes, geometry.BufferWriteBytes);
         bool chipRecognized = !string.IsNullOrWhiteSpace(recognizedChipName);
         int detectedPhysicalChipCount = GetDetectedPhysicalNorChipCount(geometry, runtimeStatus);
@@ -176,6 +178,22 @@ public static class WaterCartScanner
 
         log?.Invoke(chipName);
         log?.Invoke(BuildCapacitySummary(geometry));
+
+        if ((scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId, geometry))
+            return ReadSingleGameGbaResult(device, norId, geometry, chipName, chipRecognized, log);
+
+        if (!scanContent)
+        {
+            var probe = CreateNorProbeResult(norId, geometry, chipName, chipRecognized);
+            probe.RuntimeStatus = runtimeStatus;
+            if (scanGameHeaders && geometry.DeviceSizeBytes > 32 * 1024 * 1024)
+            {
+                probe.Games = ScanNorGameHeaders(device, geometry.DeviceSizeBytes, log);
+                probe.HasGbaHeaderScan = true;
+                probe.Entries = BuildEntries(probe.Games, new(), new(), log);
+            }
+            return probe;
+        }
 
         List<DetectedNorGameInfo> games = ScanNorGameHeaders(device, geometry.DeviceSizeBytes, log);
         HashSet<int> knownGameStartBuckets = games
@@ -211,7 +229,7 @@ public static class WaterCartScanner
         };
     }
 
-    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null)
+    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null, bool scanContent = true, bool scanGameHeaders = false)
     {
         if (!device.TryReadLegacyNorId(out byte[] norId, LegacyBeggarTimeoutMs))
         {
@@ -221,7 +239,7 @@ public static class WaterCartScanner
         log?.Invoke(BitConverter.ToString(norId).Replace("-", " "));
 
 
-        log?.Invoke(T(
+        if (scanContent) log?.Invoke(T(
             "log",
             "beggar_scan_path",
             "Detected the Beggar programmer. Using the legacy scan path: read NOR ID, CFI, 4MiB headers, and menu/WL metadata through plain ROM reads."));
@@ -245,6 +263,21 @@ public static class WaterCartScanner
 
         log?.Invoke(chipName);
         log?.Invoke(BuildCapacitySummary(geometry));
+
+        if ((scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId, geometry))
+            return ReadSingleGameGbaResult(device, norId, geometry, chipName, chipRecognized, log);
+
+        if (!scanContent)
+        {
+            var probe = CreateNorProbeResult(norId, geometry, chipName, chipRecognized);
+            if (scanGameHeaders && geometry.DeviceSizeBytes > 32 * 1024 * 1024)
+            {
+                probe.Games = ScanNorGameHeadersLegacyBeggar(device, geometry.DeviceSizeBytes, log);
+                probe.HasGbaHeaderScan = true;
+                probe.Entries = BuildEntries(probe.Games, new(), new(), log);
+            }
+            return probe;
+        }
 
         List<DetectedNorGameInfo> games = ScanNorGameHeadersLegacyBeggar(device, geometry.DeviceSizeBytes, log);
         HashSet<int> knownGameStartBuckets = games
@@ -289,6 +322,48 @@ public static class WaterCartScanner
             Entries = entries,
         };
     }
+
+    public static bool IsSingleGameGbaNor(byte[] id, NorGeometryInfo geometry) =>
+        geometry.DeviceSizeBytes == 32 * 1024 * 1024 &&
+        (IdMatches(id, 0x01, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
+         IdMatches(id, 0x89, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
+         IdMatches(id, 0xC2, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
+         IdMatches(id, 0x20, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22));
+
+    private static WaterCartScanResult ReadSingleGameGbaResult(WaterDeviceProtocol device, byte[] id,
+        NorGeometryInfo geometry, string chipName, bool recognized, Action<string>? log)
+    {
+        // 32 MiB单卡只读地址0，不发送合卡换页命令或读取合卡目录。
+        var result = CreateNorProbeResult(id, geometry, chipName, recognized);
+        byte[] header = new byte[200];
+        if (!device.TryReadRom(0, header, LegacyBeggarTimeoutMs))
+            throw new InvalidOperationException(T("error", "read_nor_header_failed", "Failed to read the single-game ROM header."));
+        result.IsNorProbeOnly = false;
+        result.HasGbaHeaderScan = true;
+        if (HasValidGbaHeader(header))
+        {
+            var game = new DetectedNorGameInfo { StartBucket = 0, EndBucket = 0,
+                Title = DecodeGbaHeaderTitle(header), GameCode = DecodeGbaHeaderGameCode(header), IsMenu = false };
+            result.Games.Add(game);
+            result.Entries = BuildEntries(result.Games, new(), new(), log);
+            log?.Invoke(Tf("log", "found_game_header", "Found game header: [{0,3} M] {1}", 0, game.Title));
+        }
+        return result;
+    }
+
+    private static WaterCartScanResult CreateNorProbeResult(byte[] norId, NorGeometryInfo geometry, string chipName, bool recognized) => new()
+    {
+        IsNorProbeOnly = true,
+        NorId = norId,
+        RawNorIdHex = BitConverter.ToString(norId).Replace("-", " "),
+        IsChipRecognized = recognized,
+        ChipName = chipName,
+        CapacitySummary = FormatMiBSize(geometry.DeviceSizeBytes),
+        SectorSummary = BuildSectorSummary(geometry),
+        Geometry = geometry,
+        IsWriteProtected = geometry.DeviceSizeBytes <= 0,
+        WriteProtectionReason = geometry.DeviceSizeBytes > 0 ? string.Empty : GetCapacityUnavailableReason(),
+    };
 
     private static void PopulateOfflineGbaMenuImageState(
         byte[] imageBytes,
@@ -419,6 +494,7 @@ public static class WaterCartScanner
             result = new WaterCartScanResult
             {
                 IsBeggarMaxGbcMode = true,
+                IsNorProbeOnly = !scanContent,
                 HasBeggarMaxDirectoryHeaders = hasDirectoryHeaders,
                 IsFcMbcxContent = isFcContent,
                 IsMdMbcxContent = isMdContent,
@@ -547,6 +623,8 @@ public static class WaterCartScanner
         return new WaterCartScanResult
         {
             IsBeggarMaxGbcMode = source.IsBeggarMaxGbcMode,
+            IsNorProbeOnly = source.IsNorProbeOnly,
+            HasGbaHeaderScan = source.HasGbaHeaderScan,
             IsFcMbcxContent = source.IsFcMbcxContent,
             IsMdMbcxContent = source.IsMdMbcxContent,
             IsChm1 = source.IsChm1,
@@ -3129,6 +3207,9 @@ public static class WaterCartScanner
         WaterWlMappingInfo wlMapping,
         Action<string>? log)
     {
+        // 已有碎片表却缺少目录时，物理ROM头不能替代逻辑游戏映射。
+        if (wlMapping.IsDetected && !menuConfig.IsDetected)
+            return [];
         List<WaterCartEntry> entries = wlMapping.IsDetected && menuConfig.IsDetected
             ? BuildEntriesFromWlMapping(games, menuConfig, wlMapping, log)
             : BuildEntriesFromMenuAndHeaders(games, menuConfig, log);
@@ -3214,7 +3295,12 @@ public static class WaterCartScanner
                 .ToList();
         }
 
-        return [];
+        // 无目录时只展示地址0的单游戏，不把其他物理头部拼成合卡列表。
+        return games
+            .Where(game => game.StartBucket == 0 && !game.IsMenu)
+            .Take(1)
+            .Select(game => new WaterCartEntry { HeaderGame = game })
+            .ToList();
     }
 
     private static void LogMenuConfigSummary(WaterMenuConfigInfo menuConfig, HashSet<int> knownGameStartBuckets, Action<string>? log)

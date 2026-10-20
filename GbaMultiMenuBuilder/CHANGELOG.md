@@ -1,3 +1,7 @@
+# 0.92.5（2026-10-20 配套发布）
+
+配套上位机 2.046 r15；完整名称、独立构建资源、教程与发布包更新见 [本次说明](../docs/CHANGELOG-2.046-r15-0.92.5.md)。
+
 # 0.91.3 — SNES import preview
 
 - MIX recognizes SFC/SMC and ZIP members, inspects ordinary/extended SNES headers, and exposes individual SFC export without modifying sources.

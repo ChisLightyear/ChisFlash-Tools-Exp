@@ -1,133 +1,62 @@
 # ChisFlash-Tools-Exp
 
-ChisFlash 系列 GBA/GB/GBC 烧录卡的工具集（实验/加强线）。本仓库包含两个配套项目，二者共享部分源码与资源。
+ChisFlash 烧录卡工具集：**上位机 2.046 r15 / 合卡器 0.92.5**。
 
-本仓库提供程序源码与菜单内核，不含游戏、封面图库或外部中文字库。游戏 ROM 需自备；封面和背景图可选；**GBC 中文菜单必须自备 12px 字库**，不支持 8px。详见 [未包含的内容](#未包含的内容)。
+- [下载完整工具包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)
+- [简体中文教程](TUTORIAL.zh-CN.md) · [English guide](TUTORIAL.en.md)
+- [本次更新](docs/CHANGELOG-2.046-r15-0.92.5.md)
+- [GBC 自由合卡固件、菜单和教程](https://github.com/ChisLightyear/ChisFlash-GBC-FreeMulticart)
 
-当前源码：**上位机 2.042 / 合卡器 0.92.3**。[更新说明](docs/CHANGELOG-2.042-0.92.3.md)。修复LK背景位图/调色板偏移8字节造成的黑色预览。GBA菜单明确指定，默认NS精简；见[菜单规则](docs/GBA-MENU-SELECTION.md)。GBC候选卡型按8/32 MiB NOR容量筛选，用户选型决定模式；见[选型规则](docs/GBC-CARTRIDGE-SELECTION.md)。MIX 已接入 NES / MD / SNES 合卡、目录回读与存档管理，共用非连续 SRAM bank 表。**只读写 GLB2 v2 / LNC2，不兼容旧格式；不以核心 Mapper 白名单限制合卡、BIN 导出或烧录。** 见 [统一存储协议](docs/MIX-V2-STORAGE-CONTRACT.md)。可合卡不等于实机运行验证；[MBC5 8M五槽](docs/MBC5-8M-FIVE-SLOTS.md)保留。
+本仓库目前为私有仓库，源码和下载页面需要访问权限。
 
-**English version: [English](#english)**
+## 两个工具
 
-## 📖 教程
-
-完整的使用教程（含编译与使用两部分）：
-
-- **简体中文** → [TUTORIAL.zh-CN.md](TUTORIAL.zh-CN.md)
-- **English** → [TUTORIAL.en.md](TUTORIAL.en.md)
-
-## 目录结构
-
-| 目录 | 说明 |
+| 工具 | 用途 |
 |---|---|
-| `ChisFlashWaterClient/` | 上位机（烧录客户端）。通过 CDC ACM 自定义协议与卡带通信，负责扫描、合卡生成、ROM 导入、存档读写、菜单重建等。WinForms / .NET 9 |
-| `GbaMultiMenuBuilder/` | 合卡器（Multicart Builder）。负责把多张 ROM 打包成合卡镜像、生成菜单、封面处理、NES/MD/SNES MIX v2 支持。WinForms / .NET 9 |
+| `ChisFlashWaterClient` 上位机 | 通过配套烧录器扫描、写入游戏、管理菜单和存档；支持单卡、合卡及对应 GB/GBC/MIX 工作区 |
+| `GbaMultiMenuBuilder` 合卡器 | 离线生成完整合卡镜像，交给兼容烧录器写入；自身不连接卡带烧录 |
 
-## 两者关系
+上位机链接合卡器的共享源码。编译时保留两个同名目录，并排放在仓库根目录；使用下载包时分别运行 `client/` 或 `builder/` 中的程序。
 
-上位机引用合卡器的 `Models/`、`Services/`、`Fc/`、`Md/`、`Snes/` 源码及共享界面组件，因此**两个目录必须放在同一父目录下**保持相对路径不变。单独移动或改名任一目录都会导致编译失败。
+## 这个版本
 
-```
-ChisFlash-Tools-Exp/
-├── ChisFlashWaterClient/
-└── GbaMultiMenuBuilder/
-```
+- GBA 烧录卡按“合卡／单卡”分组，分组标题不可点击；1.1V 暂为待确认项目。
+- 已收录的 256 Mbit NOR 配合 32 MiB 实测容量进入单卡流程，只显示游戏1；单卡原 ROM 不自动打补丁或插入菜单。
+- 支持合卡的 GBA 工作区采用菜单行＋游戏行，先编辑草稿，再明确烧录；“分析卡带”和“分析配置”用途分开。
+- GB/GBC 容量只筛选候选卡型，由用户选择固定槽位、RTC、自由合卡或 MIX 模式。
+- MIX 使用 GLB2 v2 / LNC2 v2，支持 NES / MD / SNES 和完整名称；相应扩展需要配套固件支持。
+
+![上位机 2.046 r15](docs/images/zh-CN/client_02_multicart.png)
+
+截图来自本版程序，使用合成 ROM 和模拟卡带数据，不代表实卡验证。
 
 ## 构建
 
-需要 .NET 9 SDK（含 Windows Desktop 运行时）。
+Windows，.NET 9 SDK 或支持 `net9.0-windows` 的更新 SDK：
 
-```bash
-# 上位机
+```powershell
 dotnet build ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release
-
-# 合卡器
 dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
 ```
 
-## 未包含的内容
+菜单和补丁成品位于各工具的 `Assets/`。项目不引用开发机盘符、旁边的菜单工程或外部字体仓库。无需安装 GBDK 或 Quartus 即可编译桌面工具。
 
-以下内容不在本仓库内，需自行准备：
+## 内容与资源
 
-| 项目 | 是否必需 | 说明 |
-|---|---|---|
-| **游戏 ROM**（`.gba` / `.zip`） | ✅ **必需** | 程序不含任何游戏，必须自备 |
-| **封面图库**（`ChisFlashWaterClient/covers/`） | ⭕ 可选 | 约 534 MiB 的 GBA 游戏封面 PNG 集合（2289 张）+ `cover_index.csv`，单独分发。缺失时自动封面匹配不可用，其余功能正常 |
-| **自定义背景图** | ⭕ 可选 | 用来自定义菜单背景，缺失用默认背景 |
-| **GBC 中文字库** | 中文菜单必需 | 自备 12px 字库，放入工具的 `Assets/Fonts/`，重新打开工具后选择；英文菜单无需外部字库 |
-| **菜单 ROM 资源**（`Assets/` 内 `*.gba` / `*.gb`） | ⚙️ 已随仓库提供 | 开箱即用的默认菜单；如需替换请参考各项目 README |
+包含两个工具的源码、语言文件、菜单成品、补丁资源、教程和离线验证工程。
 
-构建产物（`bin/`、`obj/`）、发布包（`publish_*`）、打包 zip 均由 `.gitignore` 排除。
+不附带游戏 ROM、封面图库或外部中文字库。GBC 中文菜单需自备 12px 字库，放在工具的 `Assets/Fonts/`；英文菜单使用内置字形。MIX 标题当前使用用户提供的 `Assets/Fonts/mplus_hzk_12.ttf`。详见[字库说明](GbaMultiMenuBuilder/Assets/Fonts/README.md)。NS 菜单源码不在本次发布范围。
 
-## 许可与第三方
+第三方数据库说明见 [SOURCE_PROVENANCE.md](GbaMultiMenuBuilder/Fc/SOURCE_PROVENANCE.md)，Mesen 许可原文见 [Mesen-LICENSE](GbaMultiMenuBuilder/Fc/Mesen-LICENSE)。项目整体许可证尚未指定，现有第三方声明保留。
 
-- `GbaMultiMenuBuilder/Fc/MesenNesDB.csv` 来自 Mesen2 项目，许可原文见 `Fc/Mesen-LICENSE`（GPL v3）。
-- 外部字体需自备并遵守其许可，格式要求见 [字库说明](GbaMultiMenuBuilder/Assets/Fonts/README.md)。
+## English
 
----
+**Client 2.046 r15 / Builder 0.92.5**. [Download](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) · [User guide](TUTORIAL.en.md) · [Release notes](docs/CHANGELOG-2.046-r15-0.92.5.md).
 
-<a id="english"></a>
+The Client works with supported programmers; the Builder creates complete images for compatible programmers. Keep both source directories side by side: the Client links shared Builder sources. The Windows x64 download contains both applications and their .NET runtime.
 
-# English — ChisFlash-Tools-Exp
+GBA profiles are grouped into multicart and single-game choices. Recognized 256 Mbit chips with 32 MiB capacity use the single-game workflow. GB/GBC capacity filters candidates; users choose the actual cartridge configuration. MIX supports NES/MD/SNES with GLB2 v2 / LNC2 v2 and full-title extensions requiring matching firmware.
 
-Toolchain for ChisFlash GBA/GB/GBC flash cartridges (experimental / enhanced line). This repository contains two companion projects that share some source files and resources.
+Build on Windows with .NET 9 SDK or a newer SDK supporting `net9.0-windows`, using the commands above. All required menu binaries are local to `Assets/`; no developer-drive paths or external source repositories are required.
 
-This repository includes program source and menu kernels. Games, cover libraries and external Chinese fonts are not included. Supply your own game ROMs; covers and backgrounds are optional. **Chinese GBC menus require a 12px font; 8px fonts are not supported.** See [Not included](#not-included).
-
-Current source: **Client 2.042 / Builder 0.92.3**. [Changes](docs/CHANGELOG-2.042-0.92.3.md). Corrected the eight-byte LK bitmap/palette offset that caused black previews. GBA menus are explicit and default to Simplified NS; see the [menu rules](docs/GBA-MENU-SELECTION.md). GBC NOR capacity filters cartridge candidates; an explicit user choice selects the mode. See the [selection rules](docs/GBC-CARTRIDGE-SELECTION.md). MIX packs, reads and manages saves for NES / MD / SNES with one noncontiguous SRAM map. **GLB2 v2 / LNC2 only; no legacy migration. Core mapper whitelists do not gate packing, BIN export or programming.** See the [storage contract](docs/MIX-V2-STORAGE-CONTRACT.md). Packing is not hardware gameplay validation. The [MBC5 five-slot mode](docs/MBC5-8M-FIVE-SLOTS.md) remains separate.
-
-**中文版：[中文](#chisflash-tools-exp)**
-
-## 📖 Tutorials
-
-Full tutorials (build and usage):
-
-- **简体中文** → [TUTORIAL.zh-CN.md](TUTORIAL.zh-CN.md)
-- **English** → [TUTORIAL.en.md](TUTORIAL.en.md)
-
-## Repository layout
-
-| Directory | Description |
-|---|---|
-| `ChisFlashWaterClient/` | Client (burning client). Talks to the cartridge over a custom CDC ACM protocol; handles scanning, multicart generation, ROM import, save read/write, menu rebuilding. WinForms / .NET 9 |
-| `GbaMultiMenuBuilder/` | Builder (Multicart Builder). Packs multiple ROMs into a multicart image, generates menus, handles covers, and supports NES / MD / SNES MIX v2 images. WinForms / .NET 9 |
-
-## Relationship between the two
-
-The Client references the Builder's `Models/`, `Services/`, `Fc/` and `Md/` sources and shared UI components. Therefore **both directories must stay under the same parent directory** so the relative paths remain valid. Moving or renaming either directory will break the build.
-
-```
-ChisFlash-Tools-Exp/
-├── ChisFlashWaterClient/
-└── GbaMultiMenuBuilder/
-```
-
-## Build
-
-Requires the .NET 9 SDK (including the Windows Desktop runtime).
-
-```bash
-# Client
-dotnet build ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release
-
-# Builder
-dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
-```
-
-## Not included
-
-The following are not part of this repository and must be prepared separately:
-
-| Item | Required | Notes |
-|---|---|---|
-| **Game ROMs** (`.gba` / `.zip`) | ✅ **Required** | The programs contain no games; bring your own |
-| **Cover library** (`ChisFlashWaterClient/covers/`) | ⭕ Optional | ~534 MiB of GBA cover PNGs (2289 images) + `cover_index.csv`, distributed separately. Without it, automatic cover matching is unavailable; everything else works normally |
-| **Custom background images** | ⭕ Optional | Used to customize the menu background; a default is used when absent |
-| **GBC Chinese font** | Required for Chinese menus | Supply a 12px font in the tool's `Assets/Fonts/` directory, reopen the tool and select it; English menus need no external font |
-| **Menu ROM resources** (`*.gba` / `*.gb` under `Assets/`) | ⚙️ Included | Ready-to-use default menus; see each project's README to replace them |
-
-Build outputs (`bin/`, `obj/`), publish output (`publish_*`), and packaged zips are all excluded by `.gitignore`.
-
-## License and third parties
-
-- `GbaMultiMenuBuilder/Fc/MesenNesDB.csv` comes from the Mesen2 project; the license text is in `Fc/Mesen-LICENSE` (GPL v3).
-- Supply external fonts under their respective licences; see [font requirements](GbaMultiMenuBuilder/Assets/Fonts/README.md).
+Games, covers and external Chinese fonts are not included. GBC Chinese menus require a user-supplied 12px font; MIX titles currently use `Assets/Fonts/mplus_hzk_12.ttf`. NS menu source is not included. No repository-wide project licence has been assigned; existing third-party notices remain. This repository and its downloads currently require private-repository access.

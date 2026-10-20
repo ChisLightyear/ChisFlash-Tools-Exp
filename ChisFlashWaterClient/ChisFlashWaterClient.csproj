@@ -1,5 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
@@ -7,14 +6,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.0.42</Version>
-    <AssemblyVersion>2.0.42.0</AssemblyVersion>
-    <FileVersion>2.0.42.0</FileVersion>
-    <InformationalVersion>2.042 Correct LK background ROM pointers</InformationalVersion>
+    <Version>2.0.46</Version>
+    <AssemblyVersion>2.0.46.0</AssemblyVersion>
+    <FileVersion>2.0.46.0</FileVersion>
+    <InformationalVersion>2.046 noninteractive profile headers r15</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
-
   <ItemGroup>
     <Compile Remove="_build_*/**/*.cs" />
     <Compile Remove="_verify_*/**/*.cs" />
@@ -31,12 +29,10 @@
     <None Remove="_codex_build_*/**" />
     <None Remove="_codex_probe_*/**" />
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="System.IO.Ports" Version="9.0.4" />
     <PackageReference Include="System.Management" Version="9.0.4" />
   </ItemGroup>
-
   <ItemGroup>
     <Compile Include="..\GbaMultiMenuBuilder\Models\AppSettings.cs" Link="BuilderImported\Models\AppSettings.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Models\GameEntryModel.cs" Link="BuilderImported\Models\GameEntryModel.cs" />
@@ -68,57 +64,14 @@
     <Compile Include="..\GbaMultiMenuBuilder\Services\LanguageService.cs" Link="BuilderImported\Services\LanguageService.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\UiLanguage.cs" Link="BuilderImported\Services\UiLanguage.cs" />
   </ItemGroup>
-
   <ItemGroup>
-    <Content Include="covers\cover_index.csv;covers\cover_overrides.csv"
-             Condition="'$(ExcludeCoverCatalog)' != 'true' And Exists('covers')">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </Content>
-    <Content Include="covers\original\*.png"
-             Condition="'$(ExcludeCoverCatalog)' != 'true' And Exists('covers\original')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <!-- 菜单 ROM：优先取同级 rom_builder 的最新产物；仓库独立分发时回落到自带的 Assets\ 副本 -->
-    <Content Include="..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba"
-             Link="Assets\lk_multimenu.gba"
-             Condition="Exists('..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba"
-             Link="Assets\wl_magic_menu.gba"
-             Condition="Exists('..\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba"
-             Link="Assets\universal_menu.gba"
-             Condition="Exists('..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba"
-             Link="Assets\simplified_ns_menu.gba"
-             Condition="Exists('..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Assets\lk_multimenu.gba;Assets\wl_magic_menu.gba;Assets\universal_menu.gba;Assets\simplified_ns_menu.gba"
-             Condition="!Exists('..\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="Assets\batteryless_payload.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\batteryless_payload_flash4_compat.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Assets\menu_zh.gb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Assets\menu_en.gb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="..\GbaMultiMenuBuilder\Assets\Fonts\**\*"
-             Link="Assets\Fonts\%(RecursiveDir)%(Filename)%(Extension)">
+    <Content Include="..\GbaMultiMenuBuilder\Assets\Fonts\**\*" Link="Assets\Fonts\%(RecursiveDir)%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
@@ -131,11 +84,18 @@
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
-
   <ItemGroup>
     <Compile Include="..\GbaMultiMenuBuilder\Fc\*.cs" Link="Fc\%(Filename)%(Extension)" />
     <Compile Include="..\GbaMultiMenuBuilder\Md\*.cs" Link="Md\%(Filename)%(Extension)" />
     <Compile Include="..\GbaMultiMenuBuilder\Snes\*.cs" Link="Snes\%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\GbaMultiMenuBuilder\Fc\MesenNesDB.csv" LogicalName="ChisFlash.Fc.MesenNesDB" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\lk_multimenu.gba" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\menu_en.gb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\menu_zh.gb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\simplified_ns_menu.gba" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\universal_menu.gba" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\wl_magic_menu.gba" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -15,7 +15,12 @@ public enum DetectedSaveTypeKind
 
 public sealed record DetectedSaveTypeInfo(
     DetectedSaveTypeKind Kind,
-    string? Identifier);
+    string? Identifier)
+{
+    public int? SizeBytes { get; init; }
+    public bool IsSramPatched { get; init; }
+    public string? CodeEvidence { get; init; }
+}
 
 public sealed class SaveTypePatternRule
 {

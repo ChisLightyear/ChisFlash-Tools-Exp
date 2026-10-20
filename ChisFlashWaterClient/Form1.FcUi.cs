@@ -16,10 +16,9 @@ public partial class Form1
     private ToolStripMenuItem menuFcRebuild = null!;
     private ToolStripMenuItem menuFcOpen = null!;
     private ToolStripMenuItem menuFcExport = null!;
+    private ToolStripMenuItem menuFcScan = null!;
     private bool IsFcWorkspaceActive => fcWorkspaceActive && fcWorkspace is { IsDisposed: false };
     private bool CanUseFcDevice => fcBackendOverride is not null ||
-        GetSelectedProgrammerKind() == ProgrammerKind.BeggarLegacy &&
-        GetSelectedBeggarCartMode() == BeggarCartMode.Gb &&
         !string.IsNullOrWhiteSpace(GetSelectedPortName());
 
     private void BuildFcMenus()
@@ -34,6 +33,9 @@ public partial class Form1
         }
         Task Local(Action action) { action(); return Task.CompletedTask; }
         menuFcTools = new ToolStripMenuItem("MIX · NES / MD / SNES") { Visible = false };
+        menuFcScan = new ToolStripMenuItem(T("ui", "analyze_configuration", "分析配置"));
+        menuFcScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedConfigurationAsync);
+        menuCartridge.DropDownItems.Insert(0, menuFcScan);
         menuFcUp = Add("up", "Up", () => Local(() => fcWorkspace!.MoveRow(-1)));
         menuFcDown = Add("down", "Down", () => Local(() => fcWorkspace!.MoveRow(1)));
         menuFcPreview = Add("title_preview", "12px title preview", () => Local(() => fcWorkspace!.PreviewTitle()));
@@ -43,15 +45,13 @@ public partial class Form1
         menuFcTools.DropDownItems.Add(new ToolStripSeparator());
         menuFcOpen = Add("import_image", "Open MIX .bin", () => fcWorkspace!.ImportImageAsync());
         menuFcExport = Add("export", "Build .bin", () => fcWorkspace!.ExportAsync());
-        menuRom.DropDownItems.Insert(menuRom.DropDownItems.IndexOf(menuStartBurn), menuFcTools);
+        menuCartridge.DropDownItems.Add(new ToolStripSeparator());
+        menuCartridge.DropDownItems.Add(menuFcTools);
     }
 
     private async Task ActivateFcWorkspaceAsync()
     {
         if (isBusy || isAnalyzingQueueImports || IsFcWorkspaceActive) return;
-        if (GetSelectedProgrammerKind() != ProgrammerKind.WaterLink &&
-            GetSelectedBeggarCartMode() != BeggarCartMode.Gb)
-            radioButtonBeggarCartModeGb.Checked = true;
         if (!GetGbcProfileModes(GetGbcProfileCapacity()).Contains(BurnProfileMode.FcMbcx))
         {
             labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type");
@@ -61,7 +61,7 @@ public partial class Form1
         if (!burnProfileModeOptions.Any(option => option.Mode == BurnProfileMode.FcMbcx))
         {
             burnProfileModeOptions.Add(new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), BurnProfileMode.FcMbcx));
-            comboBoxBurnProfileMode.DataSource = burnProfileModeOptions.ToList();
+            BindBurnProfileOptions();
         }
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.First(option => option.Mode == BurnProfileMode.FcMbcx);
         burnProfileModeSelectionInitialized = true;
@@ -93,7 +93,11 @@ public partial class Form1
                 progressBarTotal.Value = Math.Clamp(progress.Percent * progressBarTotal.Maximum / 100, progressBarTotal.Minimum, progressBarTotal.Maximum);
             };
         }
+        // Keep the NOR result when changing the content mode. No MIX
+        // directory snapshot is needed to retain physical chip information.
+        var norInfo = currentScanResult;
         ResetCurrentCartAnalysisView();
+        fcHardwareInfo = norInfo;
         fcWorkspaceActive = true;
         dataGridViewRoms.Visible = false;
         workspaceLayout.Controls.Remove(dataGridViewRoms);
@@ -161,7 +165,8 @@ public partial class Form1
         var snapshot = fcWorkspace!.Snapshot;
         labelNorIdValue.Text = fcHardwareInfo?.RawNorIdHex ?? T("ui", "not_read", "Not Read");
         labelChipNameValue.Text = fcHardwareInfo?.ChipName ?? T("ui", "not_read", "Not Read");
-        labelCapacityValue.Text = snapshot is null ? T("ui", "not_read", "Not Read") : FormatMiBSize(snapshot.Capacity);
+        labelCapacityValue.Text = snapshot is not null ? FormatMiBSize(snapshot.Capacity) :
+            fcHardwareInfo is not null ? FormatMiBSize(fcHardwareInfo.Geometry.DeviceSizeBytes) : T("ui", "not_read", "Not Read");
         labelSectorInfoValue.Text = fcHardwareInfo is not null ? FormatSectorSummary(fcHardwareInfo.Geometry) :
             snapshot is null ? T("ui", "not_read", "Not Read") : FormatKiBSize(snapshot.SectorBytes);
         labelRomCountValue.Text = fcWorkspace.GameCount.ToString();
@@ -192,17 +197,19 @@ public partial class Form1
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = selected;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && fcWorkspace!.HasGames;
         buttonScan.Enabled = menuScan.Enabled = idle && CanUseFcDevice;
+        menuFcScan.Enabled = idle;
+        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
         buttonRefreshPorts.Enabled = menuRefreshPorts.Enabled = idle;
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = idle;
         comboBoxBurnProfileMode.Enabled = idle && burnProfileModeOptions.Count > 0;
         UpdateProgrammerModeSelectorUi(idle);
         bool cancelling = fcWorkspace!.IsBusy;
         buttonQueueBurn.Text = menuStartBurn.Text = cancelling ? T("ui", "cancel_burn", "Cancel") : T("ui", "queue_burn", "Start Burn");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = cancelling || idle && CanUseFcDevice && fcWorkspace.CanBurn;
+        buttonQueueBurn.Enabled = menuStartBurn.Enabled = cancelling || idle && CanUseFcDevice;
         menuExit.Enabled = idle;
-        menuFcUp.Enabled = menuFcDown.Enabled = menuFcPreview.Enabled = selected;
-        menuFcEdit.Enabled = idle && fcWorkspace.CanEditConfiguration;
-        menuFcRebuild.Enabled = menuFcExport.Enabled = idle && fcWorkspace.HasGames;
+        menuFcUp.Enabled = menuFcDown.Enabled = menuFcPreview.Enabled = idle;
+        menuFcEdit.Enabled = idle;
+        menuFcRebuild.Enabled = menuFcExport.Enabled = idle;
         menuFcOpen.Enabled = idle;
         foreach (var label in fcMenuLabels) label.Item.Text = T("fc", label.Key, label.Fallback);
     }

@@ -104,8 +104,11 @@ public partial class Form1
 
     private async Task ReplaceSelectedRomAsync()
     {
+        if (SupportsGbaCardMode()) { await SelectGbaListSlotAsync(); return; }
+        if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
+        if (IsChisFlash10Mode()) { await SelectChisFlash10FileAsync(); return; }
         if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
-        if (IsMbc5EightMiBMode()) { await SelectMbc5FilesAsync(); return; }
+        if (IsMbc5FixedSlotMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy || isAnalyzingQueueImports)
         {
             return;
@@ -219,9 +222,13 @@ public partial class Form1
 
     private async Task HandlePrimaryQueueActionAsync()
     {
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能按单卡或新合卡擦写。");
+        if (IsGbaSingleCardMode()) { await BurnSingleGbaAsync(); return; }
+        if (IsGbaConversionDraft()) { await BurnGbaConversionAsync(); return; }
+        if (IsChisFlash10Mode()) { await HandleChisFlash10PrimaryActionAsync(); return; }
         if (IsGbcProfileUnselected()) { labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
         if (IsGbcRawImageMode()) { await HandleGbcImagePrimaryActionAsync(); return; }
-        if (IsMbc5EightMiBMode()) { await HandleMbc5PrimaryActionAsync(); return; }
+        if (IsMbc5FixedSlotMode()) { await HandleMbc5PrimaryActionAsync(); return; }
         if (IsFcWorkspaceActive)
         {
             if (fcWorkspace!.IsBusy) fcWorkspace.Cancel();
@@ -289,8 +296,10 @@ public partial class Form1
 
     private async Task ExportSelectedEntryRomAsync()
     {
+        if (IsGbaSingleCardMode()) { await ExportSingleGbaAsync(); return; }
+        if (IsChisFlash10Mode()) { await ExportChisFlash10RomAsync(); return; }
         if (IsGbcRawImageMode()) { await ExportGbcImageAsync(); return; }
-        if (IsMbc5EightMiBMode()) { await ExportMbc5SlotAsync(); return; }
+        if (IsMbc5FixedSlotMode()) { await ExportMbc5SlotAsync(); return; }
         if (IsFcWorkspaceActive) { await fcWorkspace!.ExportSelectedRomAsync(); return; }
         if (!TryResolveSelectedRomExportTarget(out SelectedRomExportTargetInfo? target, out string reason) || target is null)
         {
@@ -301,7 +310,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -366,7 +375,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -469,7 +478,7 @@ public partial class Form1
             return false;
         }
 
-        if (!TryGetSelectedKnownProgrammerKind(out ProgrammerKind programmerKind, out reason))
+        if (!TryGetSelectedProgrammerKind(out ProgrammerKind programmerKind, out reason))
         {
             return false;
         }
@@ -555,7 +564,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -625,7 +634,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -746,7 +755,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2114,7 +2123,7 @@ public partial class Form1
             return false;
         }
 
-        if (!TryGetSelectedKnownProgrammerKind(out ProgrammerKind programmerKind, out reason))
+        if (!TryGetSelectedProgrammerKind(out ProgrammerKind programmerKind, out reason))
         {
             return false;
         }
@@ -2199,7 +2208,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            reason = T("log", "select_port_first", "Please select a compatible programmer port first.");
+            reason = T("log", "select_port_first", "Please select a serial port first.");
             return false;
         }
 
@@ -2284,7 +2293,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2394,7 +2403,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2569,6 +2578,7 @@ public partial class Form1
 
     private async Task RepairMissingMenuAsync()
     {
+        EnsureGbaMulticartSupported();
         if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
         if (missingMenuActionMode == MissingMenuActionMode.None && !CanRepairMenuCurrentScan(out string reason))
@@ -2580,7 +2590,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2878,6 +2888,7 @@ public partial class Form1
 
     private async Task RepairLegacyMenuAsync()
     {
+        EnsureGbaMulticartSupported();
         if (!CanRepairLegacyCurrentScan(out string reason))
         {
             AppendLog(reason);
@@ -2887,7 +2898,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2991,7 +3002,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3077,7 +3088,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3259,7 +3270,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3355,7 +3366,11 @@ public partial class Form1
 
     private async Task UpdateMenuAsync()
     {
-        if(HasActiveMixWorkspace){await fcWorkspace!.RebuildCardConfigurationAsync();return;}
+        EnsureGbaMulticartSupported();
+        if(HasActiveMixWorkspace){
+            if(fcWorkspace!.Snapshot is null)await fcWorkspace.ScanAsync();
+            await fcWorkspace.RebuildCardConfigurationAsync();return;
+        }
         if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
         MenuUpdateActionMode actionMode = GetMenuUpdateActionMode();
         if (actionMode == MenuUpdateActionMode.None)
@@ -3386,6 +3401,7 @@ public partial class Form1
 
     private async Task ReplaceMenuFromFileAsync()
     {
+        if (SupportsGbaCardMode()) { await SelectGbaMenuAsync(); return; }
         MenuUpdateActionMode actionMode = GetMenuUpdateActionMode();
         if (actionMode is not (MenuUpdateActionMode.UpdateWaterLinkMenu or MenuUpdateActionMode.UpdateLegacyMenu))
         {
@@ -3439,7 +3455,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3560,7 +3576,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return false;
         }
 
@@ -3674,6 +3690,7 @@ public partial class Form1
 
     private async Task UpdateWaterLinkMenuAsync(string? customMenuRomPath = null)
     {
+        EnsureGbaMulticartSupported();
         if (!CanUpdateWaterLinkMenuCurrentScan(out string reason))
         {
             AppendLog(reason);
@@ -3683,7 +3700,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3797,6 +3814,7 @@ public partial class Form1
 
     private async Task RepairWaterLinkFromLegacyMenuAsync()
     {
+        EnsureGbaMulticartSupported();
         if (!CanUpgradeCurrentScan(out string reason))
         {
             AppendLog(reason);
@@ -3806,7 +3824,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -3903,6 +3921,7 @@ public partial class Form1
 
     private async Task UpdateLegacyMenuAsync(string? customMenuRomPath = null)
     {
+        EnsureGbaMulticartSupported();
         if (!CanUpdateLegacyMenuCurrentScan(out string reason))
         {
             AppendLog(reason);
@@ -3912,7 +3931,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -4310,7 +4329,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -4751,7 +4770,7 @@ public partial class Form1
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a compatible programmer port first."));
+            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
             return false;
         }
 
@@ -6181,7 +6200,6 @@ public partial class Form1
             string label = sector.Label;
             if (IsAllBytes(sectorData, 0xFF))
             {
-                VerifyMenuSector(protocol, programmerKind, sectorAddress, sectorData, cancellationToken);
                 if (emitLogs)
                 {
                     AppendLog(Tf("log", "skip_blank_sector", "Skip programming blank {0}: 0x{1:X6}", label, sectorAddress));
@@ -6242,8 +6260,6 @@ public partial class Form1
                         label) +
                     BuildProgrammerFailureDetail(protocol, sectorAddress, sectorSize));
             }
-
-            VerifyMenuSector(protocol, programmerKind, sectorAddress, sectorData, cancellationToken);
             AdvanceMeasuredProgress(
                 sectorData.Length,
                 1,
@@ -6593,38 +6609,6 @@ public partial class Form1
             }
 
             Thread.Sleep(20);
-        }
-    }
-
-    private void VerifyMenuSector(
-        WaterDeviceProtocol protocol,
-        ProgrammerKind programmerKind,
-        uint byteAddress,
-        byte[] expected,
-        CancellationToken cancellationToken)
-    {
-        if (byteAddress >= WaterCartScanner.BucketSizeBytes) return;
-
-        for (int offset = 0; offset < expected.Length; offset += NorProgramChunkSizeBytes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            byte[] actual = new byte[Math.Min(NorProgramChunkSizeBytes, expected.Length - offset)];
-            uint address = byteAddress + (uint)offset;
-            if (!TryReadRomRangeForProgrammer(protocol, programmerKind, address, actual))
-            {
-                throw new InvalidOperationException(Tf("error", "menu_verify_read_failed",
-                    "Unable to read menu verification data at 0x{0:X8}.", address));
-            }
-
-            for (int i = 0; i < actual.Length; i++)
-            {
-                if (actual[i] != expected[offset + i])
-                {
-                    throw new InvalidOperationException(Tf("error", "menu_verify_mismatch",
-                        "Menu verification failed at 0x{0:X8}: expected 0x{1:X2}, read 0x{2:X2}.",
-                        address + (uint)i, expected[offset + i], actual[i]));
-                }
-            }
         }
     }
 
