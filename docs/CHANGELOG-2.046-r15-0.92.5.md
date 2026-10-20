@@ -17,7 +17,7 @@
 - 不打包游戏、封面图库、外部字体、运行日志、个人设置或调试符号。NS 菜单仅包含成品。
 - 合卡器窗口版本改为读取程序集版本，避免继续显示旧的0.92.3。
 - 重写中英文使用教程，更新8张本版实际界面演示图；截图使用合成数据，不含实卡操作。
-- 提供 Windows x64 独立运行包：`client/` 与 `builder/`，附带 .NET 运行时、教程、版本说明和校验清单。
+- 分别提供上位机和合卡器的 Windows x64 已编译包，保留 .NET 运行时、菜单资源和许可说明；教程、截图与源码留在仓库。下载页另附统一校验清单。
 
 ## 验证与限制
 
@@ -29,6 +29,6 @@
 
 Client 2.046 r15 and Builder 0.92.5 are synchronized with shared sources and bundled local menu assets. This release includes the current GBA single-game/multicart workflow, noninteractive profile headings, GB/GBC configurations and MIX full-title support.
 
-Developer-drive paths, external menu-project lookups and external-font repository lookups were removed. Builder window version now follows the assembly version. Updated Chinese/English guides include eight screenshots from these builds. The Windows x64 package contains both tools and their runtime.
+Developer-drive paths, external menu-project lookups and external-font repository lookups were removed. Builder window version now follows the assembly version. Updated Chinese/English guides include eight screenshots from these builds. Separate Windows x64 compiled packages contain each tool and its runtime. Documentation and source remain in the repository.
 
 Release builds and offline regression checks pass; the Client retains one existing CS0162 warning. No physical cartridge was accessed. Supply Chinese GBC/MIX fonts separately, use matching firmware for MIX extensions, and do not interpret offline tests as gameplay validation.

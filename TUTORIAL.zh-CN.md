@@ -4,13 +4,13 @@
 
 ## 1. 下载与准备
 
-下载[完整工具包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)，解压整个文件夹：
+下载[所需的程序包](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5)，解压整个文件夹：
 
-- `client/ChisFlashWaterClient.exe`：上位机，配合丐中丐或已明确识别的 WaterLink 使用。
-- `builder/Chis合卡制作器.exe`：合卡器，离线生成镜像，交给兼容烧录器完整写入。
-- `docs/`、本教程和版本说明：使用说明。
+- `ChisFlashWaterClient.exe`：上位机，配合丐中丐或已明确识别的 WaterLink 使用。
+- `Chis合卡制作器.exe`：合卡器，离线生成镜像，交给兼容烧录器完整写入。
+- 教程、截图和版本说明在仓库中查看，源码可通过 GitHub 的 Code → Download ZIP 获取。
 
-本次 Windows x64 包自带 .NET 运行时，无需另装运行时。不要只复制 EXE，保留同目录的 DLL、`Languages`、`Assets` 和配置规则文件。仓库及下载页面目前需要访问权限。
+本次 Windows x64 包自带 .NET 运行时，无需另装运行时。不要只复制 EXE，保留同目录的 DLL、`Languages`、`Assets` 和配置规则文件。程序包只包含已编译程序、必需运行文件和许可说明。
 
 准备好匹配的卡带、烧录器、USB 数据线和自备的 ROM。旧卡上需要保留的 ROM 和存档先导出备份。
 

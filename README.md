@@ -7,7 +7,7 @@ ChisFlash 烧录卡工具集：**上位机 2.046 r15 / 合卡器 0.92.5**。
 - [本次更新](docs/CHANGELOG-2.046-r15-0.92.5.md)
 - [GBC 自由合卡固件、菜单和教程](https://github.com/ChisLightyear/ChisFlash-GBC-FreeMulticart)
 
-本仓库目前为私有仓库，源码和下载页面需要访问权限。
+源码和下载页面均公开。下载页分别提供上位机与合卡器的 Windows x64 已编译包；教程、截图和源码保留在仓库。
 
 ## 两个工具
 
@@ -16,7 +16,7 @@ ChisFlash 烧录卡工具集：**上位机 2.046 r15 / 合卡器 0.92.5**。
 | `ChisFlashWaterClient` 上位机 | 通过配套烧录器扫描、写入游戏、管理菜单和存档；支持单卡、合卡及对应 GB/GBC/MIX 工作区 |
 | `GbaMultiMenuBuilder` 合卡器 | 离线生成完整合卡镜像，交给兼容烧录器写入；自身不连接卡带烧录 |
 
-上位机链接合卡器的共享源码。编译时保留两个同名目录，并排放在仓库根目录；使用下载包时分别运行 `client/` 或 `builder/` 中的程序。
+上位机链接合卡器的共享源码。编译时保留两个同名目录，并排放在仓库根目录；下载对应程序包后完整解压，运行包根目录中的 EXE。
 
 ## 这个版本
 
@@ -53,10 +53,10 @@ dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
 
 **Client 2.046 r15 / Builder 0.92.5**. [Download](https://github.com/moribaka/ChisFlash-Tools-Exp/releases/tag/v2.046-r15-0.92.5) · [User guide](TUTORIAL.en.md) · [Release notes](docs/CHANGELOG-2.046-r15-0.92.5.md).
 
-The Client works with supported programmers; the Builder creates complete images for compatible programmers. Keep both source directories side by side: the Client links shared Builder sources. The Windows x64 download contains both applications and their .NET runtime.
+The Client works with supported programmers; the Builder creates complete images for compatible programmers. Keep both source directories side by side: the Client links shared Builder sources. Separate Windows x64 compiled downloads are provided for the Client and Builder, each with its .NET runtime. Tutorials, screenshots and sources remain in the repository.
 
 GBA profiles are grouped into multicart and single-game choices. Recognized 256 Mbit chips with 32 MiB capacity use the single-game workflow. GB/GBC capacity filters candidates; users choose the actual cartridge configuration. MIX supports NES/MD/SNES with GLB2 v2 / LNC2 v2 and full-title extensions requiring matching firmware.
 
 Build on Windows with .NET 9 SDK or a newer SDK supporting `net9.0-windows`, using the commands above. All required menu binaries are local to `Assets/`; no developer-drive paths or external source repositories are required.
 
-Games, covers and external Chinese fonts are not included. GBC Chinese menus require a user-supplied 12px font; MIX titles currently use `Assets/Fonts/mplus_hzk_12.ttf`. NS menu source is not included. No repository-wide project licence has been assigned; existing third-party notices remain. This repository and its downloads currently require private-repository access.
+Games, covers and external Chinese fonts are not included. GBC Chinese menus require a user-supplied 12px font; MIX titles currently use `Assets/Fonts/mplus_hzk_12.ttf`. NS menu source is not included. No repository-wide project licence has been assigned; existing third-party notices remain. This repository and its downloads are public.
