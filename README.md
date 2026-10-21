@@ -60,3 +60,37 @@ GBA profiles are grouped into multicart and single-game choices. Recognized 256 
 Build on Windows with .NET 9 SDK or a newer SDK supporting `net9.0-windows`, using the commands above. All required menu binaries are local to `Assets/`; no developer-drive paths or external source repositories are required.
 
 Games, covers and external Chinese fonts are not included. GBC Chinese menus require a user-supplied 12px font; MIX titles currently use `Assets/Fonts/mplus_hzk_12.ttf`. NS menu source is not included. No repository-wide project licence has been assigned; existing third-party notices remain. This repository and its downloads are public.
+
+## 鸣谢
+
+本项目的开发参考和使用了以下社区项目，感谢各位作者的贡献：
+
+- **[lesserkuma / GBA_MultiMenu](https://github.com/lesserkuma/GBA_MultiMenu)**：提供了 GBA 多游戏菜单的原始基础。
+- **[ZaindORp（orzgithub）/ GBA_MultiMenu_extended](https://github.com/orzgithub/GBA_MultiMenu_extended)**：提供了扩展菜单、卡带适配和合卡布局方面的基础。
+- **[ZaindORp（orzgithub）/ GBA_MultiMenu_GUI](https://github.com/orzgithub/GBA_MultiMenu_GUI)**：原合卡制作 GUI 及补丁整合流程，为本项目的桌面合卡器提供了重要参考。
+- **[metroid-maniac / gba-auto-batteryless-patcher](https://github.com/metroid-maniac/gba-auto-batteryless-patcher)**：提供了 GBA 免电保存补丁及配套负载的基础。
+- **[bbsan2k / Flash1M_Repro_SRAM_Patcher](https://github.com/bbsan2k/Flash1M_Repro_SRAM_Patcher)**：提供了 GBA SRAM 补丁表及 1Mbit 存档银行切换处理的参考实现。
+- **[SourMesen / Mesen2](https://github.com/SourMesen/Mesen2)**：本项目使用其 NES 游戏数据库，并参考其 Mapper、ROM 和存档参数识别规则。
+- **[linscon（julpage）/ beggar_socket](https://github.com/julpage/beggar_socket)**：丐中丐烧录器的通信协议和原版上位机，为本项目的兼容通信与烧录流程提供了基础。
+- **[TakWolf / Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)**：提供了经典系菜单使用的像素字体。
+
+桌面程序基于 **Microsoft .NET / Windows Forms**，并使用 `System.IO.Ports`、`System.Management` 等组件。
+
+同时感谢参与测试、反馈问题和分享卡带资料的朋友们。
+
+## Acknowledgements
+
+This project builds on and draws inspiration from the following community projects. We thank their authors for their contributions:
+
+- **[lesserkuma / GBA_MultiMenu](https://github.com/lesserkuma/GBA_MultiMenu)**: The original foundation for the GBA multicart menu.
+- **[ZaindORp (orzgithub) / GBA_MultiMenu_extended](https://github.com/orzgithub/GBA_MultiMenu_extended)**: The foundation for extended menus, cartridge support and multicart layouts.
+- **[ZaindORp (orzgithub) / GBA_MultiMenu_GUI](https://github.com/orzgithub/GBA_MultiMenu_GUI)**: The original multicart-building GUI and integrated patching workflow, which provided an important reference for our desktop Builder.
+- **[metroid-maniac / gba-auto-batteryless-patcher](https://github.com/metroid-maniac/gba-auto-batteryless-patcher)**: The foundation for GBA batteryless-saving patches and their payloads.
+- **[bbsan2k / Flash1M_Repro_SRAM_Patcher](https://github.com/bbsan2k/Flash1M_Repro_SRAM_Patcher)**: Reference implementations for GBA SRAM patch tables and bank switching for 1 Mbit saves.
+- **[SourMesen / Mesen2](https://github.com/SourMesen/Mesen2)**: The NES game database used by this project, along with references for mapper, ROM and save-parameter identification.
+- **[linscon (julpage) / beggar_socket](https://github.com/julpage/beggar_socket)**: The Beggar programmer protocol and original desktop client, which provided the foundation for compatible communication and programming workflows.
+- **[TakWolf / Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)**: The pixel font used in the Classic-family menus.
+
+The desktop applications are built with **Microsoft .NET / Windows Forms** and use components including `System.IO.Ports` and `System.Management`.
+
+We also thank everyone who has helped test the tools, reported issues and shared cartridge information.
