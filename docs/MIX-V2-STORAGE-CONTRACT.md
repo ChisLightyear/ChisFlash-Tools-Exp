@@ -197,7 +197,7 @@ CRC32使用反射多项式0xedb88320、初值0xffffffff、最终按位取反。�
 - SnesMbcxCodec：SNES启动配置／回读／ROM一致性检查。
 - FcDirectoryReader：只读目录、启动参数、名称及bank表，不读取全ROM／标题位图。
 - FcCardEngine：模拟或实际传输后端的扫描、写前校验、逐bank初始化及目录提交。
-- tests/MixStorage：碎片化三平台分配、128 KiB、目录／ROM往返、CRC／越界／重复bank、旧版本拒绝、归档与模拟写卡。
+- 已通过本地离线验证：碎片化三平台分配、128 KiB、目录／ROM往返、CRC／越界／重复bank、旧版本拒绝、归档与模拟写卡。
 
 离线测试不访问串口、不烧录卡带、不证明游戏可运行。额外覆盖 Mapper 191/0、4095/15、未知 submapper、真实 BIN 文件导出/回读、默认勾选、集成烧录按钮、模拟写卡及写保护；这些流程不按核心白名单设门槛。
 

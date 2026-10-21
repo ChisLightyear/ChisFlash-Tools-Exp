@@ -111,4 +111,4 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 dotnet publish GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release -r win-x64 --self-contained true -o dist/builder
 ```
 
-Supply fonts/covers separately. See [verification instructions](tests/README.md).
+Supply fonts/covers separately.

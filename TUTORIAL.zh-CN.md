@@ -131,4 +131,4 @@ dotnet publish ChisFlashWaterClient/ChisFlashWaterClient.csproj -c Release -r wi
 dotnet publish GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release -r win-x64 --self-contained true -o dist/builder
 ```
 
-字体和封面由用户另外准备。验证入口见 [tests/README.md](tests/README.md)。
+字体和封面由用户另外准备。

@@ -43,7 +43,7 @@ dotnet build GbaMultiMenuBuilder/GbaMultiMenuBuilder.csproj -c Release
 
 ## 内容与资源
 
-包含两个工具的源码、语言文件、菜单成品、补丁资源、教程和离线验证工程。
+包含两个工具的源码、语言文件、菜单成品、补丁资源和使用教程。
 
 不附带游戏 ROM、封面图库或外部中文字库。GBC 中文菜单需自备 12px 字库，放在工具的 `Assets/Fonts/`；英文菜单使用内置字形。MIX 标题当前使用用户提供的 `Assets/Fonts/mplus_hzk_12.ttf`。详见[字库说明](GbaMultiMenuBuilder/Assets/Fonts/README.md)。NS 菜单源码不在本次发布范围。
 

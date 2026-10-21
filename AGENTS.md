@@ -17,3 +17,4 @@
 
 - 当前发布基线为上位机2.046 r15、合卡器0.92.5。GBA单卡和擦写流程以ChisFlashWaterClient/AGENTS.md最新约定为准。MIX启动序列和完整名称分别见docs/MIX-LAUNCH-SEQUENCE.md、docs/MIX-FULL-TITLES.md。
 - 默认菜单只从各工具自身Assets读取，不恢复开发机盘符或外部菜单工程查找；外部字体由用户自备。
+- 公开仓库仅整理产品源码、运行资源和使用文档。tests/、截图生成工具及内部验证报告留在本地，不提交或上传；需要验证时使用本地保留的工程。

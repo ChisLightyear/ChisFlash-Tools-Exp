@@ -43,6 +43,8 @@ desktop.ini
 
 # 独立发布输出及用户自备字体
 /dist/
+/tests/
+/docs/RELEASE-VALIDATION-20261020.md
 *.ttf
 *.otf
 *.bdf
