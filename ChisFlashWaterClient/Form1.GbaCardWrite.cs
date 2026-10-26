@@ -166,7 +166,8 @@ public partial class Form1
             {
                 var result = new CompilationBuilder().Build(request, null, cancellation.Token);
                 if (result.SkippedTitles.Count > 0) throw new InvalidDataException("合卡空间不足，部分游戏未能放入；尚未擦写卡带。");
-                return GbaCardWritePlan.CompleteMapping(File.ReadAllBytes(result.OutputPath), UsesWaterLinkTargetMode(mode));
+                return GbaCardWritePlan.CompleteMapping(File.ReadAllBytes(result.OutputPath), UsesWaterLinkTargetMode(mode),
+                    scan.Geometry.DeviceSizeBytes, WaterWlMappingCodec.IsChimeraConfiguration(scan));
             });
             var segments = GbaCardWritePlan.Multicart(image, scan.Geometry.DeviceSizeBytes, scan.Geometry.SectorSizeBytes);
             await Task.Run(() =>

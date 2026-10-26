@@ -21,7 +21,7 @@ public sealed record CartridgeDefinition(
         new(2, "6600M0U0BE", 0x10000000, 0x00040000, 0x00080000),
         new(3, "MSP54LV100", 0x08000000, 0x00020000, 0x00080000),
         new(WaterlineCompatibleId, "S29GL01GS", 0x08000000, 0x00020000, 0x00080000),
-        new(WaterLinkMultiNorId, "WL multi-nor", 0x20000000, 0x00020000, 0x00080000),
+        new(WaterLinkMultiNorId, "Chimera WaterLink", 640 * 1024 * 1024, 0x00020000, 0x00080000),
         new(4, "F0095H0", 0x20000000, 0x00040000, 0x00080000),
         new(S70Gl02GId, "S70GL02G", 0x10000000, 0x00020000, 0x00080000),
         new(Gbc32MiBId, "32MiB", 32 * 1024 * 1024, 0x00020000, 0x00080000),
@@ -31,10 +31,7 @@ public sealed record CartridgeDefinition(
 
     private static readonly IReadOnlyList<CartridgeDefinition> GbaUiSelectable =
         All
-            .Where(static cartridge =>
-                cartridge.Id == WaterlineCompatibleId ||
-                cartridge.Id == WaterLinkMultiNorId ||
-                cartridge.Id == S70Gl02GId)
+            .Where(static cartridge => cartridge.Id == WaterlineCompatibleId || cartridge.Id == WaterLinkMultiNorId || cartridge.Id == S70Gl02GId)
             .ToList();
 
     private static readonly IReadOnlyList<CartridgeDefinition> GbcUiSelectable =
@@ -53,7 +50,7 @@ public sealed record CartridgeDefinition(
     public string UiDisplayName => Id switch
     {
         WaterlineCompatibleId => "128MiB（01G）",
-        WaterLinkMultiNorId => "512MiB (WL multi-nor)",
+        WaterLinkMultiNorId => "640MiB（奇美拉水线）",
         S70Gl02GId => "256MiB（02G）",
         Gbc32MiBId => "32MiB",
         Gbc128MiBId => "128MiB",

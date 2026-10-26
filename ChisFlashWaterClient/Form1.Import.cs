@@ -1833,7 +1833,8 @@ public partial class Form1
 
         if (targetUsesWlMode)
         {
-            byte[] mappingSector = metadataPlan.MappingSector ?? WaterMagicUpgradeBuilder.BuildMappingSector(metadataPlan.MenuConfig);
+            byte[] mappingSector = metadataPlan.MappingSector ?? WaterMagicUpgradeBuilder.BuildMappingSector(metadataPlan.MenuConfig,
+                WaterWlMappingCodec.GetBucketCount(initialScan.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(initialScan));
             byte[] menuRomBytes = LoadSelectedGbaMenuRom(usesWlLayout: true, gbaMenuSelection, out string menuRomPath);
             byte[] headAreaImage = WaterMagicUpgradeBuilder.BuildHeadAreaImage(
                 menuRomBytes,
@@ -2224,7 +2225,7 @@ public partial class Form1
 
         byte[] mappingSector = UsesChm1Mode(burnProfileMode)
             ? Chm1Layout.BuildMappingSector(finalRecords.Select(record => record.PhysicalBuckets.ToArray()).ToArray(), initialScan.Geometry.DeviceSizeBytes)
-            : WaterMagicUpgradeBuilder.BuildMappingSector(finalRecords);
+            : WaterMagicUpgradeBuilder.BuildMappingSector(finalRecords, WaterWlMappingCodec.GetBucketCount(initialScan.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(initialScan));
         if (!WaterWlMappingCodec.TryParse(mappingSector, WaterWlMappingCodec.Offset, false, out WaterWlMappingInfo wlMapping, out string parseError))
         {
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(parseError)
@@ -3055,7 +3056,20 @@ public partial class Form1
 
     private void DataGridViewRoms_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
-        if (SupportsGbaCardMode()) { if (e.RowIndex >= 0) { dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[e.RowIndex].Cells["Title"]; _ = RunUiActionSafelyAsync(SelectGbaListSlotAsync); } return; }
+        if (SupportsGbaCardMode())
+        {
+            if (e.RowIndex >= 0)
+            {
+                DataGridViewRow row = dataGridViewRoms.Rows[e.RowIndex];
+                if (ReferenceEquals(row.Tag, GbaMenuRowTag))
+                {
+                    dataGridViewRoms.CurrentCell = row.Cells["Title"];
+                    _ = RunUiActionSafelyAsync(SelectGbaListSlotAsync);
+                }
+            }
+
+            return;
+        }
         if (IsGbaSingleCardMode()) { if (e.RowIndex >= 0) _ = RunUiActionSafelyAsync(SelectSingleGbaFileAsync); return; }
         if (IsMbc5FixedSlotMode()) { if (e.RowIndex >= 0 && ActiveMbc5Layout.GetSlot(e.RowIndex).Enabled) _ = RunUiActionSafelyAsync(SelectMbc5FilesAsync); return; }
         if (isBusy || isAnalyzingQueueImports || IsWorkspaceModificationLocked() || e.RowIndex < 0)
@@ -3070,6 +3084,23 @@ public partial class Form1
 
         dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[e.RowIndex].Cells[e.ColumnIndex];
         dataGridViewRoms.BeginEdit(true);
+    }
+
+    private void DataGridViewRoms_CellClick(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (!SupportsGbaCardMode() || e.RowIndex < 0)
+        {
+            return;
+        }
+
+        DataGridViewRow row = dataGridViewRoms.Rows[e.RowIndex];
+        if (!ReferenceEquals(row.Tag, GbaAddGameRowTag))
+        {
+            return;
+        }
+
+        dataGridViewRoms.CurrentCell = row.Cells["Title"];
+        _ = RunUiActionSafelyAsync(SelectGbaListSlotAsync);
     }
 
     private void DataGridViewRoms_CellContentClick(object? sender, DataGridViewCellEventArgs e)

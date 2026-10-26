@@ -9,7 +9,7 @@ namespace ChisFlashWaterClient;
 public static class WaterCartScanner
 {
     public const int BucketSizeBytes = 4 * 1024 * 1024;
-    private const int WaterLinkMultiNorSizeBytes = 512 * 1024 * 1024;
+    private const int LegacyWaterLinkMultiNorSizeBytes = 512 * 1024 * 1024;
     private const int WaterLinkMultiNorChipSizeBytes = 128 * 1024 * 1024;
     private const int LegacyBeggarTimeoutMs = 3000;
     private const int GbcProbeTimeoutMs = 3000;
@@ -44,7 +44,7 @@ public static class WaterCartScanner
     private const uint ExtendedSlotInfoMagic = 0x534C0000u;
     private const uint ExtendedSlotInfoFlagWaterLinkFixedLayout = 0x8000u;
     private const int ExtendedSlotInfoNorMaskShift = 9;
-    private const int ExtendedSlotInfoNorMaskBits = 0x0F;
+    private const int ExtendedSlotInfoNorMaskBits = 0x1F;
 
     private sealed record UniversalImageManifestLayout(
         int ItemListOffset,
@@ -2044,9 +2044,9 @@ public static class WaterCartScanner
         int detectedChipCount = runtimeStatus.NorChipCount;
         if (detectedChipCount <= 0)
         {
-            detectedChipCount = WaterLinkMultiNorSizeBytes / WaterLinkMultiNorChipSizeBytes;
+            detectedChipCount = LegacyWaterLinkMultiNorSizeBytes / WaterLinkMultiNorChipSizeBytes;
         }
-        detectedChipCount = Math.Clamp(detectedChipCount, 1, 4);
+        detectedChipCount = Math.Clamp(detectedChipCount, 1, 5);
 
         geometry.DeviceSizeBytes = detectedChipCount * WaterLinkMultiNorChipSizeBytes;
         if (geometry.SectorSizeBytes > 0)
@@ -2060,7 +2060,7 @@ public static class WaterCartScanner
         log?.Invoke(Tf(
             "log",
             "waterlink_multi_nor_profile",
-            "WaterLink multi-NOR detected: capacity {0}, physical NOR chips {1}, logical 128 MiB targets {2}/4, physical chip boundary {3}, explicit erase-before-write.",
+            "WaterLink multi-NOR detected: capacity {0}, physical NOR chips {1}, logical 128 MiB targets {2}/5, physical chip boundary {3}, explicit erase-before-write.",
             FormatMiBSize(geometry.DeviceSizeBytes),
             detectedPhysicalChipCount,
             detectedChipCount,
@@ -2117,7 +2117,7 @@ public static class WaterCartScanner
         return Math.Clamp(
             DivCeil(logicalTargetCount, logicalTargetsPerPhysicalChip),
             1,
-            4);
+            5);
     }
 
     private static int CountSetBits(int value)
@@ -2254,7 +2254,7 @@ public static class WaterCartScanner
         uint currentGameSlot = BitConverter.ToUInt32(extendedPayload, 24);
         uint saveDelayMs = BitConverter.ToUInt32(extendedPayload, 28);
         status.IsAvailable = true;
-        status.BucketId = (int)(slotInfoWord & 0x7Fu);
+        status.BucketId = (int)((slotInfoWord & 0x7Fu) | ((slotInfoWord >> 7) & 0x80u));
         status.MapperLocked = (slotInfoWord & 0x80u) != 0;
         status.GameModeActive = (slotInfoWord & 0x100u) != 0;
         status.SupportsWaterLinkFixedLayout = (slotInfoWord & ExtendedSlotInfoFlagWaterLinkFixedLayout) != 0;

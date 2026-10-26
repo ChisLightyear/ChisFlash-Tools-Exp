@@ -719,6 +719,7 @@ public partial class Form1
         dataGridViewRoms.SizeChanged += (_, _) => ResizeMbc5Rows();
         dataGridViewRoms.SelectionChanged += (_, _) => { if (!rebuildingMbc5Grid && !rebuildingGbaSingleGrid) UpdateActionButtons(isBusy); };
         dataGridViewRoms.CellMouseDown += DataGridViewRoms_CellMouseDown;
+        dataGridViewRoms.CellClick += DataGridViewRoms_CellClick;
         dataGridViewRoms.CellContentClick += DataGridViewRoms_CellContentClick;
         dataGridViewRoms.CellDoubleClick += DataGridViewRoms_CellDoubleClick;
         dataGridViewRoms.CellBeginEdit += DataGridViewRoms_CellBeginEdit;

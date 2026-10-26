@@ -4032,7 +4032,8 @@ public partial class Form1
                 menuRomBytes,
                 menuRomPath,
                 BuildEmptyWaterLinkMenuConfig(),
-                []);
+                [], WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
+                WaterWlMappingCodec.IsChimeraConfiguration(scanSnapshot));
         }
 
         if (CanRepairCurrentScan(out _))
@@ -4067,7 +4068,9 @@ public partial class Form1
                 migratedMenuConfig.Status.SectorSize);
             byte[] statusSector = WaterMenuConfigCodec.BuildStatusSector(migratedMenuConfig.Status);
             List<WlRomMapRecordInfo> migratedRecords = BuildWlMappingRecordsFromMenuConfig(migratedMenuConfig);
-            byte[] mappingSector = WaterMagicUpgradeBuilder.BuildMappingSector(migratedRecords);
+            byte[] mappingSector = WaterMagicUpgradeBuilder.BuildMappingSector(migratedRecords,
+                WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
+                WaterWlMappingCodec.IsChimeraConfiguration(scanSnapshot));
             byte[] headAreaImage = WaterMagicUpgradeBuilder.BuildHeadAreaImage(
                 menuRomBytes,
                 migratedMenuConfig,
@@ -4110,7 +4113,8 @@ public partial class Form1
                 menuRomBytes,
                 menuRomPath,
                 currentMenuConfig,
-                mappingRecords);
+                mappingRecords, WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
+                WaterWlMappingCodec.IsChimeraConfiguration(scanSnapshot));
         }
 
         if (scanSnapshot.WlMapping.IsDetected)
@@ -4119,7 +4123,9 @@ public partial class Form1
                 menuRomBytes,
                 menuRomPath,
                 BuildEmptyWaterLinkMenuConfig(),
-                CloneWlMappingRecords(scanSnapshot.WlMapping.Records.OrderBy(record => record.EntrySlot)));
+                CloneWlMappingRecords(scanSnapshot.WlMapping.Records.OrderBy(record => record.EntrySlot)),
+                WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
+                WaterWlMappingCodec.IsChimeraConfiguration(scanSnapshot));
         }
 
         WaterMagicInstallPlan installPlan = WaterMagicUpgradeBuilder.BuildInstallPlan(menuRomBytes, scanSnapshot);
@@ -4136,14 +4142,16 @@ public partial class Form1
         byte[] menuRomBytes,
         string menuRomPath,
         WaterMenuConfigInfo menuConfig,
-        IReadOnlyList<WlRomMapRecordInfo> mappingRecords)
+        IReadOnlyList<WlRomMapRecordInfo> mappingRecords,
+        int bucketCount,
+        bool chimeraLayout)
     {
         byte[] currentItemListSector = WaterMenuConfigCodec.BuildItemListSector(
             menuConfig.Items,
             menuConfig.Status.ItemListAddress,
             menuConfig.Status.SectorSize);
         byte[] currentStatusSector = WaterMenuConfigCodec.BuildStatusSector(menuConfig.Status);
-        byte[] currentMappingSector = WaterMagicUpgradeBuilder.BuildMappingSector(mappingRecords);
+        byte[] currentMappingSector = WaterMagicUpgradeBuilder.BuildMappingSector(mappingRecords, bucketCount, chimeraLayout);
         byte[] currentHeadAreaImage = WaterMagicUpgradeBuilder.BuildHeadAreaImage(
             menuRomBytes,
             menuConfig,
@@ -5197,7 +5205,7 @@ public partial class Form1
 
         try
         {
-            for (int targetIndex = 0; targetIndex < 4; targetIndex++)
+            for (int targetIndex = 0; targetIndex < 5; targetIndex++)
             {
                 if ((targetMask & (1 << targetIndex)) == 0)
                 {
@@ -5251,7 +5259,7 @@ public partial class Form1
         }
         finally
         {
-            for (int targetIndex = 0; targetIndex < 4; targetIndex++)
+            for (int targetIndex = 0; targetIndex < 5; targetIndex++)
             {
                 if ((targetMask & (1 << targetIndex)) != 0)
                 {
@@ -5456,7 +5464,7 @@ public partial class Form1
                     protocol.DescribeLastAckFailure()));
             }
 
-            for (int chipIndex = 0; chipIndex < 4; chipIndex++)
+            for (int chipIndex = 0; chipIndex < 5; chipIndex++)
             {
                 if ((chipMask & (1 << chipIndex)) == 0)
                 {
@@ -5552,7 +5560,7 @@ public partial class Form1
             return scanResult.Geometry.IsS70Gl02GsDualDie ? 0x03 : 0x01;
         }
 
-        int chipMask = scanResult.RuntimeStatus.NorChipValidMask & 0x0F;
+        int chipMask = scanResult.RuntimeStatus.NorChipValidMask & 0x1F;
         if (chipMask != 0)
         {
             return chipMask;
@@ -5565,7 +5573,7 @@ public partial class Form1
             chipCount = scanResult.Geometry.DeviceSizeBytes / NorChipSizeBytes;
         }
 
-        chipCount = Math.Clamp(chipCount, 1, 4);
+        chipCount = Math.Clamp(chipCount, 1, 5);
         return (1 << chipCount) - 1;
     }
 
@@ -5654,7 +5662,7 @@ public partial class Form1
     }
 
     private static int CountPpbTargets(int chipMask) =>
-        Enumerable.Range(0, 4).Count(index => (chipMask & (1 << index)) != 0);
+        Enumerable.Range(0, 5).Count(index => (chipMask & (1 << index)) != 0);
 
     private ushort ReadGbaPpbAsoWord(
         WaterDeviceProtocol protocol,

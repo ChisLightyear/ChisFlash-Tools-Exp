@@ -337,6 +337,7 @@ public sealed class BatterylessPatchService
         6 => BatterylessFlashProfile.Flash2,
         3 => BatterylessFlashProfile.Flash3,
         CartridgeDefinition.WaterlineCompatibleId => BatterylessFlashProfile.Flash4,
+        CartridgeDefinition.WaterLinkMultiNorId => BatterylessFlashProfile.Flash4,
         5 => BatterylessFlashProfile.Flash4,
         _ => throw new InvalidOperationException($"Unsupported flash profile for cartridge type: {cartridge.Name}"),
     };

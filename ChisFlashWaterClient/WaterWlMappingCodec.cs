@@ -12,7 +12,8 @@ public static class WaterWlMappingCodec
     public const ushort ChecksummedVersion = 0x0002;
     public const ushort Version = ChecksummedVersion;
     public const int MinimumBucketCount = 32;
-    public const int BucketCount = 128;
+    public const int DefaultBucketCount = 128;
+    public const int BucketCount = 160;
     public const int RomMapRecordCount = 512;
     public const int RomMapRecordSize = 32;
     public const int RomPhysicalBucketCount = BucketCount - 1;
@@ -23,6 +24,19 @@ public static class WaterWlMappingCodec
     public const int MappingChecksumOffset = 0x1C;
 
     private static readonly uint[] Crc32Table = BuildCrc32Table();
+
+    public static bool IsChimeraConfiguration(WaterCartScanResult scan) =>
+        scan.Geometry.IsWaterLinkMultiNor || (scan.WlMapping.IsDetected &&
+            (scan.WlMapping.Header.Flags & GbaMultiMenuBuilder.Services.WaterLinkLayout.ChimeraFlag) != 0);
+
+    public static int GetBucketCount(int capacityBytes)
+    {
+        int count = capacityBytes / WaterCartScanner.BucketSizeBytes;
+        if (capacityBytes % WaterCartScanner.BucketSizeBytes != 0 ||
+            count < MinimumBucketCount || count > BucketCount)
+            throw new InvalidOperationException("水线容量须为 128～640 MiB，且按 4 MiB 对齐。");
+        return count;
+    }
 
     public static bool TryReadHeader(byte[] sectorData, out WlMappingHeaderInfo header)
     {
@@ -117,6 +131,7 @@ public static class WaterWlMappingCodec
         if (headerSize < HeaderSize ||
             bucketOwnerEntrySize != sizeof(ushort) ||
             bucketOwnerCount < MinimumBucketCount ||
+            bucketOwnerCount > BucketCount ||
             romMapRecordSize != RomMapRecordSize ||
             romMapRecordCount < RomMapRecordCount)
         {
@@ -169,7 +184,7 @@ public static class WaterWlMappingCodec
             for (int i = 0; i < logicalBucketCount; i++)
             {
                 int physicalBucket = sectorData[recordOffset + 1 + i];
-                if (physicalBucket <= 0 || physicalBucket > RomPhysicalBucketCount)
+                if (physicalBucket <= 0 || physicalBucket > RomPhysicalBucketCount || physicalBucket >= bucketOwnerCount)
                 {
                     validRecord = false;
                     break;
@@ -249,7 +264,9 @@ public static class WaterWlMappingCodec
     public static bool TryExpandBucketOwners(
         byte[] sourceSectorData,
         out byte[] updatedSectorData,
-        out string errorMessage)
+        out string errorMessage,
+        int targetBucketCount = DefaultBucketCount,
+        bool chimeraLayout = false)
     {
         updatedSectorData = [];
         errorMessage = string.Empty;
@@ -259,15 +276,22 @@ public static class WaterWlMappingCodec
             return false;
         }
 
-        if (mapping.Header.BucketOwnerCount >= BucketCount)
+        if (targetBucketCount < MinimumBucketCount || targetBucketCount > BucketCount)
+        {
+            errorMessage = "水线映射表容量超出支持范围。";
+            return false;
+        }
+
+        if (mapping.Header.BucketOwnerCount >= targetBucketCount)
         {
             updatedSectorData = sourceSectorData.ToArray();
+            if (chimeraLayout) MarkChimeraConfiguration(updatedSectorData);
             return true;
         }
 
         int ownerOffset = mapping.Header.BucketOwnerOffset;
         int ownerEntrySize = mapping.Header.BucketOwnerEntrySize;
-        int newOwnerEnd = ownerOffset + (BucketCount * ownerEntrySize);
+        int newOwnerEnd = ownerOffset + (targetBucketCount * ownerEntrySize);
         int newRecordOffset = AlignUp(newOwnerEnd, sizeof(uint));
         int recordTableBytes = mapping.Header.RomMapRecordCount * mapping.Header.RomMapRecordSize;
         int oldRecordOffset = mapping.Header.RomMapRecordOffset;
@@ -288,7 +312,7 @@ public static class WaterWlMappingCodec
         updatedSectorData.AsSpan(oldRecordOffset, oldRecordEnd - oldRecordOffset).Fill(0xFF);
         updatedSectorData.AsSpan(newRecordOffset, newRecordEnd - newRecordOffset).Fill(0xFF);
 
-        for (int bucket = mapping.Header.BucketOwnerCount; bucket < BucketCount; bucket++)
+        for (int bucket = mapping.Header.BucketOwnerCount; bucket < targetBucketCount; bucket++)
         {
             int bucketOffset = ownerOffset + (bucket * ownerEntrySize);
             BinaryPrimitives.WriteUInt16LittleEndian(
@@ -299,12 +323,20 @@ public static class WaterWlMappingCodec
         Buffer.BlockCopy(recordTable, 0, updatedSectorData, newRecordOffset, recordTable.Length);
         BinaryPrimitives.WriteUInt16LittleEndian(
             updatedSectorData.AsSpan(0x12, sizeof(ushort)),
-            BucketCount);
+            (ushort)targetBucketCount);
         BinaryPrimitives.WriteUInt32LittleEndian(
             updatedSectorData.AsSpan(0x14, sizeof(uint)),
             (uint)newRecordOffset);
         SealSector(updatedSectorData);
+        if (chimeraLayout) MarkChimeraConfiguration(updatedSectorData);
         return true;
+    }
+
+    private static void MarkChimeraConfiguration(byte[] sector)
+    {
+        uint flags = BinaryPrimitives.ReadUInt32LittleEndian(sector.AsSpan(8));
+        BinaryPrimitives.WriteUInt32LittleEndian(sector.AsSpan(8), flags | GbaMultiMenuBuilder.Services.WaterLinkLayout.ChimeraFlag);
+        SealSector(sector);
     }
 
     public static bool TryClearRecord(byte[] sourceSectorData, int entrySlot, out byte[] updatedSectorData, out WlMappingDeletePlan plan, out string errorMessage)

@@ -124,7 +124,7 @@ public partial class Form1
 
         try
         {
-            ScanReadAttempt attempt = await ReadScanResultAsync(activePortName, analyzeConfiguration: false);
+            ScanReadAttempt attempt = await ReadScanResultAsync(activePortName, analyzeConfiguration: true);
             if (attempt.Result is not WaterCartScanResult result)
             {
                 ResetCurrentCartAnalysisView();
@@ -337,7 +337,10 @@ public partial class Form1
                             "beggar_scan_mode_gba",
                             "Beggar cart mode is set to GBA. Using the legacy NOR scan."));
                         result = WaterCartScanner.ScanLegacyBeggar(protocol, AppendLog, scanContent: analyzeConfiguration, scanGameHeaders: !analyzeConfiguration);
-                        bool isChm1 = burnProfileMode != BurnProfileMode.ChisFlash10 && analyzeConfiguration && !IsSingleGameOnlyGbaScan(result) && ReadDeclaredMagicSupport(protocol, programmerKind);
+                        bool isChm1 = burnProfileMode != BurnProfileMode.ChisFlash10 &&
+                            analyzeConfiguration &&
+                            !IsSingleGameOnlyGbaScan(result) &&
+                            ReadDeclaredMagicSupport(protocol, programmerKind);
                         if (isChm1) AppendLog(T("log", "chm1_detected", "Standalone 01G/02G fragment management cartridge detected."));
                         result.IsChm1 = isChm1;
                         if (result.UsesChm1Layout)
@@ -1242,19 +1245,32 @@ public partial class Form1
 
     private bool TrySelectFirstRecognizedSerialPort()
     {
+        // 刷新后没有可恢复的选项时，优先选择已识别的两种烧录器；未知串口最后再作为候选。
+        foreach (ProgrammerKind preferredKind in new[] { ProgrammerKind.BeggarLegacy, ProgrammerKind.WaterLink })
+        {
+            for (int i = 0; i < comboBoxPorts.Items.Count; i++)
+            {
+                string displayName = comboBoxPorts.Items[i]?.ToString() ?? string.Empty;
+                if (!serialPorts.TryGetValue(displayName, out SerialPortEntry? entry) || entry.Kind != preferredKind)
+                {
+                    continue;
+                }
+
+                comboBoxPorts.SelectedIndex = i;
+                return true;
+            }
+        }
+
         for (int i = 0; i < comboBoxPorts.Items.Count; i++)
         {
             string displayName = comboBoxPorts.Items[i]?.ToString() ?? string.Empty;
-            if (!serialPorts.TryGetValue(displayName, out SerialPortEntry? entry))
+            if (!serialPorts.TryGetValue(displayName, out SerialPortEntry? entry) || entry.Kind != ProgrammerKind.Unknown)
             {
                 continue;
             }
 
-            if (entry.Kind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy or ProgrammerKind.Unknown)
-            {
-                comboBoxPorts.SelectedIndex = i;
-                return true;
-            }
+            comboBoxPorts.SelectedIndex = i;
+            return true;
         }
 
         return false;
@@ -1355,47 +1371,19 @@ public partial class Form1
 
         burnProfileModeOptions = programmerKind != ProgrammerKind.WaterLink && beggarCartMode == BeggarCartMode.Gb
             ? GetGbcProfileModes(GetGbcProfileCapacity()).Select(mode => new BurnProfileModeOption(GetBurnProfileModeDisplayName(mode), mode)).ToList()
-            : programmerKind switch
-            {
-                ProgrammerKind.BeggarLegacy =>
-                [
-                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
-                ],
-                ProgrammerKind.Unknown =>
-                [
-                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
-                ],
-                ProgrammerKind.WaterLink =>
-                [
-                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
-                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"), BurnProfileMode.WaterLinkMultiNor),
-                ],
-                _ =>
-                [
-                    new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"), BurnProfileMode.WaterLinkSram),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"), BurnProfileMode.BeggarNoBattery),
-                    new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"), BurnProfileMode.BeggarFram),
-                ],
-            };
+            :
+            [
+                new BurnProfileModeOption(T("value", "burn_profile_waterlink_sram", "WaterLink"), BurnProfileMode.WaterLinkSram),
+                new BurnProfileModeOption(T("value", "burn_profile_waterlink_multi_nor", "Chimera WaterLink"), BurnProfileMode.WaterLinkMultiNor),
+                new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1), BurnProfileMode.Chm1),
+                new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1NoBattery), BurnProfileMode.Chm1NoBattery),
+                new BurnProfileModeOption(T("value", "burn_profile_beggar_no_battery", "01G/02G Ordinary Card (No Battery)"), BurnProfileMode.BeggarNoBattery),
+                new BurnProfileModeOption(T("value", "burn_profile_beggar_fram", "01G/02G Ordinary Card (Battery / FRAM)"), BurnProfileMode.BeggarFram),
+            ];
 
         burnProfileModeSelectionInitialized = false;
         if (beggarCartMode == BeggarCartMode.Gba)
             burnProfileModeOptions.AddRange(GetGbaSingleProfileOptions());
-        if (IsBeggarCompatibleProgrammer(programmerKind) && beggarCartMode == BeggarCartMode.Gba && currentScanResult?.IsChm1 == true)
-        {
-            burnProfileModeOptions.RemoveAll(option => UsesWaterLinkTargetMode(option.Mode));
-            burnProfileModeOptions.Insert(0, new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1), BurnProfileMode.Chm1));
-            burnProfileModeOptions.Insert(1, new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.Chm1NoBattery), BurnProfileMode.Chm1NoBattery));
-        }
-        if (IsGbaSingleGameOnlyHardware())
-        {
-            burnProfileModeOptions = GetGbaSingleProfileOptions().ToList();
-            if (!IsGbaSingleProfile(preferredMode)) preferredMode = BurnProfileMode.GbaSingle;
-        }
         comboBoxBurnProfileMode.DataSource = null;
         BindBurnProfileOptions();
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.FirstOrDefault(option => option.Mode == preferredMode)
@@ -1740,7 +1728,8 @@ public partial class Form1
         bool canExportChip = false;
         bool canImportChip = false;
         bool canClearChip = false;
-        bool canReplace = !IsWorkspaceModificationLocked() &&
+        bool canReplace = !SupportsGbaCardMode() &&
+            !IsWorkspaceModificationLocked() &&
             selectedEntry is not null &&
             !selectedEntry.IsMenu &&
             (selectedEntry.FoundInMenuConfig || selectedEntry.FoundInWlMapping || selectedEntry.RomOffsetBank >= 0);

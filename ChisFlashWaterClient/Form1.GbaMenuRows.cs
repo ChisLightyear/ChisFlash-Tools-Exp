@@ -24,8 +24,7 @@ public partial class Form1
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
         if (IsSelectedGbaMenuRow()) { await SelectGbaMenuAsync(); return; }
         if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
-        bool replace = TryGetSelectedWorkspaceRow(out _, out _);
-        using var picker = new OpenFileDialog { Filter = "GBA游戏 (*.gba;*.zip)|*.gba;*.zip", Multiselect = !replace };
+        using var picker = new OpenFileDialog { Filter = "GBA游戏 (*.gba;*.zip)|*.gba;*.zip", Multiselect = true };
         if (picker.ShowDialog(this) == DialogResult.OK) await ImportGbaListFilesAsync(picker.FileNames);
     }
 
@@ -36,31 +35,9 @@ public partial class Form1
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能修改游戏列表。");
         if (IsSelectedGbaMenuRow()) { await ImportGbaMenuFilesAsync(paths); return; }
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(paths); return; }
-        if (!TryGetSelectedWorkspaceRow(out var row, out int index) || row is null)
-        {
-            appendingGbaListGames = true;
-            try { await AddPendingRomFilesAsync(paths); }
-            finally { appendingGbaListGames = false; }
-            return;
-        }
-        string[] files = paths.ToArray();
-        if (files.Length != 1) throw new InvalidDataException("替换游戏槽每次只允许导入一个游戏；请在末尾空行添加多个游戏。");
-        var imports = await Task.Run(() => CreatePendingRomImportItemsFromSource(files[0], false));
-        if (imports.Items.Count != 1) throw new InvalidDataException("替换游戏槽需要一个游戏。");
-        var pending = imports.Items[0];
-        if (pending.ImportedPlatform is not (null or RomPlatform.Gba) || !WaterCartScanner.HasValidGbaHeader(File.ReadAllBytes(pending.FilePath)))
-            throw new InvalidDataException("请选择有效的GBA游戏ROM。");
-        var mode = GetSelectedBurnProfileMode();
-        int length = GetEstimatedPreparedRomLengthBytes(pending, pending.FileSizeBytes, mode);
-        if (!IsGbaConversionDraft() && row.CartEntry is { } cart && EstimateWorkspaceAllocatedSizeBytes(pending, length, mode) > GetCartEntryAllocatedSizeBytes(cart))
-            throw new InvalidDataException("替换游戏超过当前映射的容量，请添加到空游戏行。");
-        var previous = row.PendingItem;
-        row.PendingItem = pending;
-        if (!TryValidateWorkspaceCapacity(out string reason)) { row.PendingItem = previous; throw new InvalidDataException(reason); }
-        if (previous is not null) pendingImportItems.Remove(previous);
-        pendingImportItems.Add(pending);
-        if (IsGbaConversionDraft() && row.CartEntry is not null) { gbaKeepCurrentGame!.Checked = false; row.CartEntry = null; }
-        RefreshWorkspaceGrid(index);
+        appendingGbaListGames = true;
+        try { await AddPendingRomFilesAsync(paths); }
+        finally { appendingGbaListGames = false; }
     }
 
     private bool IsGbaDirectoryDamaged() => SupportsGbaCardMode() && !IsGbaMulticartUnavailable() &&
@@ -104,9 +81,9 @@ public partial class Form1
         bool damaged = IsGbaDirectoryDamaged();
         bool pending = gbaDraftMenu is not null;
         bool unread = !pending && currentScanResult?.IsNorProbeOnly == true;
-        string state = unread ? "未分析" : damaged ? "目录异常" : pending ? "待写入" : HasGbaListMenu() ? "卡内" : "未添加";
+        string state = unread ? "待分析配置" : damaged ? "目录异常" : pending ? "待写入" : HasGbaListMenu() ? "卡内" : "未添加";
         string title = pending ? gbaDraftMenuName : HasGbaListMenu()
-            ? currentScanResult!.Games.FirstOrDefault(game => game.IsMenu)?.Title ?? "合卡菜单" : unread ? "菜单配置尚未分析" : "双击添加菜单";
+            ? currentScanResult!.Games.FirstOrDefault(game => game.IsMenu)?.Title ?? "合卡菜单" : unread ? "请先分析配置" : "双击添加菜单";
         int index = dataGridViewRoms.Rows.Add("菜单", state, pending ? "文件" : HasGbaListMenu() ? "NOR" : "—", "菜单", title,
             pending ? WaterCartScanner.DecodeGbaHeaderTitle(gbaDraftMenu!) : string.Empty,
             pending ? FormatMiBSize(gbaDraftMenu!.Length) : "—", "—", false,
@@ -131,7 +108,7 @@ public partial class Form1
 
     private void AddGbaEmptyGameRow(int number)
     {
-        int index = dataGridViewRoms.Rows.Add("游戏" + number, "可添加", "—", "GBA", "双击添加游戏", string.Empty,
+        int index = dataGridViewRoms.Rows.Add("游戏" + number, "可添加", "—", "GBA", "点击添加游戏", string.Empty,
             "—", "—", false, string.Empty, "—", string.Empty);
         dataGridViewRoms.Rows[index].Tag = GbaAddGameRowTag;
         dataGridViewRoms.Rows[index].ReadOnly = true;
@@ -164,7 +141,7 @@ public partial class Form1
         var menu = new ComboBox { Left = 18, Top = 18, Width = 365, DropDownStyle = ComboBoxStyle.DropDownList };
         menu.Items.AddRange(comboBoxGbaMenu.Items.Cast<object>().ToArray()); menu.SelectedItem = comboBoxGbaMenu.SelectedItem;
         var builtin = new Button { Text = "使用所选菜单", Left = 18, Top = 66, Width = 120 };
-        var file = new Button { Text = "从文件导入…", Left = 145, Top = 66, Width = 120 };
+        var file = new Button { Text = "自定义菜单…", Left = 145, Top = 66, Width = 120 };
         var cancel = new Button { Text = "取消", Left = 278, Top = 66, Width = 105, DialogResult = DialogResult.Cancel };
         string? customPath = null;
         builtin.Click += (_, _) => dialog.DialogResult = DialogResult.OK;
@@ -213,7 +190,7 @@ public partial class Form1
             gbaDraftMenu = bytes.ToArray(); gbaDraftMenuName = name;
             if (conversion)
             {
-                gbaKeepCurrentGame!.Checked = first is null && GetGbaSingleGame() is not null;
+                gbaKeepCurrentGame!.Checked = false;
                 if (first is not null)
                 {
                     pendingImportItems.Clear(); pendingImportItems.Add(first);
@@ -305,7 +282,7 @@ public partial class Form1
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !disabled;
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && (HasGbaListMenu() || gbaSingleRom is not null || GetGbaSingleGame() is not null || workspaceRows.Count > 0);
-        menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = idle && !disabled;
+        menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = false;
         menuReplaceMenuFile.Enabled = idle && !IsGbaMulticartUnavailable();
         if (IsGbaMulticartUnavailable()) comboBoxGbaMenu.Enabled = checkBoxWaitcntPatch.Enabled = false;
         if (disabled || menu || (dataGridViewRoms.SelectedRows.Count > 0 && ReferenceEquals(dataGridViewRoms.SelectedRows[0].Tag, GbaAddGameRowTag)))

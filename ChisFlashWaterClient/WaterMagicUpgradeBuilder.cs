@@ -281,7 +281,7 @@ public static class WaterMagicUpgradeBuilder
             LocalizedText.T(
                 "error",
                 "magic_menu_not_found",
-                "Magic menu ROM resource was not found. Make sure Assets\\wl_magic_menu.gba exists."));
+                "Magic menu ROM resource was not found. Build GBA_MultiMenu_extended_WL first, or make sure Assets\\wl_magic_menu.gba exists."));
     }
 
     public static byte[] BuildMenuAreaImage(byte[] menuRomBytes, WaterMenuConfigInfo menuConfig, NorGeometryInfo geometry)
@@ -393,7 +393,7 @@ public static class WaterMagicUpgradeBuilder
             migratedMenuConfig.Status.ItemListAddress,
             migratedMenuConfig.Status.SectorSize);
         byte[] statusSector = WaterMenuConfigCodec.BuildStatusSector(migratedMenuConfig.Status);
-        byte[] mappingSector = BuildMappingSector(migratedMenuConfig);
+        byte[] mappingSector = BuildMappingSector(migratedMenuConfig, WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
 
         return new WaterMagicUpgradePlan
         {
@@ -424,7 +424,7 @@ public static class WaterMagicUpgradeBuilder
             installedMenuConfig.Status.ItemListAddress,
             installedMenuConfig.Status.SectorSize);
         byte[] statusSector = BuildStatusSector(installedMenuConfig.Status);
-        byte[] mappingSector = BuildMappingSector(CreateMappingRecords(installedMenuConfig));
+        byte[] mappingSector = BuildMappingSector(CreateMappingRecords(installedMenuConfig), WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
         byte[] headAreaImage = BuildHeadAreaImage(
             menuRomBytes,
             installedMenuConfig,
@@ -474,7 +474,7 @@ public static class WaterMagicUpgradeBuilder
             byte[] legacyStatusSector = WaterMenuConfigCodec.BuildStatusSector(legacyRepairedMenuConfig.Status);
 
             List<WlRomMapRecordInfo> legacyRepairedRecords = CreateMappingRecords(legacyRepairedMenuConfig);
-            byte[] legacyMappingSector = BuildMappingSector(legacyRepairedRecords);
+            byte[] legacyMappingSector = BuildMappingSector(legacyRepairedRecords, WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
 
             return new WaterMagicRepairPlan
             {
@@ -561,7 +561,7 @@ public static class WaterMagicUpgradeBuilder
             repairedMenuConfig.Status.SectorSize);
         byte[] statusSector = WaterMenuConfigCodec.BuildStatusSector(repairedMenuConfig.Status);
 
-        byte[] mappingSector = BuildMappingSector(repairedRecords);
+        byte[] mappingSector = BuildMappingSector(repairedRecords, WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
 
         List<MenuItemConfigInfo> removedMenuOnlyItems = scanResult.MenuConfig.Items
             .Where(item => syncInfo.MenuOnlySlots.Contains(item.Index))
@@ -621,7 +621,7 @@ public static class WaterMagicUpgradeBuilder
             repairedMenuConfig.Status.ItemListAddress,
             repairedMenuConfig.Status.SectorSize);
         byte[] statusSector = WaterMenuConfigCodec.BuildStatusSector(repairedMenuConfig.Status);
-        byte[] mappingSector = BuildMappingSector(repairedRecords);
+        byte[] mappingSector = BuildMappingSector(repairedRecords, WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
 
         return new WaterMagicRepairPlan
         {
@@ -644,7 +644,7 @@ public static class WaterMagicUpgradeBuilder
         };
     }
 
-    public static byte[] BuildMappingSector(WaterMenuConfigInfo menuConfig)
+    public static byte[] BuildMappingSector(WaterMenuConfigInfo menuConfig, int bucketCount = WaterWlMappingCodec.DefaultBucketCount, bool chimeraLayout = false)
     {
         if (!menuConfig.IsDetected || menuConfig.ItemCount <= 0)
         {
@@ -662,19 +662,21 @@ public static class WaterMagicUpgradeBuilder
             })
             .ToList();
 
-        return BuildMappingSector(records);
+        return BuildMappingSector(records, bucketCount, chimeraLayout);
     }
 
-    public static byte[] BuildMappingSector(IReadOnlyList<WlRomMapRecordInfo> records)
+    public static byte[] BuildMappingSector(IReadOnlyList<WlRomMapRecordInfo> records, int bucketCount = WaterWlMappingCodec.DefaultBucketCount, bool chimeraLayout = false)
     {
         ArgumentNullException.ThrowIfNull(records);
+        if (bucketCount < WaterWlMappingCodec.MinimumBucketCount || bucketCount > WaterWlMappingCodec.BucketCount)
+            throw new InvalidOperationException("水线映射表容量超出支持范围。");
 
         byte[] mappingSector = Enumerable.Repeat((byte)0xFF, WaterWlMappingCodec.SectorSize).ToArray();
-        ushort[] bucketOwners = Enumerable.Repeat(WaterWlMappingCodec.BucketOwnerFree, WaterWlMappingCodec.BucketCount).ToArray();
+        ushort[] bucketOwners = Enumerable.Repeat(WaterWlMappingCodec.BucketOwnerFree, bucketCount).ToArray();
         bucketOwners[0] = WaterWlMappingCodec.BucketOwnerSystem;
 
         int bucketOwnerOffset = WaterWlMappingCodec.HeaderSize;
-        int romMapRecordOffset = bucketOwnerOffset + (WaterWlMappingCodec.BucketCount * BucketOwnerEntrySize);
+        int romMapRecordOffset = bucketOwnerOffset + (bucketCount * BucketOwnerEntrySize);
         byte[] romMapRecords = Enumerable.Repeat((byte)0xFF, WaterWlMappingCodec.RomMapRecordCount * WaterWlMappingCodec.RomMapRecordSize).ToArray();
 
         foreach (WlRomMapRecordInfo record in records.OrderBy(item => item.EntrySlot))
@@ -707,7 +709,7 @@ public static class WaterMagicUpgradeBuilder
             for (int logicalIndex = 0; logicalIndex < physicalBuckets.Count; logicalIndex++)
             {
                 int physicalBucket = physicalBuckets[logicalIndex];
-                if (physicalBucket <= 0 || physicalBucket > WaterWlMappingCodec.RomPhysicalBucketCount)
+                if (physicalBucket <= 0 || physicalBucket >= bucketCount)
                 {
                     throw new InvalidOperationException(
                         LocalizedText.Tf("error", "menu_item_start_bucket_invalid", "Menu item #{0} has an invalid start bucket: {1}.", record.EntrySlot + 1, physicalBucket));
@@ -733,10 +735,11 @@ public static class WaterMagicUpgradeBuilder
         BinaryPrimitives.WriteUInt32LittleEndian(header[0x00..0x04], WaterWlMappingCodec.Magic);
         BinaryPrimitives.WriteUInt16LittleEndian(header[0x04..0x06], WaterWlMappingCodec.Version);
         BinaryPrimitives.WriteUInt16LittleEndian(header[0x06..0x08], WaterWlMappingCodec.HeaderSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[0x08..0x0C], Flags);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[0x08..0x0C], Flags |
+            (chimeraLayout ? GbaMultiMenuBuilder.Services.WaterLinkLayout.ChimeraFlag : 0));
         BinaryPrimitives.WriteUInt32LittleEndian(header[0x0C..0x10], (uint)bucketOwnerOffset);
         BinaryPrimitives.WriteUInt16LittleEndian(header[0x10..0x12], BucketOwnerEntrySize);
-        BinaryPrimitives.WriteUInt16LittleEndian(header[0x12..0x14], (ushort)WaterWlMappingCodec.BucketCount);
+        BinaryPrimitives.WriteUInt16LittleEndian(header[0x12..0x14], (ushort)bucketCount);
         BinaryPrimitives.WriteUInt32LittleEndian(header[0x14..0x18], (uint)romMapRecordOffset);
         BinaryPrimitives.WriteUInt16LittleEndian(header[0x18..0x1A], (ushort)WaterWlMappingCodec.RomMapRecordSize);
         BinaryPrimitives.WriteUInt16LittleEndian(header[0x1A..0x1C], (ushort)WaterWlMappingCodec.RomMapRecordCount);
@@ -1037,5 +1040,19 @@ public static class WaterMagicUpgradeBuilder
         yield return Path.Combine(AppContext.BaseDirectory, "wl_magic_menu.gba");
         yield return Path.Combine(AppContext.BaseDirectory, "lk_multimenu_wl.gba");
 
+        string? current = AppContext.BaseDirectory;
+        while (!string.IsNullOrWhiteSpace(current))
+        {
+            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "rom_builder", "lk_multimenu_wl.gba");
+            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "GBA_MultiMenu_extended_WL.gba");
+
+            DirectoryInfo? parent = Directory.GetParent(current);
+            if (parent is null)
+            {
+                break;
+            }
+
+            current = parent.FullName;
+        }
     }
 }

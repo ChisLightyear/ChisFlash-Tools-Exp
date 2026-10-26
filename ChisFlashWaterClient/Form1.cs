@@ -746,7 +746,6 @@ public partial class Form1 : DpiAwareForm
         string appliedPatchIdentifier,
         BatterylessPatchInspection batterylessInspection)
     {
-        if (IsChisFlash10Mode()) return false;
         if (HasPreparedSavePatch(patchTargetIdentifier, appliedPatchIdentifier, batterylessInspection))
         {
             return false;
@@ -1238,6 +1237,8 @@ public partial class Form1 : DpiAwareForm
         if (GetSelectedBeggarCartMode() == BeggarCartMode.Gba && IsSingleGameOnlyGbaScan(scanResult))
             return IsGbaSingleProfile(fallbackMode) ? fallbackMode : BurnProfileMode.GbaSingle;
         if (fallbackMode == BurnProfileMode.GbaSingle) fallbackMode = GetDefaultBurnProfileMode(programmerKind);
+        if (scanResult is not null && !scanResult.IsChm1 && UsesChm1Mode(fallbackMode))
+            fallbackMode = GetDefaultBurnProfileMode(programmerKind);
         if (fallbackMode == BurnProfileMode.ChisFlash10 &&
             IsBeggarCompatibleProgrammer(programmerKind) && GetSelectedBeggarCartMode() == BeggarCartMode.Gba)
             return fallbackMode;
@@ -1423,9 +1424,9 @@ public partial class Form1 : DpiAwareForm
             BurnProfileMode.ChisFlashFlash11Rtc => "ChisFlash 1.1 · FLASH · 时钟",
             BurnProfileMode.ChisFlashFram12 => "ChisFlash 1.2 · FRAM · 震动",
             BurnProfileMode.ChisFlash10 => T("value", "burn_profile_chisflash10", "ChisFlash 1.0V · 32MB"),
-            BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "Beggar No Battery (SRAM + Batteryless)"),
-            BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
-            BurnProfileMode.BeggarWithBattery => T("value", "burn_profile_beggar_fram", "Beggar Battery/FRAM (SRAM)"),
+            BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "01G/02G Ordinary Card (No Battery)"),
+            BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "01G/02G Ordinary Card (Battery / FRAM)"),
+            BurnProfileMode.BeggarWithBattery => T("value", "burn_profile_beggar_with_battery", "01G/02G Ordinary Card (Battery)"),
             BurnProfileMode.BeggarMaxSram => T("gbc_profile", "free", "Free multicart · MAX/MBCX 32M"),
             BurnProfileMode.GbcUnselected => T("gbc_profile", GetGbcProfileCapacity() is null ? "pending" : "choose", GetGbcProfileCapacity() is null ? "Capacity not read · choose cartridge type" : "Choose cartridge type"),
             BurnProfileMode.Mbc5EightMiB => "MBC5 8M · 3in1 / 4in1",
@@ -1434,9 +1435,9 @@ public partial class Form1 : DpiAwareForm
             BurnProfileMode.GbcSixteenInOne => "MBC5 MAX 32M · 16in1",
             BurnProfileMode.FcMbcx => T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"),
             BurnProfileMode.Chm1 => T("value", "burn_profile_chm1", "01G/02G Fragment Management (Battery / FRAM)"),
-            BurnProfileMode.Chm1NoBattery => T("value", "burn_profile_chm1_no_battery", "01G/02G Fragment Management (Batteryless)"),
-            BurnProfileMode.WaterLinkMultiNor => T("value", "burn_profile_waterlink_multi_nor", "WL multi-nor"),
-            _ => T("value", "burn_profile_waterlink_sram", "WaterLink (SRAM)"),
+            BurnProfileMode.Chm1NoBattery => T("value", "burn_profile_chm1_no_battery", "01G/02G Fragment Management (No Battery)"),
+            BurnProfileMode.WaterLinkMultiNor => T("value", "burn_profile_waterlink_multi_nor", "Chimera WaterLink"),
+            _ => T("value", "burn_profile_waterlink_sram", "WaterLink"),
         };
 
     private bool CanApplyBatterylessPatch(PendingRomImportItem item, BurnProfileMode mode)

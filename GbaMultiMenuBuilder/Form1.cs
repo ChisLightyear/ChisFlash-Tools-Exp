@@ -6392,12 +6392,7 @@ private void BindUiDataSources()
             return;
         }
 
-        var lockToWaterlineCompatibleFlash =
-            _currentCompilationFamily == CompilationFamily.Gba &&
-            GetSelectedFlashCartMode() == FlashCartMode.WaterlineVirtualIron;
-        var targetCartridgeId = lockToWaterlineCompatibleFlash
-            ? CartridgeDefinition.WaterlineCompatibleId
-            : _comboBoxCartridgeType.SelectedItem is CartridgeDefinition currentCartridge
+        var targetCartridgeId = _comboBoxCartridgeType.SelectedItem is CartridgeDefinition currentCartridge
                 ? currentCartridge.Id
                 : GetDefaultCartridgeIdForFamily(_currentCompilationFamily);
 
@@ -6408,7 +6403,7 @@ private void BindUiDataSources()
             targetIndex = 0;
         }
 
-        _comboBoxCartridgeType.Enabled = !lockToWaterlineCompatibleFlash;
+        _comboBoxCartridgeType.Enabled = true;
         if (_comboBoxCartridgeType.SelectedIndex != targetIndex)
         {
             _comboBoxCartridgeType.SelectedIndex = targetIndex;

@@ -595,7 +595,7 @@ public sealed class CompilationBuilder
         var itemListOffsetBytes = AlignToNextBlock(menuRomLength, 0x40000);
         var itemListOffset = DivCeil(itemListOffsetBytes, cart.SectorSize);
         var statusOffset = itemListOffset + 1;
-        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(statusOffset);
+        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(cart, statusOffset);
         var systemReservedSectorCount = GetSystemReservedSectorCount(cart, statusOffset + 1);
         UpdateSectorMap(sectorMap, 0, systemReservedSectorCount, 'm');
         UpdateSectorMap(sectorMap, itemListOffset, 1, 'l');
@@ -867,7 +867,7 @@ public sealed class CompilationBuilder
         var itemListOffsetBytes = AlignToNextBlock(menuRom.Length, 0x40000);
         var itemListOffset = DivCeil(itemListOffsetBytes, cart.SectorSize);
         var statusOffset = itemListOffset + 1;
-        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(statusOffset);
+        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(cart, statusOffset);
         var systemReservedSectorCount = GetSystemReservedSectorCount(cart, statusOffset + 1);
         UpdateSectorMap(sectorMap, 0, systemReservedSectorCount, 'm');
         UpdateSectorMap(sectorMap, itemListOffset, 1, 'l');
@@ -1162,7 +1162,7 @@ public sealed class CompilationBuilder
         var itemListOffsetBytes = AlignToNextBlock(menuRom.Length, 0x40000);
         var itemListOffset = DivCeil(itemListOffsetBytes, cart.SectorSize);
         var statusOffset = itemListOffset + 1;
-        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(statusOffset);
+        var saveDataSectorOffset = request.FlashCartMode.IsChm1Mode() ? Chm1Layout.SaveAreaOffset / cart.SectorSize : GetSaveDataStartSectorOffset(cart, statusOffset);
         var systemReservedSectorCount = GetSystemReservedSectorCount(cart, statusOffset + 1);
         UpdateSectorMap(sectorMap, 0, systemReservedSectorCount, 'm');
         UpdateSectorMap(sectorMap, itemListOffset, 1, 'l');
@@ -1272,6 +1272,17 @@ public sealed class CompilationBuilder
         progress?.Report(new BuildProgressInfo(75, T(textResolver, "build", "writing_item_list", "Writing item list.")));
         var itemList = BuildItemList(includedGames, keyOrder, coverIndexes);
         Buffer.BlockCopy(itemList, 0, compilation, itemListOffset * cart.SectorSize, itemList.Length);
+
+        if (cart.Id == CartridgeDefinition.WaterLinkMultiNorId)
+        {
+            if (cart.SectorSize != WaterLinkLayout.SectorBytes || itemListOffset * cart.SectorSize != 0xC0000)
+                throw new InvalidDataException("奇美拉水线菜单目录布局不匹配。");
+            var ordered = OrderGamesByHiddenKeys(includedGames, keyOrder);
+            var maps = ordered.Select(game => Enumerable.Range(
+                game.SectorOffset * cart.SectorSize / WaterLinkLayout.BucketBytes,
+                game.Size / WaterLinkLayout.BucketBytes).ToArray()).ToArray();
+            WaterLinkLayout.BuildMappingSector(maps, cart.FlashSize).CopyTo(compilation, WaterLinkLayout.MappingOffset);
+        }
 
         if (request.FlashCartMode.IsChm1Mode())
         {
@@ -1414,11 +1425,14 @@ public sealed class CompilationBuilder
                 sources.Add(new GbaMenuCoverSource("UNKN", placeholder));
             }
 
-            WriteGbaCoverPack(
+            if (!WriteGbaCoverPack(
                 compilation,
                 menuLength,
                 sources,
-                GbaMenuCoverPackBuilder.IndexedFormatVersion);
+                GbaMenuCoverPackBuilder.IndexedFormatVersion))
+            {
+                result.Clear();
+            }
             return result;
         }
         finally
@@ -1492,7 +1506,7 @@ public sealed class CompilationBuilder
             : null;
     }
 
-    private static void WriteGbaCoverPack(
+    private static bool WriteGbaCoverPack(
         byte[] destination,
         int menuLength,
         IReadOnlyList<GbaMenuCoverSource> sources,
@@ -1502,7 +1516,7 @@ public sealed class CompilationBuilder
         var packOffset = GbaCoverTrailerOffset - pack.Length;
         if (packOffset < menuLength)
         {
-            throw new InvalidOperationException($"Matched cover pack is too large for the NS Menu head area (needs 0x{pack.Length:X} bytes, available 0x{GbaCoverTrailerOffset - menuLength:X}).");
+            return false;
         }
         Buffer.BlockCopy(pack, 0, destination, packOffset, pack.Length);
         Span<byte> trailer = stackalloc byte[16];
@@ -1512,6 +1526,7 @@ public sealed class CompilationBuilder
         BinaryPrimitives.WriteUInt32LittleEndian(trailer[8..], (uint)packOffset);
         BinaryPrimitives.WriteUInt32LittleEndian(trailer[12..], (uint)pack.Length);
         trailer.CopyTo(destination.AsSpan(GbaCoverTrailerOffset));
+        return true;
     }
 
     private static string ReadGbaGameCode(string romPath)
@@ -2450,6 +2465,8 @@ public sealed class CompilationBuilder
 
     private static void ValidateRequest(BuildRequest request, Func<string, string, string, string>? textResolver)
     {
+        if (request.Cartridge.Id == CartridgeDefinition.WaterLinkMultiNorId && request.MinRomSize != WaterLinkLayout.BucketBytes)
+            throw new InvalidDataException("奇美拉水线使用4 MiB映射对齐。");
         if (string.IsNullOrWhiteSpace(request.BaseMenuPath) || !File.Exists(request.BaseMenuPath))
         {
             throw new InvalidOperationException(T(textResolver, "error", "base_menu_not_found", "Base menu ROM was not found."));
@@ -3518,13 +3535,13 @@ public sealed class CompilationBuilder
 
     private static int GetMaxBatterySaveSlotCount(CartridgeDefinition cart, int statusOffset)
     {
-        var saveDataSectorOffset = GetSaveDataStartSectorOffset(statusOffset);
+        var saveDataSectorOffset = GetSaveDataStartSectorOffset(cart, statusOffset);
         var systemReservedSectorCount = GetSystemReservedSectorCount(cart, saveDataSectorOffset);
-        return Math.Max(0, systemReservedSectorCount - saveDataSectorOffset);
+        return Math.Max(0, (cart.Id == CartridgeDefinition.WaterLinkMultiNorId ? WaterLinkLayout.MappingOffset / cart.SectorSize : systemReservedSectorCount) - saveDataSectorOffset);
     }
 
-    private static int GetSaveDataStartSectorOffset(int statusOffset) =>
-        checked(statusOffset + 1);
+    private static int GetSaveDataStartSectorOffset(CartridgeDefinition cart, int statusOffset) =>
+        cart.Id == CartridgeDefinition.WaterLinkMultiNorId ? WaterLinkLayout.SaveAreaOffset / cart.SectorSize : checked(statusOffset + 1);
 
     private static int GetSystemReservedSectorCount(
         CartridgeDefinition cart,

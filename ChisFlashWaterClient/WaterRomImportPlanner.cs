@@ -518,7 +518,9 @@ public static class WaterRomImportPlanner
         if (!scanResult.UsesChm1Layout && !WaterWlMappingCodec.TryExpandBucketOwners(
                 scanResult.WlMapping.RawSector,
                 out mappingSector,
-                out string expansionError))
+                out string expansionError,
+                WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes),
+                WaterWlMappingCodec.IsChimeraConfiguration(scanResult)))
         {
             throw new InvalidOperationException(expansionError);
         }

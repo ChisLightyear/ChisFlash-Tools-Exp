@@ -50,3 +50,19 @@ desktop.ini
 *.bdf
 *.sav
 last_game_list*.ini
+
+# 公开仓库不包含 Markdown、内部文档、日志、验证资料及私人运行配置
+*.[mM][dD]
+*.markdown
+*.mdx
+docs/
+_docs/
+_tests/
+_tools/
+_backups/
+backup/
+*.log
+*.elf
+*.map
+*.dmp
+*.csproj.user

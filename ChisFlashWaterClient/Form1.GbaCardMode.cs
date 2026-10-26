@@ -57,10 +57,12 @@ public partial class Form1
         {
             bool single = IsGbaSingleCardMode();
             bool conversion = IsGbaConversionDraft();
+            bool clearsHeadGame = conversion && currentScanResult?.MenuConfig.IsDetected != true &&
+                gbaSingleRom is null && GetGbaSingleGame() is not null;
             // 两种模式共用原表格和工具栏，不移除或替换工作区控件。
             gbaKeepCurrentGame!.Text = GbaCardText("keep", "保留当前游戏", "Keep current game");
-            gbaKeepCurrentGame.Enabled = conversion && !isBusy && gbaConversionOptions.Parent is null;
-            gbaCurrentGameLength!.Visible = GetGbaSingleGame() is not { } original || (!original.FoundInMenuConfig && !original.FoundInWlMapping);
+            gbaKeepCurrentGame.Enabled = conversion && !clearsHeadGame && !isBusy && gbaConversionOptions.Parent is null;
+            gbaCurrentGameLength!.Visible = !clearsHeadGame && (GetGbaSingleGame() is not { } original || (!original.FoundInMenuConfig && !original.FoundInWlMapping));
             gbaCurrentGameLength.Enabled = conversion && !isBusy && gbaKeepCurrentGame.Checked;
             if (single)
             {

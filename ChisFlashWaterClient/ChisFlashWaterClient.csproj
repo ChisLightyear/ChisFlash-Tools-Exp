@@ -54,6 +54,7 @@
     <Compile Include="..\GbaMultiMenuBuilder\Services\GbaMenuBackgroundLocator.cs" Link="BuilderImported\Services\GbaMenuBackgroundLocator.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\RomArchiveImportService.cs" Link="BuilderImported\Services\RomArchiveImportService.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\Chm1Layout.cs" Link="BuilderImported\Services\Chm1Layout.cs" />
+    <Compile Include="..\GbaMultiMenuBuilder\Services\WaterLinkLayout.cs" Link="BuilderImported\Services\WaterLinkLayout.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\GameBoyRomHeaderService.cs" Link="BuilderImported\Services\GameBoyRomHeaderService.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\GbaCoverCatalog.cs" Link="BuilderImported\Services\GbaCoverCatalog.cs" />
     <Compile Include="..\GbaMultiMenuBuilder\Services\GbaMenuCoverPackBuilder.cs" Link="BuilderImported\Services\GbaMenuCoverPackBuilder.cs" />

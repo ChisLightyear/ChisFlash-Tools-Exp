@@ -4,14 +4,17 @@ public static class GbaCardWritePlan
 {
     public const int HeadBytes = 0x400000;
 
-    public static byte[] CompleteMapping(byte[] image, bool waterLink)
+    public static byte[] CompleteMapping(byte[] image, bool waterLink, int capacityBytes = 0, bool chimeraLayout = false)
     {
         if (!waterLink) return image;
         var scan = WaterCartScanner.ScanOfflineRomImage(image);
         if (!scan.MenuConfig.IsDetected || image.Length < HeadBytes)
             throw new InvalidDataException("水线合卡镜像缺少有效目录。");
         byte[] result = image.ToArray();
-        WaterMagicUpgradeBuilder.BuildMappingSector(scan.MenuConfig).CopyTo(result, WaterWlMappingCodec.Offset);
+        int bucketCount = capacityBytes > 0 ? WaterWlMappingCodec.GetBucketCount(capacityBytes)
+            : scan.WlMapping.IsDetected ? scan.WlMapping.Header.BucketOwnerCount : WaterWlMappingCodec.DefaultBucketCount;
+        WaterMagicUpgradeBuilder.BuildMappingSector(scan.MenuConfig, bucketCount,
+            chimeraLayout || WaterWlMappingCodec.IsChimeraConfiguration(scan)).CopyTo(result, WaterWlMappingCodec.Offset);
         var status = WaterMagicUpgradeBuilder.NormalizeWlStatus(scan.MenuConfig.Status);
         WaterMenuConfigCodec.BuildStatusSector(status).CopyTo(result, status.StatusAddress);
         return result;

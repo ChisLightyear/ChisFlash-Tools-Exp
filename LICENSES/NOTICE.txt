@@ -1,0 +1,18 @@
+第三方许可和来源声明 / Third-party notices
+
+GBA menu binaries derive from Lesserkuma / ZainDORp / orzgithub projects.
+Their GPL v3 notice is retained in LICENSES/GBA-menu-GPL-3.0.txt.
+The embedded Fusion Pixel font is provided by TakWolf under SIL OFL 1.1;
+see LICENSES/Fusion-Pixel-OFL-1.1.txt. External user font files are not included.
+
+MesenNesDB.csv originates from Mesen2 UI/Dependencies/MesenNesDB.txt,
+upstream commit b9fa69ddc6d0a331fb103fdb5eef6904305703c2,
+database header dated 2022-07-21, based on NES 2.0 header DB / NesCartDB /
+Nestopia. Its original GPL v3 licence is retained in
+GbaMultiMenuBuilder/Fc/Mesen-LICENSE.
+The local C# implementation follows the upstream database and NES header
+metadata rules; no emulator executable is bundled or launched.
+
+The project has not assigned a repository-wide licence. Third-party components
+retain their respective licences and notices. A separately distributed .NET
+runtime must retain its own licences and third-party notices.
