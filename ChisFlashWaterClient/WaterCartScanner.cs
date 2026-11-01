@@ -2660,7 +2660,7 @@ public static class WaterCartScanner
         statusInfo.ExplicitItemListAddress = layout.ItemListOffset;
         statusInfo.ExplicitSaveAreaAddress = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(payload.AsSpan(28, 4)));
         if (!TryReadMenuItems(device, layout.ItemListOffset, out List<MenuItemConfigInfo> items, timeoutMs) ||
-            items.Count <= 0)
+            items.Count == 0 && layout.EntryCount != 0)
         {
             log?.Invoke(T("log", "universal_image_itemlist_invalid", "Universal image manifest found, but its menu item list is invalid."));
             return new WaterMenuConfigInfo();
@@ -2707,7 +2707,7 @@ public static class WaterCartScanner
         statusInfo.ExplicitItemListAddress = layout.ItemListOffset;
         statusInfo.ExplicitSaveAreaAddress = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(payload.AsSpan(28, 4)));
         if (!TryReadMenuItemsFromImage(imageBytes, layout.ItemListOffset, out List<MenuItemConfigInfo> items) ||
-            items.Count <= 0)
+            items.Count == 0 && layout.EntryCount != 0)
         {
             log?.Invoke(T("log", "universal_image_itemlist_invalid", "Universal image manifest found, but its menu item list is invalid."));
             return new WaterMenuConfigInfo();
@@ -2755,7 +2755,7 @@ public static class WaterCartScanner
         int entryCount = BinaryPrimitives.ReadUInt16LittleEndian(payload[48..]);
         int itemConfigSize = BinaryPrimitives.ReadUInt16LittleEndian(payload[38..]);
         uint expectedChecksum = BinaryPrimitives.ReadUInt32LittleEndian(payload[60..]);
-        if (itemConfigSize != MenuItemEntrySize || entryCount <= 0 || entryCount > MenuMaxEntries ||
+        if (itemConfigSize != MenuItemEntrySize || entryCount > MenuMaxEntries ||
             itemListSize != checked(entryCount * MenuItemEntrySize) ||
             itemListOffset < UniversalImageManifestOffset ||
             statusOffset <= itemListOffset || statusSize is < 0x1000 or > 0x40000 ||
@@ -2795,7 +2795,7 @@ public static class WaterCartScanner
         out int previousEntryCount)
     {
         previousEntryCount = 0;
-        if (entryCount <= 0 || entryCount > MenuMaxEntries ||
+        if (entryCount < 0 || entryCount > MenuMaxEntries ||
             !TryDecodeUniversalImageManifest(payload, out UniversalImageManifestLayout? layout) ||
             layout is null)
         {

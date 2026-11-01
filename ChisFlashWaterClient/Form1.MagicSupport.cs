@@ -925,6 +925,7 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        RefreshWaitcntPatchUi();
         RefreshGbaCardModeUi();
         if (IsGbaSingleCardMode()) { UpdateGbaSingleButtons(busy); return; }
         if (IsChisFlash10Mode()) { UpdateChisFlash10ActionButtons(busy); return; }

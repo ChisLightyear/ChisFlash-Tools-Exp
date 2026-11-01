@@ -27,9 +27,10 @@ public partial class Form1
         if (scan.IsNorProbeOnly) throw new InvalidOperationException("请先分析卡带内容，再烧录单卡。");
         long length = gbaSingleRom?.Length ?? (long)GetGbaSingleGame()!.LogicalBucketCount * WaterCartScanner.BucketSizeBytes;
         if (length <= 0 || length > ChisFlash10Image.CapacityBytes || length > scan.Geometry.DeviceSizeBytes) throw new InvalidDataException("游戏长度无效或超过实际NOR容量。");
-        if (MessageBox.Show(this, $"从地址0写入 { (gbaSingleRom is null ? GetGbaSingleGame()!.Title : gbaSingleRomName)}（{FormatMiBSize(length)}）？\n\n这会覆盖该范围内的原游戏或合卡菜单。ROM按原文件写入，不安装合卡菜单，不自动打补丁，独立存档芯片不改写。",
+        string patchText = gbaSingleRom is not null && gbaSingleWaitcntPatch ? "按列表勾选应用 WAITCNT 补丁。" : "ROM按原文件写入。";
+        if (MessageBox.Show(this, (HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() + "\n\n" : string.Empty) + $"从地址0写入 { (gbaSingleRom is null ? GetGbaSingleGame()!.Title : gbaSingleRomName)}（{FormatMiBSize(length)}）？\n\n这会覆盖该范围内的原游戏或合卡菜单。{patchText}不安装合卡菜单，独立存档芯片不改写。",
             "烧录单卡", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-        byte[]? image = gbaSingleRom is null ? null : ChisFlash10Image.Build(gbaSingleRom);
+        byte[]? image = gbaSingleRom is null ? null : PrepareGbaRomWaitcnt(ChisFlash10Image.Build(gbaSingleRom), gbaSingleWaitcntPatch);
         string port = GetSelectedPortName()!;
         var kind = GetRequiredSelectedProgrammerKind();
         using var cancellation = new CancellationTokenSource();
@@ -44,9 +45,12 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
+                uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan,
+                    [new WaterNorWriteSegment { Data = image }]);
                 if (kind == ProgrammerKind.BeggarLegacy)
                 {
-                    BeginMeasuredProgress("单卡ROM", image.Length, (image.Length + 4095) / 4096);
+                    BeginMeasuredProgress("单卡ROM", image.Length + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, (image.Length + 4095) / 4096 + clearSectors.Length);
+                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
                     int written = 0;
                     LegacyGbaRomWriter.Write(image,
                         (address, word) => { if (!protocol.TryWriteRom(address, BitConverter.GetBytes(word), 3000)) throw new IOException("单卡ROM命令未收到ACK。"); },
@@ -62,7 +66,8 @@ public partial class Form1
                     int size = checked((image.Length + sector - 1) / sector * sector);
                     byte[] aligned = Enumerable.Repeat((byte)255, size).ToArray(); image.CopyTo(aligned, 0);
                     var segment = new WaterNorWriteSegment { StartAddress = 0, Data = aligned, Label = "单卡ROM" };
-                    BeginMeasuredProgress("单卡ROM", CountSegmentProgressWorkBytes(segment, scan.Geometry), CountSegmentProgressUnits(segment, scan.Geometry));
+                    BeginMeasuredProgress("单卡ROM", CountSegmentProgressWorkBytes(segment, scan.Geometry) + (long)clearSectors.Length * sector, CountSegmentProgressUnits(segment, scan.Geometry) + clearSectors.Length);
+                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
                     ProgramNorSegment(protocol, kind, scan.Geometry, segment, 1, 1, cancellation.Token);
                 }
                 CompleteMeasuredProgress("单卡ROM");
@@ -144,8 +149,8 @@ public partial class Form1
         {
             string menuPath = Path.Combine(staging, "menu.gba");
             File.WriteAllBytes(menuPath, menu);
-            var games = rows.Select(row => GbaConversionGame(row.PendingItem!.FilePath, GetWorkspaceRowDisplayTitle(row),
-                row.PendingItem.SaveTypeInfo, row.PendingItem.ApplySramPatch, UsesBatterylessPatch(mode),
+            var games = rows.Select((row, index) => GbaConversionGame(PrepareGbaConversionWaitcnt(row.PendingItem!, staging, index), GetWorkspaceRowDisplayTitle(row),
+                row.PendingItem!.SaveTypeInfo, row.PendingItem.ApplySramPatch, UsesBatterylessPatch(mode),
                 row.PendingItem.BatterylessAlreadyPatched, row.PendingItem.BatterylessCanExpand, row.PendingItem.CoverPath)).ToList();
             if (keep)
             {
@@ -174,8 +179,10 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                BeginMeasuredProgress("单卡转合卡", segments.Sum(segment => CountSegmentProgressWorkBytes(segment, scan.Geometry)), segments.Sum(segment => CountSegmentProgressUnits(segment, scan.Geometry)));
+                uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, segments);
+                BeginMeasuredProgress("单卡转合卡", segments.Sum(segment => CountSegmentProgressWorkBytes(segment, scan.Geometry)) + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, segments.Sum(segment => CountSegmentProgressUnits(segment, scan.Geometry)) + clearSectors.Length);
                 writeStarted = true;
+                EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
                 for (int index = 0; index < segments.Count; index++)
                     ProgramNorSegment(protocol, kind, scan.Geometry, segments[index], index + 1, segments.Count, cancellation.Token);
                 CompleteMeasuredProgress("单卡转合卡");
@@ -211,7 +218,7 @@ public partial class Form1
         gbaConversionOptions!.Visible = gbaKeepCurrentGame!.Checked && GetGbaSingleGame() is not null;
         gbaKeepCurrentGame.Enabled = false;
         layout.Controls.Add(gbaConversionOptions, 0, 1);
-        var note = new Label { Dock = DockStyle.Fill, Text = $"将写入{pendingGames}个新游戏。\n合卡菜单会覆盖前4 MiB；需要保留当前游戏时，请勾选并指定读取长度。\n准备完成后先写游戏区，最后写菜单目录。", AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
+        var note = new Label { Dock = DockStyle.Fill, Text = HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() : $"将写入{pendingGames}个新游戏。\n合卡菜单会覆盖前4 MiB；需要保留当前游戏时，请勾选并指定读取长度。\n准备完成后先写游戏区，最后写菜单目录。", AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
         layout.Controls.Add(note, 0, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var ok = new Button { Text = "开始烧录", AutoSize = true };

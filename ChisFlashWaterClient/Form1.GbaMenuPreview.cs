@@ -5,6 +5,31 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private bool currentGbaPreviewUsesSelectedMenu;
+    private bool currentPreviewShowsSingleGbaHint;
+
+    private bool IsSingleGbaMenuPreviewDisabled() => IsGbaSingleCardMode() || IsChisFlash10Mode();
+
+    private bool TryShowSingleGbaMenuPreviewHint()
+    {
+        if (!IsSingleGbaMenuPreviewDisabled()) return false;
+        currentPreviewShowsSingleGbaHint = true;
+        currentGbaPreviewUsesSelectedMenu = false;
+        currentPreviewUsesGbcListMode = false;
+        currentPreviewUsesGbaFirstScreenMode = false;
+        labelMenuBackgroundPreviewCaption.Text = T("ui", "menu_preview", "Menu Preview");
+        UpdateMenuBackgroundPreviewLayout();
+        SetMenuBackgroundPreviewState(null, true);
+        labelMenuBackgroundPreviewPlaceholder.Text = T("ui", "single_card_preview_hint", "This is a single-game cartridge");
+        labelMenuBackgroundPreviewPlaceholder.Cursor = Cursors.Default;
+        return true;
+    }
+
+    private void RefreshSingleGbaMenuPreviewState()
+    {
+        if (pictureBoxMenuBackgroundPreview is not null &&
+            currentPreviewShowsSingleGbaHint != IsSingleGbaMenuPreviewDisabled())
+            UpdateMenuBackgroundPreview(currentScanResult);
+    }
 
     private WaterCartScanResult BuildSelectedGbaMenuPreview(WaterCartScanResult? source)
     {

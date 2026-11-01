@@ -495,6 +495,7 @@ public partial class Form1
         };
         labelMenuBackgroundPreviewPlaceholder.Click += (_, _) =>
         {
+            if (IsSingleGbaMenuPreviewDisabled()) return;
             if (CanEditPendingGbaCovers())
             {
                 ShowPendingGbaCoverEditor();
@@ -665,10 +666,11 @@ public partial class Form1
         checkBoxWaitcntPatch = new CheckBox
         {
             AutoSize = true,
+            ThreeState = true,
+            AutoCheck = false,
             Margin = new Padding(8, 11, 4, 0),
         };
-        checkBoxWaitcntPatch.CheckedChanged += (_, _) =>
-            ClientAppConfigService.SaveWaitcntPatchEnabled(checkBoxWaitcntPatch.Checked);
+        checkBoxWaitcntPatch.Click += (_, _) => ToggleAllWaitcntPatches();
 
         settingsPanel.Controls.Add(CreateToolbarPair(labelBurnProfileModeCaption, comboBoxBurnProfileMode));
         settingsPanel.Controls.Add(buttonQueueAdd);
@@ -721,6 +723,14 @@ public partial class Form1
         dataGridViewRoms.CellMouseDown += DataGridViewRoms_CellMouseDown;
         dataGridViewRoms.CellClick += DataGridViewRoms_CellClick;
         dataGridViewRoms.CellContentClick += DataGridViewRoms_CellContentClick;
+        dataGridViewRoms.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Space && dataGridViewRoms.CurrentCell is { OwningColumn.Name: "WaitcntPatch" } cell)
+            {
+                ToggleRowWaitcntPatch(cell.RowIndex);
+                e.Handled = e.SuppressKeyPress = true;
+            }
+        };
         dataGridViewRoms.CellDoubleClick += DataGridViewRoms_CellDoubleClick;
         dataGridViewRoms.CellBeginEdit += DataGridViewRoms_CellBeginEdit;
         dataGridViewRoms.CellEndEdit += DataGridViewRoms_CellEndEdit;
@@ -743,6 +753,8 @@ public partial class Form1
         dataGridViewRoms.Columns.Add(CreateTextColumn("PatchStatus", string.Empty, 130, 150F));
         dataGridViewRoms.Columns.Add(CreateTextColumn("SpiSlot", string.Empty, 80, 85F));
         dataGridViewRoms.Columns.Add(CreateTextColumn("SaveStatus", string.Empty, 230, 240F));
+        dataGridViewRoms.Columns.Add(CreateCheckBoxColumn("WaitcntPatch", string.Empty, 110, 100F));
+        dataGridViewRoms.Columns["WaitcntPatch"]!.DisplayIndex = 9;
         foreach (DataGridViewColumn column in dataGridViewRoms.Columns)
         {
             column.ReadOnly = true;
@@ -1063,6 +1075,7 @@ public partial class Form1
 
     private void UpdateMenuBackgroundPreview(WaterCartScanResult? result)
     {
+        currentPreviewShowsSingleGbaHint = false;
         currentGbaPreviewUsesSelectedMenu = false;
         if (IsMbc5FixedSlotMode()) { RefreshMbc5Preview(); return; }
         if (result?.IsBeggarMaxGbcMode == true || IsGbcWorkspaceMode())
@@ -1077,6 +1090,7 @@ public partial class Form1
         }
 
         currentPreviewUsesGbcListMode = false;
+        if (TryShowSingleGbaMenuPreviewHint()) return;
         if (TryPreviewSelectedGbaMenu(result)) return;
         currentPreviewUsesGbaFirstScreenMode = result?.GbaMenuFirstScreenPreview.IsDetected == true;
         if (currentPreviewUsesGbaFirstScreenMode && result is not null)
@@ -2044,7 +2058,7 @@ public partial class Form1
 
     private void ShowMenuBackgroundPreviewDialog()
     {
-        if (IsMbc5FixedSlotMode()) return;
+        if (IsMbc5FixedSlotMode() || IsSingleGbaMenuPreviewDisabled()) return;
         if (CanEditPendingGbaCovers())
         {
             ShowPendingGbaCoverEditor();
@@ -3139,6 +3153,7 @@ public partial class Form1
         dataGridViewRoms.Columns["AllocSize"]!.HeaderText = T("grid", "alloc_size", "Alloc Size");
         dataGridViewRoms.Columns["SaveType"]!.HeaderText = T("grid", "save_type", "Save Type");
         dataGridViewRoms.Columns["GbcDedicatedSave"]!.HeaderText = T("grid", "save_allocation", "Dedicated");
+        dataGridViewRoms.Columns["WaitcntPatch"]!.HeaderText = T("ui", "waitcnt_patch", "WAITCNT Patch");
         dataGridViewRoms.Columns["PatchStatus"]!.HeaderText = IsGbcWorkspaceMode()
             ? T("grid", "mbc_type", "MBC Type")
             : T("grid", "patch_status", "Patch");

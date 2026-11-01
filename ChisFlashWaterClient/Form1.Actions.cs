@@ -104,9 +104,7 @@ public partial class Form1
 
     private async Task ReplaceSelectedRomAsync()
     {
-        if (SupportsGbaCardMode()) { await SelectGbaListSlotAsync(); return; }
-        if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
-        if (IsChisFlash10Mode()) { await SelectChisFlash10FileAsync(); return; }
+        if (SupportsGbaCardMode() || IsChisFlash10Mode()) return;
         if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
         if (IsMbc5FixedSlotMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy || isAnalyzingQueueImports)
@@ -223,6 +221,9 @@ public partial class Form1
     private async Task HandlePrimaryQueueActionAsync()
     {
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能按单卡或新合卡擦写。");
+        if (HasPendingGbaWorkspaceClear() && currentScanResult?.MenuConfig.IsDetected != true &&
+            (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
+        { await BurnEmptySingleGbaWorkspaceAsync(); return; }
         if (IsGbaSingleCardMode()) { await BurnSingleGbaAsync(); return; }
         if (IsGbaConversionDraft()) { await BurnGbaConversionAsync(); return; }
         if (IsChisFlash10Mode()) { await HandleChisFlash10PrimaryActionAsync(); return; }
@@ -6076,7 +6077,7 @@ public partial class Form1
         int entryCount,
         List<(uint Address, byte[] Data, string Label)> sectors)
     {
-        if (entryCount <= 0)
+        if (entryCount < 0)
         {
             return;
         }

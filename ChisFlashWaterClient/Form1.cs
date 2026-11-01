@@ -104,6 +104,7 @@ public partial class Form1 : DpiAwareForm
         public string SramPatchTargetIdentifier { get; init; } = string.Empty;
         public string AppliedSramPatchIdentifier { get; init; } = string.Empty;
         public bool ApplySramPatch { get; init; }
+        public bool ApplyWaitcntPatch { get; set; }
         public bool BatterylessAlreadyPatched { get; init; }
         public bool BatterylessHasPayloadSpace { get; init; }
         public bool BatterylessCanExpand { get; init; }
@@ -127,6 +128,7 @@ public partial class Form1 : DpiAwareForm
 
     private sealed class WorkspaceListRow
     {
+        public bool? WaitcntPatchForBurn { get; init; }
         public WaterCartEntry? CartEntry { get; set; }
         public PendingRomImportItem? PendingItem { get; set; }
         public bool IsLoadingPlaceholder { get; set; }
@@ -286,7 +288,8 @@ public partial class Form1 : DpiAwareForm
         InitializeComponent();
         if(initializeSession)DeleteLegacyWorkspaceRecoveryFile();
         BuildInterface();
-        checkBoxWaitcntPatch.Checked = ClientAppConfigService.LoadWaitcntPatchEnabled();
+        defaultWaitcntPatchEnabled = ClientAppConfigService.LoadWaitcntPatchEnabled();
+        RefreshWaitcntPatchUi();
         RefreshGbaMenuOptions(ClientAppConfigService.LoadGbaMenuSelection());
         RefreshGbcFontSelectorVisibility();
         ApplyLanguage(language, refreshScanResult: false);
@@ -516,7 +519,8 @@ public partial class Form1 : DpiAwareForm
 
     private void RefreshGbcFontSelectorVisibility()
     {
-        if (pictureBoxMenuBackgroundPreview is not null) pictureBoxMenuBackgroundPreview.Visible = !IsChisFlash10Mode();
+        if (pictureBoxMenuBackgroundPreview is not null)
+            pictureBoxMenuBackgroundPreview.Visible = pictureBoxMenuBackgroundPreview.Image is not null && !IsSingleGbaMenuPreviewDisabled();
         bool imageProfile = IsGbcRawImageMode() || IsGbcProfileUnselected() || IsGbaSingleCardMode();
         bool visible = IsGbcWorkspaceMode() && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
         if (gbcMenuOptions is not null) gbcMenuOptions.Visible = visible;
@@ -525,8 +529,8 @@ public partial class Form1 : DpiAwareForm
         comboBoxGbcMenuLanguage.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
         if (checkBoxWaitcntPatch is not null)
         {
-            checkBoxWaitcntPatch.Visible = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
-            checkBoxWaitcntPatch.Enabled = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile && !isBusy && !isAnalyzingQueueImports;
+            checkBoxWaitcntPatch.Visible = IsWaitcntGbaWorkspace();
+            checkBoxWaitcntPatch.Enabled = IsWaitcntGbaWorkspace() && !isBusy && !isAnalyzingQueueImports;
         }
 
         bool gbaVisible = !visible && !IsFcWorkspaceActive && !IsMbc5FixedSlotMode() && !imageProfile;
@@ -760,6 +764,15 @@ public partial class Form1 : DpiAwareForm
     }
 
     private string FormatPendingPatchDisplay(PendingRomImportItem item)
+    {
+        string savePatch = FormatPendingSavePatchDisplay(item);
+        if (!item.ApplyWaitcntPatch || item.ImportedPlatform is not (null or RomPlatform.Gba) || item.FcRom is not null || item.MdRom is not null)
+            return savePatch;
+        return savePatch == T("value", "patch_not_needed", "Not Needed") || savePatch == T("value", "patch_unavailable", "No Patch")
+            ? "WAITCNT" : savePatch + " + WAITCNT";
+    }
+
+    private string FormatPendingSavePatchDisplay(PendingRomImportItem item)
     {
         if(item.FcRom is not null)return item.FcRom.CanPack?$"NES · Mapper {item.FcRom.Mapper}，请选择NES模式":"NES · "+item.FcRom.Error;
         if(item.MdRom is not null)return GbaMultiMenuBuilder.Md.MdRomImportService.ImportStatus(item.MdRom,item.MdReadError);

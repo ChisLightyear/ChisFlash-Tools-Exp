@@ -61,7 +61,9 @@ public partial class Form1
     {
         Point location = dataGridViewRoms.PointToClient(new Point(args.X, args.Y));
         int index = dataGridViewRoms.HitTest(location.X, location.Y).RowIndex;
-        args.Effect = !isBusy && !isAnalyzingQueueImports && index is 0 or 1 && !IsGbaDisabledGameRow(index) && args.Data?.GetDataPresent(DataFormats.FileDrop) == true
+        bool emptyGame = gbaSingleRom is null && GetGbaSingleGame() is null;
+        bool menuRow = index >= 0 && index < dataGridViewRoms.Rows.Count && ReferenceEquals(dataGridViewRoms.Rows[index].Tag, GbaMenuRowTag);
+        args.Effect = !isBusy && !isAnalyzingQueueImports && index is 0 or 1 && (menuRow || emptyGame) && !IsGbaDisabledGameRow(index) && args.Data?.GetDataPresent(DataFormats.FileDrop) == true
             ? DragDropEffects.Copy : DragDropEffects.None;
     }
     private WaterCartEntry? GetGbaSingleGame() => gbaSingleGameRemoved ? null : gbaSingleCartSource ?? GetHeadAreaGame();
@@ -71,6 +73,7 @@ public partial class Form1
 
     private void ResetGbaMenuDraft()
     {
+        gbaWorkspaceClearSource = null;
         gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = false;
         gbaSingleGameRemoved = false; gbaSingleCartSource = null; gbaSingleNeedsRelocation = false;
         gbaSingleGridActive = false;
@@ -136,7 +139,7 @@ public partial class Form1
         EnsureGbaMulticartSupported();
         if (isBusy || isAnalyzingQueueImports) return;
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("已识别碎片表但目录异常，请先处理目录，不能按单卡新建合卡。");
-        using var dialog = new Form { Text = "添加／替换菜单", Width = 420, Height = 180,
+        using var dialog = new Form { Text = "选择菜单", Width = 420, Height = 180,
             StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var menu = new ComboBox { Left = 18, Top = 18, Width = 365, DropDownStyle = ComboBoxStyle.DropDownList };
         menu.Items.AddRange(comboBoxGbaMenu.Items.Cast<object>().ToArray()); menu.SelectedItem = comboBoxGbaMenu.SelectedItem;
@@ -180,6 +183,7 @@ public partial class Form1
         // 先准备游戏条目，校验失败时保留原单卡工作区。
         PendingRomImportItem? first = IsGbaSingleCardMode() && gbaSingleRom is not null
             ? CreatePendingRomImportItem(gbaSingleRomPath, isGbcWorkspaceModeOverride: false) : null;
+        if (first is not null) first.ApplyWaitcntPatch = gbaSingleWaitcntPatch;
         bool conversion = !HasGbaListMenu();
         updatingGbaMenuDraft = true;
         try
@@ -220,7 +224,7 @@ public partial class Form1
             if (single is not null && !WaterCartScanner.HasValidGbaHeader(single)) throw new InvalidDataException("游戏1的GBA头部无效。");
             if (single?.Length > ChisFlash10Image.CapacityBytes || (first?.PendingItem is null && first?.CartEntry is { } cart &&
                 (long)cart.LogicalBucketCount * WaterCartScanner.BucketSizeBytes > ChisFlash10Image.CapacityBytes))
-                throw new InvalidOperationException("单卡游戏不能超过32 MiB，请先替换游戏1。");
+                throw new InvalidOperationException("单卡游戏不能超过32 MiB，请先删除游戏1再添加。");
             gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = true;
             if (first is not null)
             {
@@ -255,12 +259,15 @@ public partial class Form1
     private void ClearGbaList()
     {
         if (isBusy || isAnalyzingQueueImports || IsGbaDirectoryDamaged()) return;
+        StageGbaWorkspaceClear();
         pendingImportItems.Clear(); workspaceRows.Clear();
-        gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = true;
         gbaSingleRom = null; gbaSingleRomName = string.Empty; gbaSingleRomSave = null;
         gbaSingleGameRemoved = true; gbaSingleNeedsRelocation = false; gbaSingleGridActive = false;
         gbaKeepCurrentGame!.Checked = false;
-        RefreshGbaCardModeUi();
+        RefreshWorkspaceGrid();
+        labelStatus.Text = HasPendingGbaWorkspaceClear()
+            ? GbaCardText("clear_pending", "工作区游戏已清空；点击“开始烧录”后擦除卡内游戏，保留菜单和配置。", "Games removed from the workspace. Start Burn will erase on-card games and preserve the menu and settings.")
+            : GbaCardText("clear_local", "已取消预加入的游戏，菜单和配置保留。", "Pending games cancelled; menu and settings preserved.");
     }
 
     private byte[] ReadGbaSingleSource(WaterDeviceProtocol protocol, ProgrammerKind kind, int length)
@@ -277,14 +284,18 @@ public partial class Form1
         bool idle = !busy && !isAnalyzingQueueImports && !IsGbaDirectoryDamaged();
         bool menu = IsSelectedGbaMenuRow();
         bool disabled = IsSelectedGbaDisabledGameRow();
-        bool occupied = !disabled && (menu ? HasGbaListMenu() : IsGbaSingleCardMode() ? gbaSingleRom is not null || GetGbaSingleGame() is not null
+        bool occupied = dataGridViewRoms.SelectedRows.Count > 0 && !disabled && (menu ? HasGbaListMenu() : IsGbaSingleCardMode() ? gbaSingleRom is not null || GetGbaSingleGame() is not null
             : TryGetSelectedWorkspaceRow(out _, out _));
-        buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !disabled;
-        buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied;
-        buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && (HasGbaListMenu() || gbaSingleRom is not null || GetGbaSingleGame() is not null || workspaceRows.Count > 0);
+        bool canRemoveMenu = !menu || workspaceRows.Count(row => !row.IsLoadingPlaceholder) <= 1;
+        buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !disabled &&
+            (!IsGbaSingleCardMode() || menu || gbaSingleRom is null && GetGbaSingleGame() is null);
+        buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied && canRemoveMenu;
+        buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
+        menuClearRomQueue.ToolTipText = T("ui", "clear_workspace_hint", "Remove games from the workspace; Start Burn applies on-card erasures. Preserve the menu and settings.");
+        buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && (gbaSingleRom is not null || GetGbaSingleGame() is not null || workspaceRows.Count > 0);
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = false;
         menuReplaceMenuFile.Enabled = idle && !IsGbaMulticartUnavailable();
-        if (IsGbaMulticartUnavailable()) comboBoxGbaMenu.Enabled = checkBoxWaitcntPatch.Enabled = false;
+        if (IsGbaMulticartUnavailable()) comboBoxGbaMenu.Enabled = false;
         if (disabled || menu || (dataGridViewRoms.SelectedRows.Count > 0 && ReferenceEquals(dataGridViewRoms.SelectedRows[0].Tag, GbaAddGameRowTag)))
         {
             menuExportSelectedRom.Enabled = menuItemExportRom.Enabled = false;

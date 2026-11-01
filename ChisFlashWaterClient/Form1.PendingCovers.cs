@@ -8,7 +8,7 @@ public partial class Form1
 {
     private bool CanEditPendingGbaCovers()
     {
-        if (isBusy || isAnalyzingQueueImports || IsGbcWorkspaceMode() ||
+        if (isBusy || isAnalyzingQueueImports || IsSingleGbaMenuPreviewDisabled() || IsGbcWorkspaceMode() ||
             !workspaceRows.Any(row => row.PendingItem is { IsLoadingPlaceholder: false, ImportedPlatform: RomPlatform.Gba }))
         {
             return false;
