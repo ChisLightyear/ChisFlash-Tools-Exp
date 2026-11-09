@@ -14,6 +14,8 @@ public sealed class WaterDeviceProtocol : IDisposable
     public byte? LastAckByte { get; private set; }
     public bool LastAckTimedOut { get; private set; }
     private bool lastReadTimedOut;
+    private bool carbonateFlashGbxCompatibility;
+    public string PortName => port.PortName;
 
     public WaterDeviceProtocol(string portName, Action<int>? transferObserver = null)
     {
@@ -28,14 +30,21 @@ public sealed class WaterDeviceProtocol : IDisposable
         };
     }
 
-    public void Open()
+    public void Open(bool carbonateFlashGbxCompatibility = false, bool initializeCartPower = false)
     {
+        this.carbonateFlashGbxCompatibility = carbonateFlashGbxCompatibility;
         port.Open();
         port.RtsEnable = true;
         port.DtrEnable = true;
         port.RtsEnable = false;
         port.DtrEnable = false;
         DiscardInputSafely();
+        if (carbonateFlashGbxCompatibility && initializeCartPower)
+        {
+            // 退出FlashGBX会话后恢复3.3V，避免沿用其关电或5V状态。
+            // 该固件切换电源保留200ms隔离窗口，期间不再翻转控制线。
+            SetCartPower(1);
+        }
     }
 
     public void Dispose()
@@ -145,7 +154,12 @@ public sealed class WaterDeviceProtocol : IDisposable
     public void SetCartPower(byte mode)
     {
         SendPackage([0xA0, mode]);
-        PulseControlSignals(tailDelayMs: 10);
+        if (carbonateFlashGbxCompatibility)
+        {
+            Thread.Sleep(250);
+            DiscardInputSafely();
+        }
+        else PulseControlSignals(tailDelayMs: 10);
     }
 
     public void SetCartPhiDiv(byte divider)
@@ -365,15 +379,17 @@ public sealed class WaterDeviceProtocol : IDisposable
     private void SendPackage(byte[] bytes)
     {
         lastReadTimedOut = false;
-        DiscardInputSafely();
-        int size = 2 + bytes.Length + 2;
-        byte[] buffer = new byte[size];
-
-        Array.Copy(BitConverter.GetBytes((ushort)size), 0, buffer, 0, 2);
-        Array.Copy(bytes, 0, buffer, 2, bytes.Length);
-
-        port.Write(buffer, 0, size);
-        transferObserver?.Invoke(bytes.Length);
+        IReadOnlyList<byte[]> frames = LegacyCommandFraming.BuildFrames(bytes, carbonateFlashGbxCompatibility);
+        for (int index = 0; index < frames.Count; index++)
+        {
+            DiscardInputSafely();
+            byte[] frame = frames[index];
+            port.Write(frame, 0, frame.Length);
+            transferObserver?.Invoke(frame.Length - 4);
+            // 中间分包各自等ACK；最后一个应答仍由原命令调用者处理。
+            if (index + 1 < frames.Count && !TryReadAck(60000))
+                throw new IOException("碳酸钙分包未收到ACK：" + DescribeLastAckFailure());
+        }
     }
 
     private void PulseControlSignals(int tailDelayMs)

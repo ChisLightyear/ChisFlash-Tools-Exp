@@ -161,12 +161,7 @@ public partial class Form1
             forceFullFixedMapRewrite: clearConfigArea,
             cancellationToken: cancellationToken);
 
-        WaterCartScanResult rebuilt = WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out WaterCartScanResult liveScan)
-            ? liveScan
-            : WaterCartScanner.RebuildCachedScanResult(
-                initialScan,
-                gamesOverride: BuildBeggarMaxPlannedGames(burnPlan),
-                log: AppendLog);
+        WaterCartScanResult rebuilt = BuildBeggarMaxCachedScanResult(initialScan, burnPlan);
         rebuilt.IsBeggarMaxGbcMode = true;
         if (clearConfigArea)
         {
@@ -180,7 +175,6 @@ public partial class Form1
         rebuilt.CapacitySummary = initialScan.CapacitySummary;
         rebuilt.SectorSummary = initialScan.SectorSummary;
         rebuilt.Geometry = initialScan.Geometry;
-        PopulateSavePresenceForScan(protocol, rebuilt, ProgrammerKind.BeggarLegacy);
         return rebuilt;
     }
 
@@ -687,6 +681,33 @@ public partial class Form1
             .ToList();
     }
 
+    private WaterCartScanResult BuildBeggarMaxCachedScanResult(WaterCartScanResult initialScan, BeggarMaxBurnPlan burnPlan)
+    {
+        var games = BuildBeggarMaxPlannedGames(burnPlan);
+        var result = WaterCartScanner.RebuildCachedScanResult(initialScan, gamesOverride: games);
+        result.IsBeggarMaxGbcMode = true;
+        result.HasBeggarMaxDirectoryHeaders = true;
+        result.SaveSlotSummary = new();
+        result.Entries = burnPlan.RowPlans.Select((plan, index) =>
+        {
+            int saveLength = !plan.HasBattery ? 0 : plan.MbcType is 0x05 or 0x06 ? 0x200 :
+                plan.FinalUsesSharedSave ? Math.Min(plan.RamBankCount * 0x2000, 0x8000) : plan.RamBankCount * 0x2000;
+            string saveText = saveLength == 0 ? T("value", "save_type_none", "NONE") :
+                plan.MbcType is 0x05 or 0x06 ? "MBC2" : $"RAM {FormatKiBSize(saveLength)}" + (plan.FinalUsesSharedSave ? " (Shared)" : "");
+            return new WaterCartEntry
+            {
+                HeaderGame = games[index], AllocatedSizeBytesOverride = plan.AllocatedBytes,
+                EntrySlotOverride = plan.FinalEntrySlot, SaveLengthBytesOverride = saveLength,
+                SourceTextOverride = T("value", "source_gbc", "GBC"), SaveTypeTextOverride = saveText,
+                RomOffsetBankOverride = plan.FinalRomOffsetBank, RomBankCountOverride = plan.AllocatedRomBanks,
+                SaveBankMapOverride = plan.FinalSaveBankMap.ToArray(), UsesSharedSaveOverride = plan.FinalUsesSharedSave,
+                MbcTypeOverride = plan.MbcType, RamBankCountOverride = plan.RamBankCount,
+                HasBatteryOverride = plan.HasBattery, DirectoryTitleOverride = plan.DisplayTitle,
+            };
+        }).ToList();
+        return result;
+    }
+
     private void ProgramBeggarMaxBurnPlan(
         WaterDeviceProtocol protocol,
         WaterCartScanResult scanResult,
@@ -694,11 +715,6 @@ public partial class Form1
         bool forceFullFixedMapRewrite = false,
         CancellationToken cancellationToken = default)
     {
-        var fcConfig=ReadBeggarMaxSectorImage(protocol,0x20000,64,cancellationToken);
-        if(fcConfig.AsSpan(0,4).SequenceEqual("MD02"u8))
-            throw new InvalidOperationException("MD data card: use the MD cartridge writer instead of the GB menu writer.");
-        if(GbaMultiMenuBuilder.Fc.FcMbcxCodec.HasFcIdentity(fcConfig))
-            throw new InvalidOperationException("NES data card: use the NES workspace instead of the GB menu writer.");
         cancellationToken.ThrowIfCancellationRequested();
         UpdateIndeterminateProgress(
             T("value", "gbc_progress_reading_existing", "Reading existing GBC/MAX flash content..."));

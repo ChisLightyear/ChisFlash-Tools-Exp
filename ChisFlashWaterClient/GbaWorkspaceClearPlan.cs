@@ -12,7 +12,19 @@ public static class GbaWorkspaceClearPlan
         return result;
     }
 
-    // 合卡的前4 MiB包含菜单、配置、映射和存档；游戏区擦除不得越过此边界。
+    public static WaterCartScanResult BuildClearedScanResult(WaterCartScanResult scan)
+    {
+        var cleared = WaterCartScanner.RebuildCachedScanResult(scan,
+            wlMappingOverride: new(), menuConfigOverride: new(), gamesOverride: []);
+        cleared.MenuBackgroundBitmapData = [];
+        cleared.MenuBackgroundPaletteData = [];
+        cleared.IsUniversalGbaMenuDetected = false;
+        cleared.IsSimplifiedNsGbaMenuDetected = false;
+        cleared.GbaMenuFirstScreenPreview = new();
+        return cleared;
+    }
+
+    // 合卡清除菜单、目录、菜单配置、映射及游戏，系统区内的存档扇区仍保留。
     public static uint[] BuildEraseSectors(WaterCartScanResult scan, IEnumerable<WaterNorWriteSegment>? replacementSegments = null)
     {
         int sector = scan.Geometry.SectorSizeBytes;
@@ -23,9 +35,17 @@ public static class GbaWorkspaceClearPlan
         int start = hasSystemArea ? WaterCartScanner.BucketSizeBytes : 0;
         if (start > capacity || start % sector != 0)
             throw new InvalidOperationException("菜单系统区与NOR扇区不对齐，不能清空游戏区。");
+        int menuEnd = hasSystemArea ? checked(scan.MenuConfig.Status.StatusAddress + scan.MenuConfig.Status.SectorSize) : 0;
+        if (hasSystemArea && (!scan.MenuConfig.IsDetected || menuEnd <= 0 || menuEnd > start || menuEnd % sector != 0))
+            throw new InvalidOperationException("菜单与配置边界无效，请先分析卡带配置。");
+        bool clearMapping = scan.WlMapping.IsDetected;
+        if (clearMapping && (WaterWlMappingCodec.Offset % sector != 0 || WaterWlMappingCodec.SectorSize % sector != 0))
+            throw new InvalidOperationException("映射区与NOR扇区不对齐，不能清空映射。");
         var replacements = (replacementSegments ?? []).ToArray();
-        return Enumerable.Range(start / sector, (capacity - start) / sector)
+        return Enumerable.Range(0, capacity / sector)
             .Select(index => checked((uint)(index * sector)))
+            .Where(address => address >= start || address < menuEnd ||
+                clearMapping && address >= WaterWlMappingCodec.Offset && address < WaterWlMappingCodec.Offset + WaterWlMappingCodec.SectorSize)
             // 新ROM自己的擦写流程会覆盖这些扇区，避免清空阶段重复擦除。
             .Where(address => !replacements.Any(segment => segment.Data.Length > 0 &&
                 address < (long)segment.StartAddress + segment.Data.Length && (long)address + sector > segment.StartAddress))

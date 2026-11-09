@@ -62,7 +62,7 @@ public partial class Form1
             column.Visible = visible;
             checkBoxWaitcntPatch.Visible = visible;
             checkBoxWaitcntPatch.Enabled = visible && !isBusy && !isAnalyzingQueueImports;
-            menuReplaceSelectedRom.Visible = menuItemReplaceRom.Visible = !visible;
+            menuReplaceSelectedRom.Visible = menuItemReplaceRom.Visible = true;
             var choices = new List<bool>();
             foreach (DataGridViewRow row in dataGridViewRoms.Rows)
             {

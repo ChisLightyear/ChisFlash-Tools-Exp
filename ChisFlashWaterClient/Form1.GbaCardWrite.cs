@@ -15,24 +15,30 @@ public partial class Form1
         result.ChipName = hardware.ChipName;
         result.IsChipRecognized = hardware.IsChipRecognized;
         result.IsChm1 = hardware.IsChm1;
+        if (!result.MenuConfig.IsDetected)
+            foreach (var entry in result.Entries.Where(entry => !entry.IsMenu && entry.StartBucket == 0))
+                entry.AllocatedSizeBytesOverride = image.Length;
         return result;
     }
 
     private async Task BurnSingleGbaAsync()
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
-        if (isBusy || (gbaSingleRom is null && !gbaSingleNeedsRelocation) || !HasActiveScanResult()) return;
+        if (isBusy || (gbaSingleRom is null && !gbaSingleNeedsRelocation)) return;
+        if (!EnsureSelectedPortHasActiveScan(out string scanReason)) throw new InvalidOperationException(scanReason);
         if (!EnsureCurrentScanIsWritable(out string reason)) throw new InvalidOperationException(reason);
         var scan = currentScanResult!;
         if (scan.IsNorProbeOnly) throw new InvalidOperationException("请先分析卡带内容，再烧录单卡。");
         long length = gbaSingleRom?.Length ?? (long)GetGbaSingleGame()!.LogicalBucketCount * WaterCartScanner.BucketSizeBytes;
         if (length <= 0 || length > ChisFlash10Image.CapacityBytes || length > scan.Geometry.DeviceSizeBytes) throw new InvalidDataException("游戏长度无效或超过实际NOR容量。");
+        byte[]? image = gbaSingleRom is null ? null : PrepareGbaRomWaitcnt(ChisFlash10Image.Build(gbaSingleRom), gbaSingleWaitcntPatch);
+        if (image is not null) ValidateReplacementRomLength(image.Length, gbaSingleReplacementCapacityBytes, gbaSingleRomName);
         string patchText = gbaSingleRom is not null && gbaSingleWaitcntPatch ? "按列表勾选应用 WAITCNT 补丁。" : "ROM按原文件写入。";
         if (MessageBox.Show(this, (HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() + "\n\n" : string.Empty) + $"从地址0写入 { (gbaSingleRom is null ? GetGbaSingleGame()!.Title : gbaSingleRomName)}（{FormatMiBSize(length)}）？\n\n这会覆盖该范围内的原游戏或合卡菜单。{patchText}不安装合卡菜单，独立存档芯片不改写。",
             "烧录单卡", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-        byte[]? image = gbaSingleRom is null ? null : PrepareGbaRomWaitcnt(ChisFlash10Image.Build(gbaSingleRom), gbaSingleWaitcntPatch);
         string port = GetSelectedPortName()!;
         var kind = GetRequiredSelectedProgrammerKind();
+        bool directLegacyErase = UseDirectGbaWorkspaceErase(scan, GetSelectedBurnProfileMode());
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation; isBurnCancellationRequested = false;
         SetBusy(true, "正在烧录单卡ROM…");
@@ -41,16 +47,15 @@ public partial class Form1
         {
             if (image is null)
                 image = await Task.Run(() => { using var protocol = new WaterDeviceProtocol(port); OpenProgrammerProtocol(protocol, kind); return ReadGbaSingleSource(protocol, kind, (int)length); });
+            uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, [new WaterNorWriteSegment { Data = image }]);
             await Task.Run(() =>
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan,
-                    [new WaterNorWriteSegment { Data = image }]);
                 if (kind == ProgrammerKind.BeggarLegacy)
                 {
                     BeginMeasuredProgress("单卡ROM", image.Length + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, (image.Length + 4095) / 4096 + clearSectors.Length);
-                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
+                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token);
                     int written = 0;
                     LegacyGbaRomWriter.Write(image,
                         (address, word) => { if (!protocol.TryWriteRom(address, BitConverter.GetBytes(word), 3000)) throw new IOException("单卡ROM命令未收到ACK。"); },
@@ -67,7 +72,7 @@ public partial class Form1
                     byte[] aligned = Enumerable.Repeat((byte)255, size).ToArray(); image.CopyTo(aligned, 0);
                     var segment = new WaterNorWriteSegment { StartAddress = 0, Data = aligned, Label = "单卡ROM" };
                     BeginMeasuredProgress("单卡ROM", CountSegmentProgressWorkBytes(segment, scan.Geometry) + (long)clearSectors.Length * sector, CountSegmentProgressUnits(segment, scan.Geometry) + clearSectors.Length);
-                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
+                    EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token);
                     ProgramNorSegment(protocol, kind, scan.Geometry, segment, 1, 1, cancellation.Token);
                 }
                 CompleteMeasuredProgress("单卡ROM");
@@ -121,7 +126,8 @@ public partial class Form1
     {
         EnsureGbaMulticartSupported();
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
-        if (isBusy || !IsGbaConversionDraft() || !HasActiveScanResult()) return;
+        if (isBusy || !IsGbaConversionDraft()) return;
+        if (!EnsureSelectedPortHasActiveScan(out string scanReason)) throw new InvalidOperationException(scanReason);
         if (!EnsureCurrentScanIsWritable(out string reason)) throw new InvalidOperationException(reason);
         var scan = currentScanResult!;
         var rows = workspaceRows.Where(row => row.PendingItem is not null).ToArray();
@@ -174,22 +180,27 @@ public partial class Form1
                 return GbaCardWritePlan.CompleteMapping(File.ReadAllBytes(result.OutputPath), UsesWaterLinkTargetMode(mode),
                     scan.Geometry.DeviceSizeBytes, WaterWlMappingCodec.IsChimeraConfiguration(scan));
             });
+            var refreshed = GbaScanAfterWrite(image, scan);
+            for (int index = 0; index < rows.Length; index++)
+                if (rows[index].PendingItem is { ReplacementCapacityBytes: > 0 } item)
+                    EnsureReplacementRomFits(item, checked(refreshed.MenuConfig.Items[index + (keep ? 1 : 0)].RomSizeBlocks * WaterRomImportPlanner.BlockSizeBytes));
             var segments = GbaCardWritePlan.Multicart(image, scan.Geometry.DeviceSizeBytes, scan.Geometry.SectorSizeBytes);
+            uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, segments);
+            bool directLegacyErase = UseDirectGbaWorkspaceErase(scan, mode);
             await Task.Run(() =>
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, segments);
                 BeginMeasuredProgress("单卡转合卡", segments.Sum(segment => CountSegmentProgressWorkBytes(segment, scan.Geometry)) + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, segments.Sum(segment => CountSegmentProgressUnits(segment, scan.Geometry)) + clearSectors.Length);
                 writeStarted = true;
-                EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, cancellation.Token);
+                EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token);
                 for (int index = 0; index < segments.Count; index++)
                     ProgramNorSegment(protocol, kind, scan.Geometry, segments[index], index + 1, segments.Count, cancellation.Token);
                 CompleteMeasuredProgress("单卡转合卡");
             });
             pendingImportItems.Clear(); workspaceRows.Clear();
             gbaKeepCurrentGame.Checked = false;
-            ApplyScanResult(GbaScanAfterWrite(image, scan), false);
+            ApplyScanResult(refreshed, false);
             succeeded = true;
             AppendLog("合卡菜单和游戏写入完成，未追加ROM读回校验。");
         }

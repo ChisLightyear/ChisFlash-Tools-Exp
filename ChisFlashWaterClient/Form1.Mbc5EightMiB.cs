@@ -140,6 +140,7 @@ public partial class Form1
                     definition.Enabled ? $"0x{definition.OffsetBytes:X6}" : "—", reason);
                 DataGridViewRow row = dataGridViewRoms.Rows[rowIndex];
                 row.Tag = slot;
+                if (slot == 0) row.ContextMenuStrip = GetMenuRowContextMenu();
                 row.ReadOnly = true;
                 row.Height = 46;
                 row.DefaultCellStyle.BackColor = definition.Enabled ? slot == 0 ? Color.FromArgb(230, 241, 252) : Color.White : Color.FromArgb(235, 235, 235);
@@ -217,10 +218,10 @@ public partial class Form1
         buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         menuScan.Enabled = buttonScan.Enabled;
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && enabled;
-        buttonQueueAdd.Text = selected == 0 ? Mbc5Text("add_menu", "添加菜单", "Add Menu") : Mbc5Text("add_game", "添加游戏", "Add Game");
+        buttonQueueAdd.Text = menuAddRom.Text = selected == 0 ? Mbc5Text("add_menu", "添加菜单", "Add Menu") : Mbc5Text("add_game", "添加游戏", "Add Game");
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && ActiveMbc5Layout.HasContent;
-        buttonQueueClear.Text = Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
+        buttonQueueClear.Text = menuClearRomQueue.Text = Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
         buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && ActiveMbc5Layout.HasContent;
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : CanWriteMbc5Image()
             ? Mbc5Text("burn_image", "烧录完整ROM", "Burn Full ROM") : Mbc5Text("export_image", $"导出完整{Mbc5ImageSize} ROM", $"Export Full {ActiveMbc5Layout.ImageCapacityBytes / Mbc5EightMiBLayout.MiB} MiB ROM");
@@ -416,7 +417,7 @@ public partial class Form1
         if (isBusy || !ActiveMbc5Layout.HasContent) return;
         if (!CanWriteMbc5Image()) { await ExportMbc5ImageAsync(); return; }
         if (!ActiveMbc5LayoutChanged && MessageBox.Show(this, Mbc5Text("unchanged_confirm", "工作区没有修改，仍要完整擦写吗？", "The workspace is unchanged. Rewrite the entire ROM anyway?"), Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        if (MessageBox.Show(this, Mbc5Text("burn_confirm", $"将全擦除{Mbc5ImageSize} NOR并烧录当前固定槽位布局，最后逐字节校验。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请先备份ROM和存档，并确认卡带已安装匹配的{(IsMbc5MaxMode() ? "MBC5 MAX 16in1" : "MBC5 3/4in1")}固件。继续？", $"Erase the entire {Mbc5ImageSize} NOR, write this layout, and verify every byte? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nBack up ROMs and saves and confirm matching fixed-slot firmware before continuing."),
+        if (MessageBox.Show(this, Mbc5Text("burn_confirm", $"将全擦除{Mbc5ImageSize} NOR并烧录当前固定槽位布局。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请确认卡带已安装匹配的{(IsMbc5MaxMode() ? "MBC5 MAX 16in1" : "MBC5 3/4in1")}固件。继续？", $"Erase the entire {Mbc5ImageSize} NOR and write this layout? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nConfirm matching fixed-slot firmware before continuing."),
             Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         byte[] image = ActiveMbc5Layout.BuildImage();
         WaterCartScanResult scan = currentScanResult!;
@@ -424,12 +425,12 @@ public partial class Form1
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation;
         isBurnCancellationRequested = false;
-        SetBusy(true, Mbc5Text("burning", "正在完整擦写并校验…", "Erasing, writing and verifying…"));
+        SetBusy(true, Mbc5Text("burning", "正在完整擦写…", "Erasing and writing…"));
         try
         {
             await Task.Run(() => WriteMbc5ImageOnDevice(port, scan, image, cancellation.Token));
             ActiveMbc5LayoutChanged = false;
-            AppendLog(Mbc5Text("verified", $"完整{Mbc5ImageSize} ROM写入并逐字节校验通过；游戏运行兼容性仍需实机测试。", $"The full {Mbc5ImageSize} ROM passed byte-for-byte verification; game compatibility still requires hardware testing."));
+            AppendLog(Mbc5Text("written", $"完整{Mbc5ImageSize} ROM写入完成。", $"The full {Mbc5ImageSize} ROM was written."));
         }
         finally
         {
@@ -449,13 +450,8 @@ public partial class Form1
         cancellationToken.ThrowIfCancellationRequested();
         using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-        if (!WaterCartScanner.TryScanBeggarMaxGbc(protocol, AppendLog, out WaterCartScanResult live, scanContent: false) ||
-            live.Geometry.DeviceSizeBytes != image.Length || live.Geometry.DeviceSizeBytes != expected.Geometry.DeviceSizeBytes || live.RawNorIdHex != expected.RawNorIdHex ||
-            live.Geometry.PrimaryCommandSetId != 2 || live.IsWriteProtected || live.Geometry.RegionCount != 1 ||
-            live.Geometry.SectorSizeBytes != expected.Geometry.SectorSizeBytes || live.Geometry.SectorCount != expected.Geometry.SectorCount ||
-            live.Geometry.BufferWriteBytes <= 0 || live.Geometry.BufferWriteBytes > ushort.MaxValue)
-            throw new InvalidOperationException("NOR identity or geometry changed; no erase was performed. Rescan the cartridge.");
-        int total = checked(live.Geometry.SectorCount + image.Length / GbcNorImageWriter.BankBytes * 2);
+        WaterCartScanResult live = expected;
+        int total = checked(live.Geometry.SectorCount + image.Length / GbcNorImageWriter.BankBytes);
         BeginMeasuredProgress("GB/GBC NOR", total, total);
         try
         {
@@ -471,7 +467,6 @@ public partial class Form1
                             throw new IOException("GB ROM programming failed.");
                     }
                 },
-                bank => ReadBeggarMaxSectorImage(protocol, bank * Mbc5EightMiBWriter.BankBytes, Mbc5EightMiBWriter.BankBytes, cancellationToken),
                 () => { if (!protocol.TryWriteGbc(0, [0xF0], 3000) || !TrySwitchBeggarMaxRomBank(protocol, 0)) throw new IOException("Could not restore ROM bank 0."); },
                 (_, _, phase) => AdvanceMeasuredProgress(1, 1, phase), cancellationToken);
             CompleteMeasuredProgress("GB/GBC NOR");

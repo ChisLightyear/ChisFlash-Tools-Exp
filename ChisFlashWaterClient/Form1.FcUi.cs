@@ -194,6 +194,8 @@ public partial class Form1
         menuDeleteSelectedMapping.Enabled = false;
         menuExportSelectedRom.Enabled = selected && fcWorkspace!.CanExportSelection;
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle;
+        buttonQueueAdd.Text = menuAddRom.Text = T("ui", "queue_add_rom", "Add ROM");
+        buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "queue_clear", "Clear Queue");
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = selected;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && fcWorkspace!.HasGames;
         buttonScan.Enabled = menuScan.Enabled = idle && CanUseFcDevice;

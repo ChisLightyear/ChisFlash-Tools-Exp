@@ -946,17 +946,13 @@ public partial class Form1
         bool workspaceUiBusy = busy;
         bool hasMdImports = pendingImportItems.Any(item=>item.MdRom is not null);
         bool hasActiveScan = HasActiveScanResult();
-        bool hasCachedScan = currentScanResult is not null;
         bool usesWaterLinkTargetMode = UsesSelectedMagicTargetMode();
         MenuUpdateActionMode menuUpdateActionMode = GetMenuUpdateActionMode();
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
-        bool promoteRepairMenu = !usesWaterLinkTargetMode &&
-            IsWorkspaceModificationLocked() &&
-            missingMenuActionMode != MissingMenuActionMode.None;
         bool workspaceLocked = IsWorkspaceModificationLocked();
         bool scanCapacityInvalid = IsCurrentScanCapacityInvalid();
         bool scanWriteProtected = currentScanResult?.IsWriteProtected == true;
-        bool canModifyWorkspace = !workspaceUiBusy && !workspaceLocked;
+        bool canModifyWorkspace = !workspaceUiBusy && !isAnalyzingQueueImports;
         bool hasQueueItems = workspaceRows.Any(row => row.PendingItem is not null);
         bool hasWorkspaceChanges = HasWorkspaceChanges();
         bool hasSelectedQueuedItem = TryGetSelectedPendingImportItem(out _, out _);
@@ -966,14 +962,8 @@ public partial class Form1
             currentScanResult is not null &&
             !workspaceLocked &&
             !TryValidateWorkspaceCapacity(out _);
-        bool canBurnQueue = !isAnalyzingQueueImports &&
-            hasWorkspaceChanges &&
-            currentScanResult is not null &&
-            !string.IsNullOrWhiteSpace(GetSelectedPortName()) &&
-            EnsureSelectedProgrammerSupportsCurrentCartWrite(out _) &&
-            !workspaceLocked &&
-            !workspaceCapacityExceeded &&
-            !scanWriteProtected;
+        // 按钮按工作区内容启用；实际写入范围等检查在点击后给出具体原因。
+        bool canBurnQueue = hasQueueItems || hasWorkspaceChanges;
         bool canRunFragmentTest = hasActiveScan &&
             !scanCapacityInvalid &&
             GetSelectedProgrammerKind() == ProgrammerKind.WaterLink;
@@ -1013,18 +1003,16 @@ public partial class Form1
         menuUnlockPpb.Enabled = !workspaceUiBusy && CanUnlockPpbCurrentScan(out _);
         menuUnlockPpb.Text = T("ui", "unlock_ppb", "Unlock PPB");
         buttonQueueAdd.Enabled = canModifyWorkspace;
+        buttonQueueAdd.Text = menuAddRom.Text = T("ui", "queue_add_rom", "Add ROM");
+        buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "queue_clear", "Clear Queue");
         buttonQueueRemove.Enabled = canModifyWorkspace && hasSelectedQueuedItem;
         buttonQueueClear.Enabled = canModifyWorkspace && hasQueueItems;
         buttonQueueBurn.Enabled = hasActiveBurnCancellation
             ? !isBurnCancellationRequested
-            : promoteRepairMenu
-                ? !workspaceUiBusy
-                : canModifyWorkspace && canBurnQueue;
+            : canModifyWorkspace && canBurnQueue;
         buttonQueueBurn.Text = hasActiveBurnCancellation
             ? T("ui", "cancel_burn", "Cancel")
-            : promoteRepairMenu
-                ? T("ui", "repair_menu", "Repair Menu")
-                : T("ui", "queue_burn", "Start Burn");
+            : T("ui", "queue_burn", "Start Burn");
         menuAddRom.Enabled = buttonQueueAdd.Enabled;
         menuRemoveSelectedRom.Enabled = buttonQueueRemove.Enabled;
         menuClearRomQueue.Enabled = buttonQueueClear.Enabled;
@@ -1032,7 +1020,6 @@ public partial class Form1
         menuStartBurn.Text = buttonQueueBurn.Text;
         buttonQueueAdd.Enabled=!workspaceUiBusy&&!isAnalyzingQueueImports;
         menuAddRom.Enabled=buttonQueueAdd.Enabled;
-        if(HasUnreadyPlatformImports(workspaceRows)&&!CanWriteMdQueue&&!hasActiveBurnCancellation){buttonQueueBurn.Enabled=false;menuStartBurn.Enabled=false;}
         UpdateSelectionCommandStates();
         if(TryGetSelectedPendingImportItem(out var selectedImport,out _) && selectedImport?.MdRom is not null)
         {
@@ -1048,8 +1035,8 @@ public partial class Form1
         // New card types must not need their own pre-scan UI exception.
         comboBoxBurnProfileMode.Enabled = !workspaceUiBusy &&
             !isAnalyzingQueueImports && burnProfileModeOptions.Count > 0;
-        dataGridViewRoms.Enabled = (hasCachedScan || hasQueueItems) && !scanCapacityInvalid && !workspaceUiBusy;
-        groupBoxList.Enabled = hasCachedScan || burnProfileModeOptions.Count > 0;
+        dataGridViewRoms.Enabled = canModifyWorkspace;
+        groupBoxList.Enabled = true;
 
         RefreshGbaCardModeUi();
         if (!workspaceUiBusy && !isAnalyzingQueueImports)

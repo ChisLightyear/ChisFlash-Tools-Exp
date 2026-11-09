@@ -35,6 +35,16 @@ public partial class Form1
             dataGridViewRoms.Rows[index].Cells[7].ToolTipText = chisFlash10Save.CodeEvidence is null
                 ? Chis10Text("tag_evidence", "按 ROM 标签识别；未确认实际存档函数。", "Identified by ROM tag; save functions are not confirmed.")
                 : Chis10Text("code_evidence", "已匹配存档代码：", "Matched save code: ") + chisFlash10Save.CodeEvidence;
+            dataGridViewRoms.Rows[index].Tag = new WorkspaceListRow { CartEntry = GetChisFlash10CartGame() };
+        }
+        else if (GetChisFlash10CartGame() is { } game)
+        {
+            int index = dataGridViewRoms.Rows.Add("1", T("value", "row_state_cart", "On Cart"),
+                T("value", "source_nor", "NOR"), "GBA", game.Title, game.HeaderTitle,
+                GbaCardText("size_unconfirmed", "未确定", "Not determined"),
+                GbaCardText("save_unanalyzed", "未分析", "Not analyzed"), false,
+                Chis10Text("unchanged", "原文件，不打补丁", "Original ROM; no patches"), "0x000000", "");
+            dataGridViewRoms.Rows[index].Tag = new WorkspaceListRow { CartEntry = game };
         }
         groupBoxList.Text = Chis10Text("workspace", "ChisFlash 1.0V · 单游戏 32MB", "ChisFlash 1.0V · single game, 32MB");
         UpdateChisFlash10ActionButtons(isBusy);
@@ -66,6 +76,7 @@ public partial class Form1
                 return (Data: data, Save: ChisFlash10Image.Analyze(data));
             });
             chisFlash10Rom = prepared.Data;
+            chisFlash10ReplacementCapacityBytes = 0;
             chisFlash10WaitcntPatch = defaultWaitcntPatchEnabled;
             chisFlash10Save = prepared.Save;
             chisFlash10Name = Path.GetFileName(files[0]);
@@ -82,6 +93,7 @@ public partial class Form1
     {
         if (isBusy) return;
         chisFlash10Rom = null;
+        chisFlash10ReplacementCapacityBytes = 0;
         chisFlash10Save = null;
         chisFlash10Name = string.Empty;
         RefreshChisFlash10Grid();
@@ -107,6 +119,8 @@ public partial class Form1
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
         if (isBusy || chisFlash10Rom is null || chisFlash10Save is null) return;
+        byte[] image = PrepareGbaRomWaitcnt(ChisFlash10Image.Build(chisFlash10Rom), chisFlash10WaitcntPatch);
+        ValidateReplacementRomLength(image.Length, chisFlash10ReplacementCapacityBytes, chisFlash10Name);
         if (!CanWriteChisFlash10()) { await ExportChisFlash10RomAsync(); return; }
         string message = chisFlash10Name + Environment.NewLine + FormatDetectedSaveTypeDisplay(chisFlash10Save) + Environment.NewLine + Environment.NewLine +
             (chisFlash10WaitcntPatch ? Chis10Text("confirm_waitcnt", "将应用所勾选的 WAITCNT 补丁，再按盖中盖原版流程擦写该 ROM 覆盖的范围。不安装合卡菜单，也不改写独立存档芯片。继续烧录？",
@@ -115,8 +129,9 @@ public partial class Form1
                     "Program this ROM using the original Beggar procedure and its file range? The ROM is not patched. No multicart menu is installed and the separate save chip is not written. Save compatibility depends on the cartridge firmware."));
         if (HasPendingGbaWorkspaceClear()) message = GbaWorkspaceClearConfirmation() + Environment.NewLine + message;
         if (MessageBox.Show(this, message, "ChisFlash 1.0V", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        byte[] image = PrepareGbaRomWaitcnt(ChisFlash10Image.Build(chisFlash10Rom), chisFlash10WaitcntPatch);
         string port = GetSelectedPortName()!;
+        var scan = currentScanResult!;
+        uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, [new WaterNorWriteSegment { Data = image }]);
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation;
         isBurnCancellationRequested = false;
@@ -127,9 +142,8 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-                uint[] clearSectors = PendingGbaWorkspaceEraseSectors(currentScanResult!, [new WaterNorWriteSegment { Data = image }]);
-                BeginMeasuredProgress("ChisFlash 1.0V", image.Length + (long)clearSectors.Length * currentScanResult!.Geometry.SectorSizeBytes, (image.Length + 4095) / 4096 + clearSectors.Length);
-                EraseGbaWorkspaceSectors(protocol, ProgrammerKind.BeggarLegacy, currentScanResult, clearSectors, cancellation.Token);
+                BeginMeasuredProgress("ChisFlash 1.0V", image.Length + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, (image.Length + 4095) / 4096 + clearSectors.Length);
+                EraseGbaWorkspaceSectors(protocol, ProgrammerKind.BeggarLegacy, scan, clearSectors, true, cancellation.Token);
                 int written = 0;
                 LegacyGbaRomWriter.Write(image,
                     (address, value) =>
@@ -185,17 +199,17 @@ public partial class Form1
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = comboBoxBurnProfileMode.Enabled = idle;
         UpdateProgrammerModeSelectorUi(idle);
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !hasRom;
-        menuReplaceSelectedRom.Enabled = false;
+        menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = CanReplaceGbaWorkspaceSelection();
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && hasRom;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && (hasRom || !HasPendingGbaWorkspaceClear() && HasGbaGamesOnCard(currentScanResult));
-        buttonQueueAdd.Text = T("ui", "queue_add_rom", "Add ROM");
+        buttonQueueAdd.Text = menuAddRom.Text = T("ui", "queue_add_rom", "Add ROM");
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : HasPendingGbaWorkspaceClear() ? T("ui", "queue_burn", "Start Burn") :
             CanWriteChisFlash10() ? Chis10Text("burn", "烧录原 ROM", "Program original ROM") : Chis10Text("export", "导出原 ROM", "Export original ROM");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && (hasRom || CanBurnGbaWorkspaceClear());
+        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && (hasRom || HasPendingGbaWorkspaceClear());
         menuExportSelectedRom.Enabled = idle && hasRom;
         menuPendingGbaCovers.Enabled = menuDeleteSelectedMapping.Enabled = menuFragmentTest.Enabled = false;
-        menuItemReplaceRom.Enabled = menuItemExportRom.Enabled = false;
+        menuItemExportRom.Enabled = false;
         menuItemDeleteMapping.Enabled = menuItemExportSave.Enabled = menuItemImportSave.Enabled = menuItemClearSave.Enabled = false;
         menuItemExportChipSaveContext.Enabled = menuItemImportChipSaveContext.Enabled = menuItemClearChipSaveContext.Enabled = false;
         if (menuFcTools is not null) menuFcTools.Visible = false;

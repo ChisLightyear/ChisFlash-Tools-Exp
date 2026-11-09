@@ -463,16 +463,7 @@ public partial class Form1
             return;
         }
 
-        AppendLog(T("log", "workspace_capacity_exceeded_hint", "Current workspace exceeds cart capacity. Remove queued mappings until Start Burn becomes available."));
-        MessageBox.Show(
-            this,
-            T(
-                "dialog",
-                "workspace_capacity_exceeded_after_analysis_message",
-                "The current workspace exceeds the cart capacity. Start Burn is disabled.\n\nRemove queued mappings until the workspace fits again."),
-            T("dialog", "workspace_capacity_exceeded_title", "Workspace Exceeds Capacity"),
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Warning);
+        AppendLog(T("log", "workspace_capacity_exceeded_hint", "Current workspace exceeds cart capacity. Remove games before writing."));
     }
 
     private string GetQueueAnalysisStatusText()
@@ -1050,6 +1041,13 @@ public partial class Form1
     private bool TryValidateWorkspaceCapacity(IReadOnlyList<WorkspaceListRow> workspaceSnapshot, out string errorMessage)
     {
         errorMessage = string.Empty;
+        try
+        {
+            foreach (var row in workspaceSnapshot)
+                if (row.PendingItem is { ReplacementCapacityBytes: > 0 } item)
+                    EnsureReplacementRomFits(item, GetEstimatedPreparedRomLengthBytes(item, item.FileSizeBytes, GetSelectedBurnProfileMode()));
+        }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; return false; }
         if (IsGbaConversionDraft())
         {
             long bytes = 0x400000L + workspaceSnapshot.Where(row => row.PendingItem is not null)
@@ -1133,44 +1131,6 @@ public partial class Form1
         }
     }
 
-    private Task<(bool IsConnected, string FailureReason)> VerifyDeviceConnectionAsync(string portName, ProgrammerKind programmerKind)
-    {
-        return Task.Run(() =>
-        {
-            bool isConnected = TryVerifyDeviceConnection(portName, programmerKind, out string failureReason);
-            return (isConnected, failureReason);
-        });
-    }
-
-    private bool TryVerifyDeviceConnection(string portName, ProgrammerKind programmerKind, out string failureReason)
-    {
-        const int WaterLinkVerifyTimeoutMs = 1500;
-        const int BeggarVerifyTimeoutMs = 3000;
-
-        try
-        {
-            using var protocol = new WaterDeviceProtocol(portName);
-            OpenProgrammerProtocol(protocol, programmerKind);
-            bool isConnected = programmerKind == ProgrammerKind.BeggarLegacy
-                ? protocol.TryReadLegacyNorId(out _, BeggarVerifyTimeoutMs)
-                : protocol.TryReadLegacyNorId(out _, WaterLinkVerifyTimeoutMs);
-
-            if (isConnected)
-            {
-                failureReason = string.Empty;
-                return true;
-            }
-
-            failureReason = T("error", "device_not_responding", "The current programmer device did not respond.");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            failureReason = ex.Message;
-            return false;
-        }
-    }
-
     private bool TryGetSelectedWorkspaceRow(out WorkspaceListRow? row, out int rowIndex)
     {
         row = null;
@@ -1204,12 +1164,6 @@ public partial class Form1
         if (IsFcWorkspaceActive) { fcWorkspace!.RemoveSelected(); return; }
         if (isBusy)
         {
-            return;
-        }
-
-        if (IsWorkspaceModificationLocked())
-        {
-            AppendLog(GetWorkspaceLockedMessage());
             return;
         }
 
@@ -1250,12 +1204,6 @@ public partial class Form1
         if (IsFcWorkspaceActive) { fcWorkspace!.ClearGames(); return; }
         if (isBusy)
         {
-            return;
-        }
-
-        if (IsWorkspaceModificationLocked())
-        {
-            AppendLog(GetWorkspaceLockedMessage());
             return;
         }
 
@@ -1367,30 +1315,6 @@ public partial class Form1
                     "The current workspace exceeds the cart capacity and cannot be burned.\n\nDetails: {0}",
                     capacityErrorMessage),
                 T("dialog", "workspace_capacity_exceeded_title", "Workspace Exceeds Capacity"),
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        (bool isConnected, string connectionFailureReason) = await VerifyDeviceConnectionAsync(portName, programmerKind);
-        if (!isConnected)
-        {
-            RefreshPorts();
-
-            AppendLog(Tf(
-                "log",
-                "burn_connection_lost",
-                "Start Burn pre-check failed because the device is disconnected or not responding: {0}",
-                connectionFailureReason));
-
-            MessageBox.Show(
-                this,
-                Tf(
-                    "dialog",
-                    "burn_connection_lost_message",
-                    "The current WaterLink device is no longer connected or not responding.\n\nNo data was written to the cart.\nReconnect the programmer and click Start Burn again after the connection is stable.\n\nDetails: {0}",
-                    connectionFailureReason),
-                T("dialog", "burn_connection_lost_title", "Device Disconnected"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             return;
@@ -1686,6 +1610,7 @@ public partial class Form1
             metadataPlan,
             pendingPreparations,
             headAreaRewritePlan,
+            burnProfileMode,
             cancellationToken);
         return BuildImportedScanResult(liveScan, metadataPlan, headAreaRewritePlan);
     }
@@ -1811,7 +1736,8 @@ public partial class Form1
     {
         bool targetUsesWlMode = UsesWlTargetPlanningMode(burnProfileMode);
         bool requiresTargetMenuRewrite = targetUsesWlMode && !UsesWlMode(initialScan);
-        bool requiresSelectedMenuRewrite = HasGbaMenuSelectionChanges(initialScan, gbaMenuSelection);
+        // 此处已在GBA烧录后台，菜单更改由界面阶段生成的草稿表示。
+        bool requiresSelectedMenuRewrite = gbaDraftMenu is not null;
         int multicartImportCount = plannedImports.Count(import => IsImportedFromMulticart(import.PendingItem));
         if (multicartImportCount <= 0 && !requiresTargetMenuRewrite && !requiresSelectedMenuRewrite)
         {
@@ -1916,6 +1842,7 @@ public partial class Form1
         WorkspaceMetadataPlan metadataPlan,
         IReadOnlyDictionary<PendingRomImportItem, PendingRomPreparation> pendingPreparations,
         WorkspaceHeadAreaRewritePlan? headAreaRewritePlan,
+        BurnProfileMode burnProfileMode,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1945,7 +1872,8 @@ public partial class Form1
             : Tf("value", "import_progress_title_batch", "Import Batch ({0} ROMs)", plannedImports.Count);
 
         BeginMeasuredProgress(operationTitle, totalBytes, totalSectors);
-        EraseGbaWorkspaceSectors(protocol, programmerKind, scanResult, clearSectors, cancellationToken);
+        EraseGbaWorkspaceSectors(protocol, programmerKind, scanResult, clearSectors,
+            UseDirectGbaWorkspaceErase(scanResult, burnProfileMode), cancellationToken);
 
         foreach (PlannedWorkspaceImport import in plannedImports
                      .OrderBy(item =>
@@ -2541,6 +2469,7 @@ public partial class Form1
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureReplacementRomFits(item, romBytes.Length);
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);
         bool alreadyPrepared = HasPreparedSavePatch(
             item.SramPatchTargetIdentifier,
@@ -2623,6 +2552,7 @@ public partial class Form1
                     cancellationToken.ThrowIfCancellationRequested();
                 }
 
+                EnsureReplacementRomFits(item, workingRomBytes.Length);
                 return workingRomBytes;
             }, cancellationToken),
         };
@@ -2670,7 +2600,6 @@ public partial class Form1
 
         if (segment.EraseOnly)
         {
-            LogWaterSysInfoProbe(protocol, programmerKind, "before erase");
 
             for (int sectorIndex = 0; sectorIndex < sectorCount; sectorIndex++)
             {
@@ -2710,8 +2639,6 @@ public partial class Form1
                     BuildProgressDetailText(segment.Label, "progress_phase_erase", "Erase"));
                 cancellationToken.ThrowIfCancellationRequested();
             }
-
-            LogWaterSysInfoProbe(protocol, programmerKind, "after erase");
             return;
         }
 
@@ -2722,8 +2649,6 @@ public partial class Form1
             "Erase-before-write: {0} | {1} sector(s)",
             segment.Label,
             sectorCount));
-
-        LogWaterSysInfoProbe(protocol, programmerKind, "before erase");
 
         for (int sectorIndex = 0; sectorIndex < sectorCount; sectorIndex++)
         {
@@ -2764,8 +2689,6 @@ public partial class Form1
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        LogWaterSysInfoProbe(protocol, programmerKind, "after erase / before download");
-
         for (int sectorIndex = 0; sectorIndex < sectorCount; sectorIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2800,21 +2723,6 @@ public partial class Form1
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!TryDrainRomProgramForProgrammer(protocol, programmerKind, sectorAddress, 60000))
-                {
-                    throw new InvalidOperationException(
-                        Tf(
-                            "error",
-                            "segment_program_finish_failed",
-                            "Failed to finish programming {0}.",
-                            segment.Label) +
-                        BuildProgrammerFailureDetail(
-                            protocol,
-                            sectorAddress,
-                            sectorSize,
-                            sectorOffset,
-                            sectorSize));
-                }
             }
             if (sectorCount <= 4 || sectorIndex == 0 || sectorIndex == sectorCount - 1 || (sectorIndex + 1) % 8 == 0)
             {
@@ -2833,8 +2741,6 @@ public partial class Form1
                 BuildProgressDetailText(segment.Label, "progress_phase_write", "Write"));
             cancellationToken.ThrowIfCancellationRequested();
         }
-
-        LogWaterSysInfoProbe(protocol, programmerKind, "after download");
     }
 
     private void DataGridViewRoms_MouseDown(object? sender, MouseEventArgs e)

@@ -1043,8 +1043,8 @@ public static class WaterMagicUpgradeBuilder
         string? current = AppContext.BaseDirectory;
         while (!string.IsNullOrWhiteSpace(current))
         {
-            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "rom_builder", "lk_multimenu_wl.gba");
-            yield return Path.Combine(current, "GBA_MultiMenu_extended_WL", "GBA_MultiMenu_extended_WL.gba");
+            yield return Path.Combine(current, "src", "menus", "GBA_MultiMenu_extended_WL", "rom_builder", "lk_multimenu_wl.gba");
+            yield return Path.Combine(current, "src", "menus", "GBA_MultiMenu_extended_WL", "GBA_MultiMenu_extended_WL.gba");
 
             DirectoryInfo? parent = Directory.GetParent(current);
             if (parent is null)

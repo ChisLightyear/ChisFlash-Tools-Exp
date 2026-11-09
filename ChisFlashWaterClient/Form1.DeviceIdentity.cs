@@ -22,6 +22,15 @@ public partial class Form1
             @"(?<![\p{L}\p{N}])Water[\s_-]*Link(?![\p{L}\p{N}])",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    private static bool HasCarbonateFlashGbxIdentity(string? pnpDeviceId, string? productName) =>
+        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, CarbonateFlashGbxUsbPid) &&
+        !string.IsNullOrWhiteSpace(productName) && Regex.IsMatch(productName,
+            @"^\s*GBA\s+Burner\s+for\s+ChisFlash\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool HasSupportedUsbProductParent(string pnpDeviceId, string? parentId) =>
+        UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid) && UsbDeviceIdMatches(parentId, TargetUsbVid, TargetUsbPid) ||
+        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, CarbonateFlashGbxUsbPid) && UsbDeviceIdMatches(parentId, BeggarUsbVid, CarbonateFlashGbxUsbPid);
+
     private static string ReadUsbProductName(ManagementObject device, string pnpDeviceId)
     {
         var identity = ReadUsbDeviceProperties(device);
@@ -34,7 +43,7 @@ public partial class Form1
         string result = productName ?? string.Empty;
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pnpDeviceId };
         for (int depth = 0; depth < 3 &&
-            UsbDeviceIdMatches(parentId, TargetUsbVid, TargetUsbPid) && visited.Add(parentId!); depth++)
+            HasSupportedUsbProductParent(pnpDeviceId, parentId) && visited.Add(parentId!); depth++)
         {
             var identity = readParent(parentId!);
             if (!string.IsNullOrWhiteSpace(identity.ProductName))

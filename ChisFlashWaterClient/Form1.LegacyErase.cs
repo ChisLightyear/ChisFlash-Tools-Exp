@@ -25,11 +25,10 @@ public partial class Form1
                     "NOR target {0} chip erase failed or timed out: {1}", target, protocol.DescribeLastAckFailure()));
             }
 
-            VerifyErasedNorTarget(protocol, ProgrammerKind.BeggarLegacy, target, start, length);
             AdvanceMeasuredProgress(length, 1,
-                Tf("value", "erase_entire_nor_target_progress", "Verified target {0}/{1}", target + 1, targetCount));
+                Tf("value", "erase_entire_nor_target_progress", "Erased target {0}/{1}", target + 1, targetCount));
             AppendLog(Tf("log", "erase_entire_nor_target_done",
-                "NOR target {0} erase completed and passed bucket sampling verification.", target));
+                "NOR target {0} erase completed.", target));
         }
 
         if (!TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000))

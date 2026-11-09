@@ -18,7 +18,7 @@ public partial class Form1
     private sealed record ScanReadAttempt(WaterCartScanResult? Result, string FailureMessage);
     private bool applyingSelectedConfiguration;
 
-    private void RefreshPorts(bool allowFallbackSelection = true, bool resetAnalysisState = false)
+    private void RefreshPorts(bool allowFallbackSelection = true, bool resetAnalysisState = false, bool preferBeggar = false)
     {
         InvalidateFcDevice();
         if (resetAnalysisState)
@@ -48,7 +48,8 @@ public partial class Form1
                     continue;
                 }
 
-                string productName = UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface)
+                string productName = (UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid, TargetUsbInterface) ||
+                    UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, CarbonateFlashGbxUsbPid))
                     ? ReadUsbProductName(device, pnpDeviceId)
                     : string.Empty;
                 if (!TryGetSupportedProgrammerKind(pnpDeviceId, productName, out ProgrammerKind kind))
@@ -68,7 +69,7 @@ public partial class Form1
             AppendLog(Tf("log", "port_enum_failed", "Port enumeration failed: {0}", ex.Message));
         }
 
-        RestoreSelectedSerialPort(previousPortName, previousProgrammerKind, allowFallbackSelection);
+        RestoreSelectedSerialPort(previousPortName, previousProgrammerKind, allowFallbackSelection, preferBeggar);
         UpdateActionButtons(isBusy);
 
         int waterLinkCount = serialPorts.Values.Count(entry => entry.Kind == ProgrammerKind.WaterLink);
@@ -306,7 +307,7 @@ public partial class Form1
             try
             {
                 using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
-                OpenProgrammerProtocol(protocol, programmerKind);
+                OpenProgrammerProtocol(protocol, programmerKind, initializeCartPower: true);
                 WaterCartScanResult result;
                 if (programmerKind == ProgrammerKind.BeggarLegacy)
                 {
@@ -1173,7 +1174,7 @@ public partial class Form1
             return true;
         }
 
-        if (beggarUsbIdMatch)
+        if (beggarUsbIdMatch || HasCarbonateFlashGbxIdentity(pnpDeviceId, productName))
         {
             kind = ProgrammerKind.BeggarLegacy;
             return true;
@@ -1197,6 +1198,8 @@ public partial class Form1
             ProgrammerKind.BeggarLegacy => BeggarDisplayName,
             _ => T("value", "programmer_unknown", "Unknown"),
         };
+        bool carbonate = HasCarbonateFlashGbxIdentity(pnpDeviceId, productName);
+        if (carbonate) baseName = T("value", "programmer_carbonate_flashgbx", "ChisFlash Carbonate (FlashGBX compatible)");
         if (kind == ProgrammerKind.Unknown && !string.IsNullOrWhiteSpace(productName))
             baseName += " · " + productName;
         string displayName = $"{baseName} ({portName})";
@@ -1212,9 +1215,10 @@ public partial class Form1
             IsTargetMcu = true,
             Kind = kind,
             PnpDeviceId = pnpDeviceId ?? string.Empty,
+            IsCarbonateFlashGbx = carbonate,
         };
 
-        serialPorts.Add(displayName, entry);
+        serialPorts.TryAdd(displayName, entry);
         comboBoxPorts.Items.Add(displayName);
     }
 
@@ -1245,8 +1249,9 @@ public partial class Form1
 
     private bool TrySelectFirstRecognizedSerialPort()
     {
+        if (TrySelectPreferredBeggarSerialPort()) return true;
         // 刷新后没有可恢复的选项时，优先选择已识别的两种烧录器；未知串口最后再作为候选。
-        foreach (ProgrammerKind preferredKind in new[] { ProgrammerKind.BeggarLegacy, ProgrammerKind.WaterLink })
+        foreach (ProgrammerKind preferredKind in new[] { ProgrammerKind.WaterLink })
         {
             for (int i = 0; i < comboBoxPorts.Items.Count; i++)
             {
@@ -1276,12 +1281,27 @@ public partial class Form1
         return false;
     }
 
+    private bool TrySelectPreferredBeggarSerialPort()
+    {
+        string? selected = comboBoxPorts.Items.Cast<string>()
+            .Where(name => serialPorts.TryGetValue(name, out var entry) && entry.Kind == ProgrammerKind.BeggarLegacy)
+            .OrderBy(name => serialPorts[name].IsCarbonateFlashGbx)
+            .FirstOrDefault();
+        if (selected is null) return false;
+        comboBoxPorts.SelectedItem = selected;
+        return true;
+    }
+
     private void RestoreSelectedSerialPort(
         string? portName,
         ProgrammerKind? previousProgrammerKind,
-        bool allowFallbackSelection = true)
+        bool allowFallbackSelection = true,
+        bool preferBeggar = false)
     {
         comboBoxPorts.SelectedIndex = -1;
+
+        // 用户主动刷新时优先选择盖中盖；内部刷新仍保留有效的原选择。
+        if (allowFallbackSelection && preferBeggar && TrySelectPreferredBeggarSerialPort()) return;
 
         bool previousWasRecognized = previousProgrammerKind is ProgrammerKind.WaterLink or ProgrammerKind.BeggarLegacy or ProgrammerKind.Unknown;
 
@@ -1353,6 +1373,8 @@ public partial class Form1
 
     private string GetSelectedProgrammerDisplayName()
     {
+        if (GetSelectedPortName() is { } portName && UsesCarbonateFlashGbxPort(portName))
+            return T("value", "programmer_carbonate_flashgbx", "ChisFlash Carbonate (FlashGBX compatible)");
         ProgrammerKind? kind = GetSelectedProgrammerKind();
         return kind switch
         {
@@ -1728,7 +1750,7 @@ public partial class Form1
         bool canExportChip = false;
         bool canImportChip = false;
         bool canClearChip = false;
-        bool canReplace = !SupportsGbaCardMode() &&
+        bool canReplace = SupportsGbaCardMode() ? CanReplaceGbaWorkspaceSelection() :
             !IsWorkspaceModificationLocked() &&
             selectedEntry is not null &&
             !selectedEntry.IsMenu &&

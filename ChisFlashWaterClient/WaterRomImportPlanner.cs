@@ -388,8 +388,10 @@ public static class WaterRomImportPlanner
                 LocalizedText.T("error", "replace_rom_target_invalid", "The selected ROM mapping cannot be replaced because its target area is invalid."));
         }
 
-        int replacementAllocatedSizeBytes = Math.Max(MinimumRomSizeBytes, replacementTargetEntry.LogicalBucketCount * WaterCartScanner.BucketSizeBytes);
-        int requiredAllocatedSizeBytes = NormalizeLegacyRomLength(plannedRomLengthBytes ?? romBytes.Length);
+        int replacementAllocatedSizeBytes = replacementTargetEntry.MenuItem is { RomSizeBlocks: > 0 } originalItem
+            ? checked(originalItem.RomSizeBlocks * BlockSizeBytes)
+            : checked(replacementTargetEntry.LogicalBucketCount * WaterCartScanner.BucketSizeBytes);
+        int requiredAllocatedSizeBytes = Math.Max(plannedRomLengthBytes ?? 0, romBytes.Length);
         if (requiredAllocatedSizeBytes > replacementAllocatedSizeBytes)
         {
             throw new InvalidOperationException(
@@ -421,7 +423,9 @@ public static class WaterRomImportPlanner
             ? replacementTargetEntry.SaveIndex.Value
             : (byte)0;
 
-        uint startAddress = replacementTargetEntry.StartAddress;
+        uint startAddress = replacementTargetEntry.MenuItem is { } originalMenuItem
+            ? checked((uint)originalMenuItem.RomOffsetBlocks * BlockSizeBytes)
+            : replacementTargetEntry.StartAddress;
         int romOffsetBlocks = (int)(startAddress / BlockSizeBytes);
         int romSizeBlocks = replacementAllocatedSizeBytes / BlockSizeBytes;
         MenuItemConfigInfo newItem = new()
@@ -641,13 +645,13 @@ public static class WaterRomImportPlanner
         List<int> physicalBuckets = replacementTargetEntry.PhysicalBuckets.ToList();
         int logicalBucketCount = replacementTargetEntry.WlRecord?.LogicalBucketCount
             ?? Math.Max(1, physicalBuckets.Count);
-        if (physicalBuckets.Count == 0 || logicalBucketCount <= 0)
+        if (physicalBuckets.Count != logicalBucketCount || logicalBucketCount <= 0)
         {
             throw new InvalidOperationException(
                 LocalizedText.T("error", "replace_rom_target_invalid", "The selected ROM mapping cannot be replaced because its target area is invalid."));
         }
 
-        int effectiveRomLengthBytes = plannedRomLengthBytes ?? romBytes.Length;
+        int effectiveRomLengthBytes = Math.Max(plannedRomLengthBytes ?? 0, romBytes.Length);
         int requiredLogicalBucketCount = Math.Max(1, DivCeil(effectiveRomLengthBytes, WaterCartScanner.BucketSizeBytes));
         if (requiredLogicalBucketCount > logicalBucketCount)
         {

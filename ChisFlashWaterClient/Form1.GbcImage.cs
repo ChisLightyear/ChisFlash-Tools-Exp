@@ -165,7 +165,7 @@ public partial class Form1
         if (isBusy || gbcImageData is null) return;
         GbcRtcRomInspection inspection = InspectRtcGame(gbcImageData);
         if (!CanWriteGbcImage()) { await ExportGbcImageAsync(); return; }
-        if (MessageBox.Show(this, RtcHeaderNotice(inspection) + Environment.NewLine + Environment.NewLine + T("gbc_profile", "burn_confirm", "Erase the entire detected NOR, write the imported image (unused bytes filled FF), and verify it? Existing ROM content is replaced; SRAM is not erased. Back up first."),
+        if (MessageBox.Show(this, RtcHeaderNotice(inspection) + Environment.NewLine + Environment.NewLine + T("gbc_profile", "burn_confirm", "Erase the entire detected NOR and write the imported image (unused bytes filled FF)? Existing ROM content is replaced; SRAM is not erased."),
             GetBurnProfileModeDisplayName(GetSelectedBurnProfileMode()), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         byte[] image = BuildGbcImage();
         WaterCartScanResult scan = currentScanResult!;
@@ -173,7 +173,7 @@ public partial class Form1
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation;
         isBurnCancellationRequested = false;
-        SetBusy(true, T("gbc_profile", "writing", "Erasing, writing and verifying the complete image..."));
+        SetBusy(true, T("gbc_profile", "writing", "Erasing and writing the complete image..."));
         try { await Task.Run(() => WriteGbcImageOnDevice(port, scan, image, cancellation.Token)); }
         finally
         {
@@ -202,8 +202,8 @@ public partial class Form1
         UpdateProgrammerModeSelectorUi(idle);
         buttonQueueAdd.Enabled = menuAddRom.Enabled = menuReplaceSelectedRom.Enabled = idle && raw;
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && raw && gbcImageData is not null;
-        buttonQueueAdd.Text = T("gbc_profile", "add_image", "Import ROM / BIN");
-        buttonQueueClear.Text = T("gbc_profile", "clear_image", "Clear image");
+        buttonQueueAdd.Text = menuAddRom.Text = T("gbc_profile", "add_image", "Import ROM / BIN");
+        buttonQueueClear.Text = menuClearRomQueue.Text = T("gbc_profile", "clear_image", "Clear image");
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : CanWriteGbcImage()
             ? T("gbc_profile", "burn_image", "Burn complete ROM") : T("gbc_profile", "export_image", "Export complete ROM");
         buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && hasImage;

@@ -104,7 +104,7 @@ public partial class Form1
 
     private async Task ReplaceSelectedRomAsync()
     {
-        if (SupportsGbaCardMode() || IsChisFlash10Mode()) return;
+        if (IsGbaSingleCardMode() || IsChisFlash10Mode()) { await ReplaceSingleGbaRomAsync(); return; }
         if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
         if (IsMbc5FixedSlotMode()) { await SelectMbc5FilesAsync(); return; }
         if (isBusy || isAnalyzingQueueImports)
@@ -112,16 +112,17 @@ public partial class Form1
             return;
         }
 
-        if (IsWorkspaceModificationLocked())
+        if (!SupportsGbaCardMode() && IsWorkspaceModificationLocked())
         {
             AppendLog(GetWorkspaceLockedMessage());
             return;
         }
 
         if (!TryGetSelectedWorkspaceRow(out WorkspaceListRow? selectedRow, out int rowIndex) ||
-            selectedRow?.CartEntry is not WaterCartEntry entry ||
-            entry.IsMenu ||
-            (!entry.FoundInMenuConfig && !entry.FoundInWlMapping && entry.RomOffsetBank < 0))
+            selectedRow is null ||
+            (SupportsGbaCardMode() ? !CanReplaceGbaWorkspaceSelection() :
+                selectedRow.CartEntry is not { IsMenu: false } entry ||
+                (!entry.FoundInMenuConfig && !entry.FoundInWlMapping && entry.RomOffsetBank < 0)))
         {
             AppendLog(T("log", "replace_rom_no_selection", "The current row does not contain a replaceable ROM mapping."));
             return;
@@ -156,11 +157,21 @@ public partial class Form1
         try
         {
             bool isGbcWorkspaceMode = IsGbcWorkspaceMode();
+            bool isGbaWorkspace = SupportsGbaCardMode();
             replacementItem = await Task.Run(() =>
             {
                 var imported=CreatePendingRomImportItemsFromSource(dialog.FileName,isGbcWorkspaceMode);
                 if(imported.Items.Count!=1)throw new InvalidDataException("替换需要一个游戏；含多个游戏的ZIP请拖入主列表。");
-                return imported.Items[0];
+                var item = imported.Items[0];
+                if (isGbaWorkspace)
+                {
+                    using var source = File.OpenRead(item.FilePath);
+                    byte[] header = new byte[0xC0];
+                    if (item.ImportedPlatform is not (null or RomPlatform.Gba) || source.Read(header) != header.Length ||
+                        !WaterCartScanner.HasValidGbaHeader(header))
+                        throw new InvalidDataException("替换GBA游戏需要有效的GBA ROM。");
+                }
+                return item;
             });
         }
         catch (Exception ex)
@@ -173,6 +184,13 @@ public partial class Form1
             SetQueueAnalysisState(false, 0);
         }
 
+        QueueRomReplacement(selectedRow, rowIndex, replacementItem);
+    }
+
+    private void QueueRomReplacement(WorkspaceListRow selectedRow, int rowIndex, PendingRomImportItem replacementItem)
+    {
+        WaterCartEntry? entry = selectedRow.CartEntry;
+        PendingRomImportItem? previous = selectedRow.PendingItem;
         BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
         if (RequiresBatterylessPatchButUnavailable(replacementItem, burnProfileMode))
         {
@@ -185,9 +203,12 @@ public partial class Form1
         }
 
         int plannedRomLengthBytes = GetEstimatedPreparedRomLengthBytes(replacementItem, replacementItem.FileSizeBytes, burnProfileMode);
-        MatchPendingGbaCovers([replacementItem]);
-        int requiredAllocatedSizeBytes = EstimateWorkspaceAllocatedSizeBytes(replacementItem, plannedRomLengthBytes, burnProfileMode);
-        int targetAllocatedSizeBytes = GetCartEntryAllocatedSizeBytes(entry);
+        int requiredAllocatedSizeBytes = SupportsGbaCardMode() ? plannedRomLengthBytes :
+            EstimateWorkspaceAllocatedSizeBytes(replacementItem, plannedRomLengthBytes, burnProfileMode);
+        int targetAllocatedSizeBytes = entry is not null ?
+            SupportsGbaCardMode() && !entry.FoundInMenuConfig && !entry.FoundInWlMapping
+                ? GetSingleGbaReplacementCapacity(false) : GetCartEntryAllocatedSizeBytes(entry) :
+            previous?.ReplacementCapacityBytes > 0 ? previous.ReplacementCapacityBytes : GetWorkspaceRowAllocatedSizeBytes(selectedRow);
         if (currentScanResult?.IsBeggarMaxGbcMode != true &&
             requiredAllocatedSizeBytes > targetAllocatedSizeBytes)
         {
@@ -201,7 +222,20 @@ public partial class Form1
             return;
         }
 
+        MatchPendingGbaCovers([replacementItem]);
+        if (SupportsGbaCardMode()) replacementItem.ReplacementCapacityBytes = targetAllocatedSizeBytes;
         replacementItem.GbcDedicatedSaveAllocationOverride = selectedRow.GbcDedicatedSaveAllocationOverride;
+        if (SupportsGbaCardMode() && IsGbaConversionDraft() && entry is not null)
+        {
+            gbaKeepCurrentGame!.Checked = false;
+            selectedRow.CartEntry = null;
+            pendingImportItems.Add(replacementItem);
+        }
+        else if (entry is null && previous is not null)
+        {
+            int index = pendingImportItems.IndexOf(previous);
+            if (index >= 0) pendingImportItems[index] = replacementItem;
+        }
         selectedRow.PendingItem = replacementItem;
         selectedRow.IsLoadingPlaceholder = false;
         selectedRow.DisplayTitleOverride = string.Empty;
@@ -211,8 +245,8 @@ public partial class Form1
             "log",
             "replace_rom_queued",
             "Queued ROM replacement: #{0:000} {1} -> {2} | target alloc {3} | patch {4}",
-            entry.EntrySlot + 1,
-            entry.Title,
+            entry is null ? rowIndex + 1 : entry.EntrySlot + 1,
+            entry?.Title ?? previous?.FileName ?? string.Empty,
             replacementItem.FileName,
             FormatMiBSize(targetAllocatedSizeBytes),
             FormatPendingPatchDisplay(replacementItem)));
@@ -220,8 +254,13 @@ public partial class Form1
 
     private async Task HandlePrimaryQueueActionAsync()
     {
+        if (activeBurnCancellation is not null)
+        {
+            RequestActiveBurnCancellation();
+            return;
+        }
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能按单卡或新合卡擦写。");
-        if (HasPendingGbaWorkspaceClear() && currentScanResult?.MenuConfig.IsDetected != true &&
+        if (HasPendingGbaWorkspaceClear() &&
             (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
         { await BurnEmptySingleGbaWorkspaceAsync(); return; }
         if (IsGbaSingleCardMode()) { await BurnSingleGbaAsync(); return; }
@@ -236,28 +275,8 @@ public partial class Form1
             else if (CanUseFcDevice) await fcWorkspace.BurnAsync();
             return;
         }
-        if (activeBurnCancellation is not null)
-        {
-            RequestActiveBurnCancellation();
-            return;
-        }
-
         if(CanWriteMdQueue){AppendLog(T("gbc_profile", "choose_mix", "Select MIX to program NES / MD / SNES."));return;}
         if(HasUnreadyPlatformImports(workspaceRows)){AppendLog("列表含其他平台或尚未开放的核心，请选择对应模式后烧录。");return;}
-
-        MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
-        if (IsWorkspaceModificationLocked() && missingMenuActionMode != MissingMenuActionMode.None)
-        {
-            if (UsesSelectedWaterLinkTargetMode())
-            {
-                await UpdateWaterLinkMenuAsync();
-            }
-            else
-            {
-                await RepairMissingMenuAsync();
-            }
-            return;
-        }
 
         if (currentScanResult?.IsBeggarMaxGbcMode == true &&
             GetSelectedGbcMenuLanguageMode() == GbcMenuLanguageMode.English &&
@@ -714,10 +733,6 @@ public partial class Form1
         {
             await Task.Run(() => ImportSelectedSaveToDevice(portName, programmerKind, scanSnapshot, target, importData));
             UpdateLocalSaveStateAfterImport(target, importData);
-            if (target.Kind == SelectedSaveStorageKind.WaterLinkLogicalSlot)
-            {
-                TryRefreshLocalWaterLinkSaveSummary(portName);
-            }
             RefreshWorkspaceGrid();
             AppendLog(Tf("log", "import_save_done", "Imported save successfully: {0}", dialog.FileName));
             SetBusy(false, T("status", "import_save_done", "Save imported"));
@@ -814,10 +829,6 @@ public partial class Form1
         {
             await Task.Run(() => ClearSelectedSaveOnDevice(portName, programmerKind, scanSnapshot, target));
             UpdateLocalSaveStateAfterClear(target);
-            if (target.Kind == SelectedSaveStorageKind.WaterLinkLogicalSlot)
-            {
-                TryRefreshLocalWaterLinkSaveSummary(portName);
-            }
             RefreshWorkspaceGrid();
             AppendLog(Tf("log", "clear_save_done", "Cleared save for {0}.", title));
             SetBusy(false, T("status", "clear_save_done", "Save cleared"));
@@ -1156,12 +1167,6 @@ public partial class Form1
         finally
         {
             TrySetBeggarMaxRamEnabled(protocol, false);
-        }
-
-        byte[] readBackData = ReadBeggarMaxSave(protocol, entry, normalizedData.Length);
-        if (!readBackData.AsSpan(0, normalizedData.Length).SequenceEqual(normalizedData))
-        {
-            throw new InvalidOperationException(T("error", "save_verify_failed", "Save verification failed after writing."));
         }
     }
 
@@ -1848,28 +1853,6 @@ public partial class Form1
                     currentScanResult.BatterylessSaveStatusTextByEntrySlot[target.Entry.EntrySlot] = occupancyText;
                     break;
                 }
-        }
-    }
-
-    private bool TryRefreshLocalWaterLinkSaveSummary(string portName)
-    {
-        if (currentScanResult is null)
-        {
-            return false;
-        }
-
-        try
-        {
-            using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
-            OpenProgrammerProtocol(protocol, ProgrammerKind.WaterLink);
-            (currentScanResult.WaterLinkSaveDataByEntrySlot, currentScanResult.WaterLinkSaveStatusTextByEntrySlot) =
-                ReadWaterLinkSavePresence(protocol, currentScanResult);
-
-            return true;
-        }
-        catch
-        {
-            return false;
         }
     }
 
@@ -5243,16 +5226,14 @@ public partial class Form1
                         targetIndex,
                         protocol.DescribeLastAckFailure()));
                 }
-
-                VerifyErasedNorTarget(protocol, programmerKind, targetIndex, targetStartBytes, targetLengthBytes);
                 AdvanceMeasuredProgress(
                     targetLengthBytes,
                     1,
-                    Tf("value", "erase_entire_nor_target_progress", "Verified target {0}/{1}", targetIndex + 1, targetCount));
+                    Tf("value", "erase_entire_nor_target_progress", "Erased target {0}/{1}", targetIndex + 1, targetCount));
                 AppendLog(Tf(
                     "log",
                     "erase_entire_nor_target_done",
-                    "NOR target {0} erase completed and passed bucket sampling verification.",
+                    "NOR target {0} erase completed.",
                     targetIndex));
             }
 
@@ -5387,58 +5368,6 @@ public partial class Form1
                TryWriteWaterLinkCommandWord(protocol, targetWordBase + 0x555, 0xAA, timeoutMs) &&
                TryWriteWaterLinkCommandWord(protocol, targetWordBase + 0x2AA, 0x55, timeoutMs) &&
                TryWriteWaterLinkCommandWord(protocol, targetWordBase + 0x555, 0x10, timeoutMs);
-    }
-
-    private void VerifyErasedNorTarget(
-        WaterDeviceProtocol protocol,
-        ProgrammerKind programmerKind,
-        int targetIndex,
-        int targetStartBytes,
-        int targetLengthBytes)
-    {
-        const int SampleLength = 32;
-        int targetEndExclusive = checked(targetStartBytes + targetLengthBytes);
-        int firstBucket = targetStartBytes / WaterCartScanner.BucketSizeBytes;
-        int lastBucket = (targetEndExclusive - 1) / WaterCartScanner.BucketSizeBytes;
-        byte[] sample = new byte[SampleLength];
-
-        for (int bucket = firstBucket; bucket <= lastBucket; bucket++)
-        {
-            int bucketStart = bucket * WaterCartScanner.BucketSizeBytes;
-            int rangeStart = Math.Max(targetStartBytes, bucketStart);
-            int rangeEndExclusive = Math.Min(targetEndExclusive, bucketStart + WaterCartScanner.BucketSizeBytes);
-            int lastSampleStart = Math.Max(rangeStart, rangeEndExclusive - SampleLength);
-            int middleSampleStart = Math.Clamp(
-                rangeStart + ((rangeEndExclusive - rangeStart - SampleLength) / 2),
-                rangeStart,
-                lastSampleStart);
-            int[] sampleAddresses = [rangeStart, middleSampleStart, lastSampleStart];
-
-            foreach (int sampleAddress in sampleAddresses.Distinct())
-            {
-                Array.Clear(sample);
-                if (!TryReadRomRangeForProgrammer(protocol, programmerKind, (uint)sampleAddress, sample))
-                {
-                    throw new IOException(Tf(
-                        "error",
-                        "erase_entire_nor_verify_read_failed",
-                        "Failed to verify NOR target {0} at 0x{1:X8}.",
-                        targetIndex,
-                        sampleAddress));
-                }
-
-                int nonErasedOffset = Array.FindIndex(sample, value => value != 0xFF);
-                if (nonErasedOffset >= 0)
-                {
-                    throw new InvalidOperationException(Tf(
-                        "error",
-                        "erase_entire_nor_verify_failed",
-                        "NOR target {0} verification found non-erased data at 0x{1:X8}.",
-                        targetIndex,
-                        sampleAddress + nonErasedOffset));
-                }
-            }
-        }
     }
 
     private void UnlockGbaPpbOnDevice(
@@ -6167,11 +6096,6 @@ public partial class Form1
 
         ushort bufferWriteBytes = GetEffectiveBufferWriteBytes(geometry);
 
-        if (emitLogs)
-        {
-            LogWaterSysInfoProbe(protocol, programmerKind, "before erase");
-        }
-
         foreach (var sector in sectors)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -6194,11 +6118,6 @@ public partial class Form1
                 1,
                 BuildProgressDetailText(label, "progress_phase_erase", "Erase"));
             cancellationToken.ThrowIfCancellationRequested();
-        }
-
-        if (emitLogs)
-        {
-            LogWaterSysInfoProbe(protocol, programmerKind, "after erase / before download");
         }
 
         foreach (var sector in sectors)
@@ -6259,61 +6178,12 @@ public partial class Form1
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (!TryDrainRomProgramForProgrammer(protocol, programmerKind, sectorAddress, 60000))
-            {
-                throw new InvalidOperationException(
-                    Tf(
-                        "error",
-                        "segment_program_finish_failed",
-                        "Failed to finish programming {0}.",
-                        label) +
-                    BuildProgrammerFailureDetail(protocol, sectorAddress, sectorSize));
-            }
             AdvanceMeasuredProgress(
                 sectorData.Length,
                 1,
                 BuildProgressDetailText(label, "progress_phase_write", "Write"));
             cancellationToken.ThrowIfCancellationRequested();
         }
-
-        if (emitLogs)
-        {
-            LogWaterSysInfoProbe(protocol, programmerKind, "after download");
-        }
-    }
-
-    private void LogWaterSysInfoProbe(WaterDeviceProtocol protocol, ProgrammerKind programmerKind, string phase)
-    {
-        if (programmerKind != ProgrammerKind.WaterLink)
-        {
-            return;
-        }
-
-        if (!protocol.TryReadSysInfo(out WaterSysInfo info))
-        {
-            AppendLog(Tf(
-                "log",
-                "waterlink_sys_info_read_failed",
-                "WaterLink OSC probe failed ({0}).",
-                phase));
-            return;
-        }
-
-        AppendLog(Tf(
-            "log",
-            "waterlink_sys_info_probe",
-            "WaterLink OSC {0}: SYS={1} Hz, PCLK={2} Hz, PLL={3} Hz, HSI={4} Hz, HSE={5} Hz, CLK=0x{6:X8}, PBUS=0x{7:X8}, SRC={8}, SCLK={9}/{10}",
-            phase,
-            info.SysClockHz,
-            info.PeripheralClockHz,
-            info.PllClockHz,
-            info.HsiClockHz,
-            info.HseClockHz,
-            info.ClockControl,
-            info.PeripheralBusDivider,
-            info.ClockSource,
-            info.SclkDividerHigh,
-            info.SclkDividerLow));
     }
 
     private void RewriteNorSector(
@@ -6521,30 +6391,6 @@ public partial class Form1
 
         if (!TrySwitchLegacyBeggarBucketLocal(protocol, bucket, timeoutMs) ||
             !protocol.TryProgramRom(localAddress, bytes, bufferWriteBytes, timeoutMs))
-        {
-            return false;
-        }
-
-        return TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000);
-    }
-
-    private bool TryDrainRomProgramForProgrammer(
-        WaterDeviceProtocol protocol,
-        ProgrammerKind programmerKind,
-        uint byteAddress,
-        int timeoutMs = 60000)
-    {
-        byte[] drainProbe = new byte[2];
-        if (programmerKind != ProgrammerKind.BeggarLegacy)
-        {
-            return protocol.TryReadRom(byteAddress, drainProbe, timeoutMs);
-        }
-
-        int bucket = (int)(byteAddress / WaterCartScanner.BucketSizeBytes);
-        uint localAddress = byteAddress % (uint)WaterCartScanner.BucketSizeBytes;
-
-        if (!TrySwitchLegacyBeggarBucketLocal(protocol, bucket, timeoutMs) ||
-            !protocol.TryReadRom(localAddress, drainProbe, timeoutMs))
         {
             return false;
         }

@@ -67,12 +67,21 @@ public partial class Form1
             {
                 grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
                 grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-                Font headerFont = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
                 foreach (DataGridViewColumn column in grid.Columns)
                 {
                     originalColumnMinimums.TryAdd(column, column.MinimumWidth);
-                    int width = TextRenderer.MeasureText(column.HeaderText, headerFont, Size.Empty, TextFormatFlags.SingleLine).Width
-                        + LogicalToDeviceUnits(12) + column.HeaderCell.Style.Padding.Horizontal;
+                    int width = column.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true);
+                    if (column.Name is "Order" or "State" or "Source" or "Kind")
+                        width = Math.Max(width, column.GetPreferredWidth(DataGridViewAutoSizeColumnMode.AllCells, true));
+                    if (column.Name == "Title" && ReferenceEquals(grid, dataGridViewRoms) && SupportsGbaCardMode())
+                    {
+                        // 操作提示完整显示；游戏的长文件名仍按原有方式省略。
+                        string[] hints = [GbaCardText("select_menu_hint", "双击选择菜单", "Double-click to select a menu"),
+                            GbaCardText("add_game_hint", "点击添加游戏", "Click to add a game"),
+                            GbaCardText("menu_required", "添加菜单后开放", "Available after adding a menu")];
+                        width = Math.Max(width, hints.Max(hint => TextRenderer.MeasureText(hint, grid.Font, Size.Empty, TextFormatFlags.SingleLine).Width)
+                            + grid.DefaultCellStyle.Padding.Horizontal + LogicalToDeviceUnits(8));
+                    }
                     column.MinimumWidth = Math.Max(originalColumnMinimums[column], width);
                 }
             }
@@ -85,6 +94,7 @@ public partial class Form1
     {
         base.OnFontChanged(e);
         UpdateAdaptiveLayout();
+        if (IsHandleCreated && !Disposing && !IsDisposed) BeginInvoke(new Action(UpdateAdaptiveLayout));
     }
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)

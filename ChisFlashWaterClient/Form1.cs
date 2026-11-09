@@ -17,6 +17,7 @@ public partial class Form1 : DpiAwareForm
     private const string TargetUsbInterface = "MI_00";
     private const string BeggarUsbVid = "0483";
     private const string BeggarUsbPid = "0721";
+    private const string CarbonateFlashGbxUsbPid = "5740";
     private const string TargetDisplayName = "ChisFlash WaterLink";
     private const string BeggarDisplayName = "ChisFlash Beggar";
     private enum ProgrammerKind
@@ -76,6 +77,7 @@ public partial class Form1 : DpiAwareForm
         public bool IsTargetMcu { get; init; }
         public ProgrammerKind Kind { get; init; }
         public string PnpDeviceId { get; init; } = string.Empty;
+        public bool IsCarbonateFlashGbx { get; init; }
     }
 
     private sealed class PendingRomImportItem
@@ -95,6 +97,7 @@ public partial class Form1 : DpiAwareForm
         public string? CoverPath { get; set; }
         public bool CoverCleared { get; set; }
         public long FileSizeBytes { get; init; }
+        public int ReplacementCapacityBytes { get; set; }
         public DetectedSaveTypeInfo SaveTypeInfo { get; init; } = new(DetectedSaveTypeKind.Unknown, null);
         public byte? GameBoyCartridgeType { get; init; }
         public bool GameBoyHasBattery { get; init; }
@@ -138,7 +141,7 @@ public partial class Form1 : DpiAwareForm
         public bool IsCartEntry => CartEntry is not null;
     }
 
-    private readonly Dictionary<string, SerialPortEntry> serialPorts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SerialPortEntry> serialPorts = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<PendingRomImportItem> pendingImportItems = [];
     private readonly List<WorkspaceListRow> workspaceRows = [];
     private readonly BatterylessPatchService batterylessPatchService = new();
@@ -437,7 +440,7 @@ public partial class Form1 : DpiAwareForm
         GbaMenuSelection selection,
         out string sourcePath)
     {
-        if (SupportsGbaCardMode() && gbaDraftMenu is not null) { sourcePath = gbaDraftMenuName; return gbaDraftMenu.ToArray(); }
+        if (gbaDraftMenu is not null) { sourcePath = gbaDraftMenuName; return gbaDraftMenu.ToArray(); }
         return LoadBundledGbaMenuRom(usesWlLayout, selection, out sourcePath);
     }
 
@@ -1352,10 +1355,13 @@ public partial class Form1 : DpiAwareForm
         return BurnProfileMode.WaterLinkSram;
     }
 
-    private void OpenProgrammerProtocol(WaterDeviceProtocol protocol, ProgrammerKind? programmerKind = null)
+    private void OpenProgrammerProtocol(WaterDeviceProtocol protocol, ProgrammerKind? programmerKind = null, bool initializeCartPower = false)
     {
-        protocol.Open();
+        protocol.Open(UsesCarbonateFlashGbxPort(protocol.PortName), initializeCartPower);
     }
+
+    private bool UsesCarbonateFlashGbxPort(string portName) => serialPorts.Values.Any(entry =>
+        entry.IsCarbonateFlashGbx && string.Equals(entry.PortName, portName, StringComparison.OrdinalIgnoreCase));
 
     private void UpdateProgrammerModeSelectorUi(bool allowInteraction)
     {

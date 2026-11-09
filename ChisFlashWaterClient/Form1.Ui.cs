@@ -219,7 +219,7 @@ public partial class Form1
         panelProgrammerModeHost.Controls.Add(panelBeggarCartMode);
 
         buttonRefreshPorts = CreateHeaderButton(string.Empty, HeaderActionButtonWidth);
-        buttonRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true);
+        buttonRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true, preferBeggar: true);
 
         buttonScan = CreateHeaderButton(string.Empty, HeaderActionButtonWidth);
         buttonScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedPortAsync);
@@ -314,7 +314,7 @@ public partial class Form1
         menuSave = new ToolStripMenuItem();
 
         menuRefreshPorts = new ToolStripMenuItem();
-        menuRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true);
+        menuRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true, preferBeggar: true);
         menuScan = new ToolStripMenuItem();
         menuScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedPortAsync);
         menuExit = new ToolStripMenuItem();
@@ -620,7 +620,7 @@ public partial class Form1
             }
 
             gbaSingleGridActive = false;
-            buttonQueueAdd.Text = T("ui", "queue_add", "Add ROMs");
+            buttonQueueAdd.Text = T("ui", "queue_add_rom", "Add ROM");
             buttonQueueClear.Text = T("ui", "queue_clear", "Clear Queue");
             ApplyGbcProfileWorkspace();
             ApplyChisFlash10Workspace();
@@ -760,6 +760,10 @@ public partial class Form1
             column.ReadOnly = true;
             column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         }
+        dataGridViewRoms.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        dataGridViewRoms.DefaultCellStyle.Padding = new Padding(4, 0, 4, 0);
+        foreach (string name in new[] { "Order", "State", "Source", "Kind", "AllocSize", "SaveType", "SpiSlot" })
+            dataGridViewRoms.Columns[name]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
 
         dataGridViewRoms.Columns["Title"]!.ReadOnly = false;
         dataGridViewRoms.Columns["GbcDedicatedSave"]!.ReadOnly = false;
@@ -893,6 +897,8 @@ public partial class Form1
     private void ApplyLanguage(ClientUiLanguage selectedLanguage, bool refreshScanResult = true)
     {
         language = selectedLanguage;
+        // 语言改变后重建单卡提示行，避免沿用上一种语言的缓存。
+        gbaSingleGridActive = false;
         fcWorkspace?.RefreshLanguage();
         LocalizedText.SetCurrent(selectedLanguage);
 

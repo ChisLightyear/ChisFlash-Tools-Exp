@@ -1,4 +1,4 @@
-﻿namespace ChisFlashWaterClient;
+namespace ChisFlashWaterClient;
 
 partial class Form1
 {
