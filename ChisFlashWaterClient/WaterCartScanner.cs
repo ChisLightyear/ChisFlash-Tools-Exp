@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Text;
 using System.Threading;
 using System.Buffers.Binary;
@@ -1251,7 +1252,7 @@ public static class WaterCartScanner
         }
 
         if(configHeader.AsSpan(0,4).SequenceEqual("MD02"u8)){
-            isMdContent=true;log?.Invoke("检测到 MD02 数据卡；GB 菜单写入已禁用。");return false;
+            isMdContent=true;log?.Invoke(ClientText.T("client", "md_detected_no_gb", "MD02 data cartridge detected; GB menu writes are disabled."));return false;
         }
 
         if (!configHeader.AsSpan(0, 7).SequenceEqual("MBCXCFG"u8) ||

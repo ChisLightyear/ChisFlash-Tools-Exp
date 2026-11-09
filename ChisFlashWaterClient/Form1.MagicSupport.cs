@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using ChisFlashWaterClient.Services;
 
 namespace ChisFlashWaterClient;
@@ -81,7 +82,7 @@ public partial class Form1
 
     private bool EnsureCurrentScanIsWritable(out string reason, bool allowLayoutReset = false)
     {
-        if(currentScanResult?.IsMdMbcxContent == true){reason="此卡包含MD游戏，请使用MD合卡写入；GB菜单操作已禁用。";return false;}
+        if(currentScanResult?.IsMdMbcxContent == true){reason=ClientText.T("client", "md_use_mode", "This cartridge contains MD games. Use MD multicart programming; GB menu operations are disabled.");return false;}
         if(currentScanResult?.IsFcMbcxContent == true)
         {
             reason=T("fc","use_nes_workspace","This card contains NES games. Use the MIX workspace; GB menu actions are disabled.");
@@ -597,7 +598,7 @@ public partial class Form1
             reason = T(
                 "error",
                 "beggar_max_menu_update_requires_max_scan",
-                "请先把卡切到 GB 模式，并识别成 MAX/MBCX 卡。");
+                "Switch the cartridge to GB mode and identify it as a MAX/MBCX cartridge first.");
             return false;
         }
 
@@ -606,7 +607,7 @@ public partial class Form1
             reason = T(
                 "error",
                 "beggar_max_menu_update_requires_beggar",
-                "MAX/MBCX 菜单更新当前只在丐中丐上位机路径开放。");
+                "MAX/MBCX menu updates are currently available only through the Beggar programmer.");
             return false;
         }
 
@@ -1047,10 +1048,10 @@ public partial class Form1
                     ? labelStatus.Text
                     : lockReason;
             }
-            else if(currentScanResult?.IsMdMbcxContent==true&&!hasMdImports){labelStatus.Text="已识别MD02卡，GB菜单操作已禁用；可导入MD游戏重建合卡。";}
+            else if(currentScanResult?.IsMdMbcxContent==true&&!hasMdImports){labelStatus.Text=ClientText.T("client", "md_detected", "MD02 cartridge detected. GB menu operations are disabled; import MD games to rebuild the multicart.");}
             else if(hasMdImports)
             {
-                labelStatus.Text="MD游戏已加入主列表；仅保留MD队列即可写入第4槽合卡。";
+                labelStatus.Text=ClientText.T("client", "md_queue_hint", "MD games added to the main list. Keep only MD games in the queue to write a slot-4 multicart.");
             }
             else if (workspaceCapacityExceeded)
             {

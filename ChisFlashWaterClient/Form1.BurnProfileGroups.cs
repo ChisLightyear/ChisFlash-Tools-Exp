@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
 public partial class Form1
@@ -34,7 +35,7 @@ public partial class Form1
         {
             options.Add(new(GbaCardText("single_group", "——单卡——", "—— Single game ——"), (BurnProfileMode)(-1), true, false));
             options.AddRange(single);
-            options.Add(new("ChisFlash 1.1V（待确认）", (BurnProfileMode)(-2), false, false));
+            options.Add(new(ClientText.T("client", "chis11v_unconfirmed", "ChisFlash 1.1V (Unconfirmed)"), (BurnProfileMode)(-2), false, false));
         }
         comboBoxBurnProfileMode.DataSource = options;
     }

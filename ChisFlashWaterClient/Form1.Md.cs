@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using GbaMultiMenuBuilder.Md;
 using GbaMultiMenuBuilder.Services;
 
@@ -20,7 +21,7 @@ public partial class Form1
                 {
                     try
                     {
-                        if(RomArchiveImportService.Preview(path).Count==0){messages.Add(Path.GetFileName(path)+": 未找到游戏文件。");continue;}
+                        if(RomArchiveImportService.Preview(path).Count==0){messages.Add(Path.GetFileName(path)+ClientText.T("client", "no_game_files", ": No game files found."));continue;}
                         var found=CreatePendingRomImportItemsFromSource(path,false);items.AddRange(found.Items);messages.AddRange(found.Messages);
                     }
                     catch(Exception ex)when(ex is IOException or InvalidDataException or UnauthorizedAccessException){messages.Add(Path.GetFileName(path)+": "+ex.Message);}
@@ -36,7 +37,7 @@ public partial class Form1
                 if(previous is null)pendingImportItems.Add(item);else pendingImportItems[pendingImportItems.IndexOf(previous)]=item;
             }
             foreach(string message in batch.messages)AppendLog(message);
-            if(batch.items.Count>0)AppendLog($"已解析 {batch.items.Count} 个游戏，已加入主列表。");
+            if(batch.items.Count>0)AppendLog(ClientText.Tf("client", "games_parsed", "Parsed {0} game(s) and added them to the main list.", batch.items.Count));
             RebuildWorkspaceRows();
         }
         finally{if(!IsDisposed)SetQueueAnalysisState(false,inputs.Length);}

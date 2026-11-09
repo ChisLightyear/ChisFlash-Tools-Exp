@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using GbaMultiMenuBuilder.Models;
 using GbaMultiMenuBuilder.Services;
 
@@ -24,7 +25,7 @@ public partial class Form1
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
         if (IsSelectedGbaMenuRow()) { await SelectGbaMenuAsync(); return; }
         if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
-        using var picker = new OpenFileDialog { Filter = "GBA游戏 (*.gba;*.zip)|*.gba;*.zip", Multiselect = true };
+        using var picker = new OpenFileDialog { Filter = ClientText.T("client", "gba_file_filter", "GBA games (*.gba;*.zip)|*.gba;*.zip"), Multiselect = true };
         if (picker.ShowDialog(this) == DialogResult.OK) await ImportGbaListFilesAsync(picker.FileNames);
     }
 
@@ -32,7 +33,7 @@ public partial class Form1
     {
         if (isBusy || isAnalyzingQueueImports) return;
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能修改游戏列表。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_edit_invalid", "The directory is invalid. The game list cannot be edited."));
         if (IsSelectedGbaMenuRow()) { await ImportGbaMenuFilesAsync(paths); return; }
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(paths); return; }
         appendingGbaListGames = true;
@@ -115,8 +116,8 @@ public partial class Form1
         if (IsGbaMulticartUnavailable())
         {
             row.Tag = GbaDisabledGameRowTag;
-            row.Cells["State"].Value = "不可用";
-            row.Cells["Title"].Value = "单卡芯片不支持合卡";
+            row.Cells["State"].Value = ClientText.T("client", "unavailable", "Unavailable");
+            row.Cells["Title"].Value = ClientText.T("client", "single_no_multicart", "This single-game chip does not support multicarts");
             row.Cells["PatchStatus"].Value = GetGbaDisabledGameReason();
             row.DefaultCellStyle.BackColor = Color.FromArgb(235, 235, 235);
             row.DefaultCellStyle.ForeColor = Color.Gray;
@@ -139,7 +140,7 @@ public partial class Form1
         string reason = GetGbaDisabledGameReason();
         int index = dataGridViewRoms.Rows.Add(GbaCardText("game2", "游戏2", "Game 2"),
             GbaCardText("unavailable", "不可用", "Unavailable"), "—", "GBA",
-            IsGbaMulticartUnavailable() ? "单卡芯片不支持合卡" : GbaCardText("menu_required", "添加菜单后开放", "Available after adding a menu"), string.Empty,
+            IsGbaMulticartUnavailable() ? ClientText.T("client", "single_no_multicart", "This single-game chip does not support multicarts") : GbaCardText("menu_required", "添加菜单后开放", "Available after adding a menu"), string.Empty,
             "—", "—", false, "—", "—", string.Empty);
         var row = dataGridViewRoms.Rows[index];
         row.Tag = GbaDisabledGameRowTag;
@@ -155,7 +156,7 @@ public partial class Form1
     {
         EnsureGbaMulticartSupported();
         if (isBusy || isAnalyzingQueueImports) return;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("已识别碎片表但目录异常，请先处理目录，不能按单卡新建合卡。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "mapping_directory_invalid", "A mapping table was found, but the directory is invalid. Resolve the directory error before creating a multicart."));
         using var dialog = new Form { Text = GbaCardText("select_menu", "选择菜单", "Select Menu"), Font = Font,
             AutoScaleMode = AutoScaleMode.Dpi, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
@@ -198,8 +199,8 @@ public partial class Form1
     {
         EnsureGbaMulticartSupported();
         string[] files = paths.ToArray();
-        if (files.Length != 1) throw new InvalidDataException("菜单行每次只允许导入一个菜单ROM。");
-        if (new FileInfo(files[0]).Length > 0x400000) throw new InvalidDataException("菜单ROM不能超过4 MiB。");
+        if (files.Length != 1) throw new InvalidDataException(ClientText.T("client", "menu_one_file", "Import one menu ROM at a time into the menu row."));
+        if (new FileInfo(files[0]).Length > 0x400000) throw new InvalidDataException(ClientText.T("client", "menu_size_limit", "The menu ROM must not exceed 4 MiB."));
         byte[] bytes = LoadMenuRomForUpdate(files[0], UsesWlTargetPlanningMode(GetSelectedBurnProfileMode()), out _);
         await StageGbaMenuAsync(bytes, Path.GetFileName(files[0]));
     }
@@ -208,10 +209,10 @@ public partial class Form1
     {
         EnsureGbaMulticartSupported();
         if (isBusy || isAnalyzingQueueImports) return Task.CompletedTask;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能新建合卡草稿。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_draft_invalid", "The directory is invalid. A multicart draft cannot be created."));
         if (bytes.Length > 0x400000 || !WaterCartScanner.HasValidGbaHeader(bytes) ||
             (!GbaMenuRomService.SupportsCovers(bytes) && !TryResolveMenuBackgroundRegion(bytes, false, out _)))
-            throw new InvalidDataException("请选择兼容的GBA合卡菜单ROM。");
+            throw new InvalidDataException(ClientText.T("client", "menu_compatible_required", "Select a compatible GBA multicart menu ROM."));
         // 先准备游戏条目，校验失败时保留原单卡工作区。
         PendingRomImportItem? first = IsGbaSingleCardMode() && gbaSingleRom is not null
             ? CreatePendingRomImportItem(gbaSingleRomPath, isGbcWorkspaceModeOverride: false) : null;
@@ -250,17 +251,17 @@ public partial class Form1
     {
         if (isBusy || isAnalyzingQueueImports) return;
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能修改游戏列表。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_edit_invalid", "The directory is invalid. The game list cannot be edited."));
         if (IsSelectedGbaMenuRow())
         {
             var games = IsGbaSingleCardMode() ? new List<WorkspaceListRow>() : workspaceRows.Where(row => !row.IsLoadingPlaceholder).ToList();
-            if (games.Count > 1) throw new InvalidOperationException("移除菜单前，请先移除游戏2及后面的游戏，只保留游戏1。");
+            if (games.Count > 1) throw new InvalidOperationException(ClientText.T("client", "remove_other_games_first", "Before removing the menu, remove games 2 and later, leaving only game 1."));
             var first = games.FirstOrDefault();
             byte[]? single = first?.PendingItem is { } pending ? File.ReadAllBytes(pending.FilePath) : null;
-            if (single is not null && !WaterCartScanner.HasValidGbaHeader(single)) throw new InvalidDataException("游戏1的GBA头部无效。");
+            if (single is not null && !WaterCartScanner.HasValidGbaHeader(single)) throw new InvalidDataException(ClientText.T("client", "game_one_header_invalid", "Game 1 has an invalid GBA header."));
             if (single?.Length > ChisFlash10Image.CapacityBytes || (first?.PendingItem is null && first?.CartEntry is { } cart &&
                 (long)cart.LogicalBucketCount * WaterCartScanner.BucketSizeBytes > ChisFlash10Image.CapacityBytes))
-                throw new InvalidOperationException("单卡游戏不能超过32 MiB，请先删除游戏1再添加。");
+                throw new InvalidOperationException(ClientText.T("client", "single_size_remove_first", "A single-game ROM cannot exceed 32 MiB. Remove game 1 before adding another."));
             gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = true;
             if (first is not null)
             {
@@ -297,7 +298,7 @@ public partial class Form1
     private void ClearGbaList()
     {
         if (isBusy || isAnalyzingQueueImports) return;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，无法确定游戏区范围，请先处理目录。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_range_invalid", "The directory is invalid, so the game area cannot be determined. Resolve the directory error first."));
         StageGbaWorkspaceClear();
         gbaSingleReplacementCapacityBytes = 0;
         pendingImportItems.Clear(); workspaceRows.Clear();
@@ -314,7 +315,7 @@ public partial class Form1
 
     private byte[] ReadGbaSingleSource(WaterDeviceProtocol protocol, ProgrammerKind kind, int length)
     {
-        var source = GetGbaSingleGame() ?? throw new InvalidOperationException("工作区没有当前游戏。");
+        var source = GetGbaSingleGame() ?? throw new InvalidOperationException(ClientText.T("client", "no_current_game", "There is no current game in the workspace."));
         return source.FoundInMenuConfig || source.FoundInWlMapping
             ? ReadMappedGbaRomFromDevice(protocol, kind, source)
             : ReadRomRangeFromDevice(protocol, kind, 0, length);
@@ -346,7 +347,7 @@ public partial class Form1
         }
         if (IsGbaDirectoryDamaged())
         {
-            groupBoxList.Text = "ROM 工作区（目录异常）";
+            groupBoxList.Text = ClientText.T("client", "workspace_directory_invalid", "ROM Workspace (Invalid Directory)");
         }
         dataGridViewRoms.Enabled = !busy;
         if (disabled && !busy) ShowGbaDisabledGameHint();

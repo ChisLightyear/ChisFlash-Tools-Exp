@@ -62,12 +62,22 @@ static class Program
 
         try
         {
+            string heading;
+            try
+            {
+                heading = Services.LocalizedText.T("client", "unhandled_exception", "The application encountered an unhandled exception.");
+            }
+            catch
+            {
+                // 语言资源加载失败时仍显示异常，避免错误窗口再次依赖同一资源。
+                heading = "The application encountered an unhandled exception.";
+            }
             string message = string.IsNullOrWhiteSpace(actual.Message)
-                ? "程序遇到了未处理异常。"
+                ? heading
                 : actual.Message;
 
             MessageBox.Show(
-                $"程序遇到了未处理异常。\nUnhandled exception:\n\n{message}",
+                $"{heading}\n\n{message}",
                 AppDisplayInfo.EnglishTitle,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);

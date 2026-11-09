@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using GbaMultiMenuBuilder.Services;
 
 namespace ChisFlashWaterClient;
@@ -58,11 +59,11 @@ public partial class Form1
             var prepared = await Task.Run(() =>
             {
                 var imported = CreatePendingRomImportItemsFromSource(filePath, false);
-                if (imported.Items.Count != 1) throw new InvalidDataException("替换每次只允许选择一个游戏。");
+                if (imported.Items.Count != 1) throw new InvalidDataException(ClientText.T("client", "replacement_one_game", "Select one game at a time for replacement."));
                 var item = imported.Items[0];
                 byte[] bytes = File.ReadAllBytes(item.FilePath);
                 if (item.ImportedPlatform is not (null or RomPlatform.Gba) || !WaterCartScanner.HasValidGbaHeader(bytes))
-                    throw new InvalidDataException("替换GBA游戏需要有效的GBA ROM。");
+                    throw new InvalidDataException(ClientText.T("client", "replacement_gba_header", "Replacing a GBA game requires a valid GBA ROM."));
                 ValidateReplacementRomLength(checked(bytes.Length + (bytes.Length & 1)), limit, item.FileName);
                 return (Bytes: bytes, Item: item, Save: ChisFlash10Image.Analyze(bytes));
             });

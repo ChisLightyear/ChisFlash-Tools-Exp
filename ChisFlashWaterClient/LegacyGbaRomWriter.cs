@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
 /// <summary>
@@ -20,7 +21,7 @@ public static class LegacyGbaRomWriter
         var (bufferBytes, deviceBytes) = ReadSize(writeWord, readRom);
         // 原版随后通过 gba_isMultiCard 再查询一次容量；1.0V 为单卡，保留相同事务。
         ReadSize(writeWord, readRom);
-        if (image.Length > deviceBytes) throw new InvalidOperationException("Flash 空间不足。");
+        if (image.Length > deviceBytes) throw new InvalidOperationException(ClientText.T("client", "flash_no_space", "Not enough flash space."));
 
         byte[] first = readRom(0, 512);
         if (first.Any(value => value != 0xFF))

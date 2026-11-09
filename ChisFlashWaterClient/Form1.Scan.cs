@@ -1571,7 +1571,7 @@ public partial class Form1
                 AppendLog(T(
                     "log",
                     "beggar_max_detected_hint",
-                    "已在 GBC 模式下识别到 MAX。桌面端现在可以根据当前卡上的内容，重写自带的 MAX/MBCX 菜单并重建索引。"));
+                    "MAX detected in GBC mode. The client can rewrite the bundled MAX/MBCX menu and rebuild its index from the current cartridge contents."));
 
                 if (!result.HasBeggarMaxDirectoryHeaders &&
                     result.Geometry.DeviceSizeBytes > 0 &&
@@ -1580,7 +1580,7 @@ public partial class Form1
                     AppendLog(T(
                         "log",
                         "beggar_max_update_menu_hint",
-                        "还没有识别到有效的 MBCX 目录，但 NOR 芯片和 MAX 槽位头部已经识别成功。点击“更新菜单”即可重写自带 MAX 菜单，并按当前识别到的槽位重建索引。"));
+                        "No valid MBCX directory was detected, but the NOR chip and MAX slot headers were recognized. Use Update Menu to rewrite the bundled MAX menu and rebuild the index from the detected slots."));
                 }
             }
 

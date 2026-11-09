@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -161,7 +162,7 @@ public partial class Form1
             replacementItem = await Task.Run(() =>
             {
                 var imported=CreatePendingRomImportItemsFromSource(dialog.FileName,isGbcWorkspaceMode);
-                if(imported.Items.Count!=1)throw new InvalidDataException("替换需要一个游戏；含多个游戏的ZIP请拖入主列表。");
+                if(imported.Items.Count!=1)throw new InvalidDataException(ClientText.T("client", "replacement_zip_one", "Select one game for replacement. Drag ZIP archives containing multiple games into the main list."));
                 var item = imported.Items[0];
                 if (isGbaWorkspace)
                 {
@@ -169,7 +170,7 @@ public partial class Form1
                     byte[] header = new byte[0xC0];
                     if (item.ImportedPlatform is not (null or RomPlatform.Gba) || source.Read(header) != header.Length ||
                         !WaterCartScanner.HasValidGbaHeader(header))
-                        throw new InvalidDataException("替换GBA游戏需要有效的GBA ROM。");
+                        throw new InvalidDataException(ClientText.T("client", "replacement_gba_header", "Replacing a GBA game requires a valid GBA ROM."));
                 }
                 return item;
             });
@@ -259,7 +260,7 @@ public partial class Form1
             RequestActiveBurnCancellation();
             return;
         }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("目录异常，不能按单卡或新合卡擦写。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_write_invalid", "The directory is invalid. Single-game and new multicart writes are unavailable."));
         if (HasPendingGbaWorkspaceClear() &&
             (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
         { await BurnEmptySingleGbaWorkspaceAsync(); return; }
@@ -276,7 +277,7 @@ public partial class Form1
             return;
         }
         if(CanWriteMdQueue){AppendLog(T("gbc_profile", "choose_mix", "Select MIX to program NES / MD / SNES."));return;}
-        if(HasUnreadyPlatformImports(workspaceRows)){AppendLog("列表含其他平台或尚未开放的核心，请选择对应模式后烧录。");return;}
+        if(HasUnreadyPlatformImports(workspaceRows)){AppendLog(ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning."));return;}
 
         if (currentScanResult?.IsBeggarMaxGbcMode == true &&
             GetSelectedGbcMenuLanguageMode() == GbcMenuLanguageMode.English &&
@@ -3451,26 +3452,26 @@ public partial class Form1
             ? T(
                 "dialog",
                 "beggar_max_update_menu_queue_ignored",
-                "\n\n注意：这个操作不会应用当前排队的 ROM 导入/替换，只会根据卡上已经存在的内容重建菜单。")
+                "\n\nNote: this operation does not apply queued ROM imports or replacements. It only rebuilds the menu from content already on the cartridge.")
             : string.Empty;
         string languageHint = GetSelectedGbcMenuLanguageMode() == GbcMenuLanguageMode.English
             ? T(
                 "dialog",
                 "beggar_max_update_menu_english_language_hint",
-                "\n\n当前会使用英文 MAX/MBCX 菜单；本次不会使用字库渲染。")
+                "\n\nThe English MAX/MBCX menu will be used. No external font rendering is needed for this update.")
             : string.Empty;
         string updateHint = queuedHint + languageHint;
         string message = scanSnapshot.HasBeggarMaxDirectoryHeaders
             ? Tf(
                 "dialog",
                 "beggar_max_update_menu_clear_config_prompt",
-                "是否清除配置区？\n\n是：清空当前 MBCX 目录，完整擦除并重写头部 1 MiB，刷入全新的空 MAX/MBCX 菜单。\n否：继承当前目录，更新菜单，并根据当前识别到的 {0} 个槽位重建索引。\n取消：不操作。\n\n1 MiB 之后的游戏 ROM 数据不会被擦除。清空后，在再次导入至少一个游戏前，当前老菜单会显示 NO MENU LAYERS。{1}",
+                "Clear the configuration area?\n\nYes: clear the current MBCX directory, fully erase and rewrite the first 1 MiB, and install a new empty MAX/MBCX menu.\nNo: keep the current directory, update the menu and rebuild its index from the {0} detected slot(s).\nCancel: make no changes.\n\nGame ROM data beyond the first 1 MiB will not be erased. After clearing, the current legacy menu will display NO MENU LAYERS until at least one game is imported.{1}",
                 detectedEntryCount,
                 updateHint)
             : Tf(
                 "dialog",
                 "beggar_max_update_menu_clear_config_nonfree_prompt",
-                "当前还没有识别到有效的 MBCX 目录，但 NOR 芯片和 MAX 槽位头部已经识别成功。\n\n是：清空配置区，完整擦除并重写头部 1 MiB，刷入全新的空 MAX/MBCX 菜单。\n否：根据当前识别到的 {0} 个槽位建立目录并更新菜单。\n取消：不操作。\n\n如果当前固件不是兼容的自由合卡/MAX 固件，更新后卡可能无法正常启动。1 MiB 之后的游戏 ROM 数据不会被擦除。清空后，在再次导入至少一个游戏前，当前老菜单会显示 NO MENU LAYERS。{1}",
+                "No valid MBCX directory was detected, but the NOR chip and MAX slot headers were recognized.\n\nYes: clear the configuration area, fully erase and rewrite the first 1 MiB, and install a new empty MAX/MBCX menu.\nNo: create a directory from the {0} detected slot(s) and update the menu.\nCancel: make no changes.\n\nIf the cartridge firmware does not support the free multicart/MAX format, the cartridge may not boot after this update. Game ROM data beyond the first 1 MiB will not be erased. After clearing, the current legacy menu will display NO MENU LAYERS until at least one game is imported.{1}",
                 detectedEntryCount,
                 updateHint);
 
@@ -3503,8 +3504,8 @@ public partial class Form1
             "log",
             clearConfigArea ? "beggar_max_update_menu_start_clear" : "beggar_max_update_menu_start_inherit",
             clearConfigArea
-                ? "开始清空 MBCX 配置区并完整擦写头部 1 MiB，生成空菜单。原目录条目数={0}。"
-                : "开始继承 MBCX 配置区，重写菜单并根据当前识别到的 {0} 个槽位重建索引。",
+                ? "Clearing the MBCX configuration area and fully rewriting the first 1 MiB with an empty menu. Previous directory entries: {0}."
+                : "Keeping the MBCX configuration area, rewriting the menu and rebuilding the index from {0} detected slot(s).",
             detectedEntryCount));
 
         try
@@ -3537,8 +3538,8 @@ public partial class Form1
                 "log",
                 clearConfigArea ? "beggar_max_update_menu_done_clear" : "beggar_max_update_menu_done_inherit",
                 clearConfigArea
-                    ? "MBCX 配置区已清空，空菜单已完成写入。"
-                    : "MBCX 菜单已在继承当前目录后完成更新。"));
+                    ? "MBCX configuration cleared and empty menu written."
+                    : "MBCX menu updated while preserving the current directory."));
             SetBusy(false, T("status", "update_menu_done", "Menu update complete"));
         }
         catch (Exception ex)

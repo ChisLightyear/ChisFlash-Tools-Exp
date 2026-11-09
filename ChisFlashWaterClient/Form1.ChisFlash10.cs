@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using ChisFlashWaterClient.Services;
 
 namespace ChisFlashWaterClient;
@@ -149,18 +150,18 @@ public partial class Form1
                     (address, value) =>
                     {
                         if (!protocol.TryWriteRom(address, BitConverter.GetBytes(value)))
-                            throw new IOException("盖中盖 ROM 命令未收到 ACK。");
+                            throw new IOException(ClientText.T("client", "legacy_command_ack", "No ACK received for the Beggar ROM command."));
                     },
                     (address, length) =>
                     {
                         byte[] data = new byte[length];
-                        if (!protocol.TryReadRom(address, data)) throw new IOException("盖中盖读取失败。");
+                        if (!protocol.TryReadRom(address, data)) throw new IOException(ClientText.T("client", "legacy_read_failed", "Beggar ROM read failed."));
                         return data;
                     },
                     (address, data, bufferBytes) =>
                     {
                         if (!protocol.TryProgramRom(address, data, bufferBytes, Timeout.Infinite))
-                            throw new IOException("盖中盖 ROM 数据未收到 ACK。");
+                            throw new IOException(ClientText.T("client", "legacy_data_ack", "No ACK received for the Beggar ROM data."));
                     },
                     Thread.Sleep,
                     (current, total, phase) =>

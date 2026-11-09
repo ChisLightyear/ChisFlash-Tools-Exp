@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
 public static class GbaWorkspaceClearPlan
@@ -5,7 +6,7 @@ public static class GbaWorkspaceClearPlan
     public static byte[] PreserveStatusSector(byte[] original, byte[] updated)
     {
         if (original.Length != updated.Length || original.Length < 11)
-            throw new InvalidOperationException("卡带配置扇区长度无效。");
+            throw new InvalidOperationException(ClientText.T("client", "config_sector_invalid", "The cartridge configuration sector length is invalid."));
         byte[] result = original.ToArray();
         // 只取消旧游戏的启动/存档选择，其余配置与保留字节逐字节保留。
         updated.AsSpan(6, 4).CopyTo(result.AsSpan(6, 4));
@@ -30,17 +31,17 @@ public static class GbaWorkspaceClearPlan
         int sector = scan.Geometry.SectorSizeBytes;
         int capacity = scan.Geometry.DeviceSizeBytes;
         if (sector <= 0 || capacity <= 0 || capacity % sector != 0)
-            throw new InvalidOperationException("NOR容量或扇区尺寸无效，请重新分析卡带。");
+            throw new InvalidOperationException(ClientText.T("client", "nor_geometry_invalid", "The NOR capacity or sector size is invalid. Analyze the cartridge again."));
         bool hasSystemArea = scan.MenuConfig.IsDetected || scan.WlMapping.IsDetected || scan.Games.Any(game => game.IsMenu);
         int start = hasSystemArea ? WaterCartScanner.BucketSizeBytes : 0;
         if (start > capacity || start % sector != 0)
-            throw new InvalidOperationException("菜单系统区与NOR扇区不对齐，不能清空游戏区。");
+            throw new InvalidOperationException(ClientText.T("client", "system_sector_unaligned", "The menu system area is not aligned to NOR sectors. The game area cannot be cleared."));
         int menuEnd = hasSystemArea ? checked(scan.MenuConfig.Status.StatusAddress + scan.MenuConfig.Status.SectorSize) : 0;
         if (hasSystemArea && (!scan.MenuConfig.IsDetected || menuEnd <= 0 || menuEnd > start || menuEnd % sector != 0))
-            throw new InvalidOperationException("菜单与配置边界无效，请先分析卡带配置。");
+            throw new InvalidOperationException(ClientText.T("client", "menu_config_bounds_invalid", "The menu and configuration boundaries are invalid. Analyze the cartridge configuration first."));
         bool clearMapping = scan.WlMapping.IsDetected;
         if (clearMapping && (WaterWlMappingCodec.Offset % sector != 0 || WaterWlMappingCodec.SectorSize % sector != 0))
-            throw new InvalidOperationException("映射区与NOR扇区不对齐，不能清空映射。");
+            throw new InvalidOperationException(ClientText.T("client", "mapping_sector_unaligned", "The mapping area is not aligned to NOR sectors. The mapping cannot be cleared."));
         var replacements = (replacementSegments ?? []).ToArray();
         return Enumerable.Range(0, capacity / sector)
             .Select(index => checked((uint)(index * sector)))

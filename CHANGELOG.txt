@@ -1,26 +1,35 @@
-ChisFlash 工具集更新说明
-2026-11-01：上位机 2.046 r16 / 合卡器 0.92.5
+ChisFlash 上位机 2.046 r22
+2026-11-09
 
-WAITCNT 补丁
-游戏列表新增 WAITCNT 补丁列，仅待加入游戏可单独勾选。
-上方复选框显示全部选中、全部取消或部分选中的三态；点击可全选或全取消。
-卡内游戏不参与勾选，不会因修改开关而重新打补丁或还原已有补丁。
-按各游戏的选择生成烧录数据，保留原始 ROM 文件。
+英文界面补全
+补齐卡型选择、游戏行号、导入和导出、替换ROM、烧录、单卡转合卡、清空菜单和游戏的英文提示。
+补齐 MAX/MBCX 更新菜单确认、状态和错误提示；恢复中英文切换后的读取长度提示。
+增加126项中英文资源，保留游戏名称与用户文件名原文。
+修复英文合卡确认文字过长时按钮被挤出窗口的问题，主界面布局不变。
 
-游戏工作区
-GBA 游戏采用先删除、再添加的操作，取消游戏替换入口；合卡导入追加到列表。
-单卡关闭菜单预览，原位置显示“此为单卡”；添加菜单后恢复预览。
-移除选中仅对有效条目开放，多游戏状态下不能移除菜单。
+自公开版 r16 以来的功能更新
+GBA单卡、1.0V、合卡及预加入游戏支持单选后右键“替换ROM”。
+补丁后的最终大小不得超过原占用容量；超限保留原游戏和待办。
+菜单行右键提供“换菜单”，保留双击选择。
+清空工作区同时清除菜单和游戏：预加入内容仅取消；卡内内容在点击“开始烧录”后执行清除。
+清除菜单、配置、目录、映射和游戏区域时，保留未被新内容覆盖的系统区存档及独立存档芯片。
+WAITCNT按待加入或待替换游戏选择；不改写输入ROM。
+兼容已识别的碳酸钙 FlashGBX 设备，并保留原有盖中盖擦写事务。
+正常烧录取消额外连接探测、自动重扫和写后读回比较；保留协议ACK及芯片完成等待。
 
-清空工作区
-清空只移除游戏，保留已安装及待加入的菜单和卡带配置。
-预加入游戏仅取消加入；卡内游戏登记为待擦除，点击“开始烧录”才执行擦除。
-合卡擦除保护前 4 MiB 系统区，并更新游戏目录和映射。
-清空后再次加入游戏，将在同次烧录中清除旧内容并写入新游戏。
-支持清空后识别零游戏菜单，保留奇美拉容量、配置标记和映射校验。
+使用与验证
+完整解压 Windows x64 包后运行 ChisFlashWaterClient.exe，自带 .NET 运行时。
+不得仅复制EXE；Assets、Languages和运行库须保留在同一目录。
+外部字体及封面图库由用户另行提供；包内不含游戏、用户配置或测试资料。
+本次为上位机更新，合卡器继续使用此前的0.92.5发布包。
+通过离线中英文界面、导入、ROM替换与清空工作区回归检查；未连接或擦写实卡。
 
-使用
-Windows x64 发布包自带 .NET 运行时，完整解压后运行 EXE；不要只复制 EXE。
-上位机与合卡器按需分别下载。GBC/MIX 所需外部字库由用户自行提供。
-需要封面图库时由用户另外准备；发布包不附带游戏、用户配置或测试资料。
-本次验证使用离线界面及数据检查，未连接或擦写实卡。
+English
+Client 2.046 r22 completes English text for cartridge profiles, game rows, import/export,
+ROM replacement, burning, multicart conversion, workspace clearing, and MAX/MBCX menu updates.
+Long English conversion prompts now wrap within the dialog, keeping both action buttons visible.
+ROM replacement respects the original allocated capacity after patches. Clearing the workspace
+removes both the menu and games; on-card changes take effect only when Start Burn is selected.
+Extract the entire Windows x64 package and run ChisFlashWaterClient.exe. The .NET runtime is included.
+External fonts and cover libraries are user-supplied. Builder 0.92.5 remains available in the previous release.
+Validation was performed offline; no physical cartridge was read, erased, or programmed.

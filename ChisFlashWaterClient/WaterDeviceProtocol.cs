@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System;
 using System.Diagnostics;
 using System.IO.Ports;
@@ -388,7 +389,7 @@ public sealed class WaterDeviceProtocol : IDisposable
             transferObserver?.Invoke(frame.Length - 4);
             // 中间分包各自等ACK；最后一个应答仍由原命令调用者处理。
             if (index + 1 < frames.Count && !TryReadAck(60000))
-                throw new IOException("碳酸钙分包未收到ACK：" + DescribeLastAckFailure());
+                throw new IOException(ClientText.T("client", "carbonate_packet_ack", "No ACK received for the calcium carbonate packet: ") + DescribeLastAckFailure());
         }
     }
 

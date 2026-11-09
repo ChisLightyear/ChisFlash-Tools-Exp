@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Buffers.Binary;
 
 namespace ChisFlashWaterClient;
@@ -7,7 +8,7 @@ public static class LegacyCommandFraming
     public static IReadOnlyList<byte[]> BuildFrames(byte[] command, bool carbonateFlashGbx)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (command.Length == 0) throw new ArgumentException("命令不能为空。", nameof(command));
+        if (command.Length == 0) throw new ArgumentException(ClientText.T("client", "command_empty", "The command must not be empty."), nameof(command));
         if (!carbonateFlashGbx || SafeLead(command.Length + 4)) return [Encode(command)];
 
         byte opcode = command[0];
@@ -15,12 +16,12 @@ public static class LegacyCommandFraming
         bool wordAddress = opcode == 0xF5;
         bool gbaWords = opcode is 0xF4 or 0xF5;
         if (opcode is not (0xF4 or 0xF5 or 0xF7 or 0xFA or 0xFC))
-            throw new NotSupportedException("碳酸钙兼容模式不支持此长度的命令。");
+            throw new NotSupportedException(ClientText.T("client", "carbonate_command_length", "Calcium carbonate compatibility mode does not support this command length."));
         int header = program ? 7 : 5;
-        if (command.Length <= header) throw new ArgumentException("写入命令缺少数据。", nameof(command));
+        if (command.Length <= header) throw new ArgumentException(ClientText.T("client", "command_data_missing", "The write command has no data."), nameof(command));
         int remaining = command.Length - header;
         int unit = gbaWords ? 2 : 1;
-        if (remaining % unit != 0) throw new ArgumentException("GBA写入数据须按16位对齐。", nameof(command));
+        if (remaining % unit != 0) throw new ArgumentException(ClientText.T("client", "gba_write_alignment", "GBA write data must be aligned to 16 bits."), nameof(command));
         uint address = BinaryPrimitives.ReadUInt32LittleEndian(command.AsSpan(1, 4));
         int buffer = opcode == 0xF4 ? BinaryPrimitives.ReadUInt16LittleEndian(command.AsSpan(5, 2)) : 0;
         int offset = 0;
@@ -41,7 +42,7 @@ public static class LegacyCommandFraming
                 count -= count % unit;
                 while (count > 0 && !SafeLead(count + header + 4)) count -= unit;
             }
-            if (count <= 0) throw new InvalidOperationException("无法生成碳酸钙兼容分包。");
+            if (count <= 0) throw new InvalidOperationException(ClientText.T("client", "carbonate_packet_failed", "Failed to create a calcium carbonate compatible packet."));
             byte[] part = new byte[header + count];
             command.AsSpan(0, header).CopyTo(part);
             uint partAddress = checked(address + (uint)(wordAddress ? offset / 2 : offset));
@@ -59,7 +60,7 @@ public static class LegacyCommandFraming
     private static byte[] Encode(byte[] command)
     {
         int size = checked(command.Length + 4);
-        if (size > ushort.MaxValue) throw new ArgumentException("命令长度超出协议范围。", nameof(command));
+        if (size > ushort.MaxValue) throw new ArgumentException(ClientText.T("client", "command_protocol_length", "The command length exceeds the protocol limit."), nameof(command));
         byte[] frame = new byte[size];
         BinaryPrimitives.WriteUInt16LittleEndian(frame, (ushort)size);
         command.CopyTo(frame, 2);

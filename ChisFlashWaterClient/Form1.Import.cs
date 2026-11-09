@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Globalization;
 using System.Drawing;
 using System.Text;
@@ -146,7 +147,7 @@ public partial class Form1
     {
         if (SupportsGbaCardMode() && !appendingGbaListGames) { await ImportGbaListFilesAsync(filePaths); return; }
         if (IsSelectedGbaMenuRow()) { await ImportGbaMenuFilesAsync(filePaths); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException("已识别碎片表但目录异常，不能导入游戏。");
+        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_import_invalid", "A mapping table was found, but the directory is invalid. Games cannot be imported."));
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(filePaths); return; }
         if (IsChisFlash10Mode()) { await AddChisFlash10FilesAsync(filePaths); return; }
         if (IsGbcRawImageMode()) { await AddGbcImageFilesAsync(filePaths); return; }
@@ -530,7 +531,7 @@ public partial class Form1
             return (imported,[]);
         }
         if(Path.GetExtension(filePath).Equals(".zip",StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("ZIP中没有可识别的GBA、GB/GBC、NES或MD游戏。");
+            throw new InvalidDataException(ClientText.T("client", "zip_no_games", "No recognized GBA, GB/GBC, NES or MD games were found in the ZIP archive."));
         WaterMulticartImportAnalysis? multicartAnalysis = WaterMulticartRomAnalyzer.TryAnalyze(filePath);
         if (multicartAnalysis is null)
         {
@@ -759,7 +760,7 @@ public partial class Form1
                 FormatWorkspaceOrderText(row, i),
                 isLoadingPlaceholder
                     ? T("value", "row_state_loading", "Loading")
-                    : pending?.MdRom is not null ? "MD导入" : isPending
+                    : pending?.MdRom is not null ? ClientText.T("client", "md_import", "MD import") : isPending
                     ? T("value", "row_state_pending", "Pending")
                     : T("value", "row_state_cart", "On Cart"),
                 pending?.MdRom?.ArchiveIndex is not null ? "ZIP" : isPending
@@ -811,9 +812,9 @@ public partial class Form1
             }
             if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null)
             {
-                gridRow.Cells["AllocSize"].Value = GetCurrentSingleGameLength() > 0 ? FormatMiBSize(GetCurrentSingleGameLength()) : "未确定";
-                gridRow.Cells["SaveType"].Value = "未分析";
-                gridRow.Cells["PatchStatus"].Value = "待保留；烧录时读取并安排到游戏区";
+                gridRow.Cells["AllocSize"].Value = GetCurrentSingleGameLength() > 0 ? FormatMiBSize(GetCurrentSingleGameLength()) : ClientText.T("client", "size_unknown", "Not determined");
+                gridRow.Cells["SaveType"].Value = ClientText.T("client", "save_unanalyzed", "Not analyzed");
+                gridRow.Cells["PatchStatus"].Value = ClientText.T("client", "keep_pending", "Pending preservation; read and move to the game area when burned");
             }
         }
 
@@ -840,7 +841,7 @@ public partial class Form1
 
     private string FormatWorkspaceOrderText(WorkspaceListRow row, int rowIndex)
     {
-        if (SupportsGbaCardMode()) return "游戏" + (rowIndex + 1);
+        if (SupportsGbaCardMode()) return ClientText.Tf("client", "game_number", "Game {0}", rowIndex + 1);
         string orderText = (rowIndex + 1).ToString("000", CultureInfo.CurrentCulture);
         return row.CartEntry is not null && IsCurrentChipSaveEntry(row.CartEntry)
             ? orderText + "★"
@@ -1058,10 +1059,10 @@ public partial class Form1
                 bytes += source is not null && (source.FoundInMenuConfig || source.FoundInWlMapping)
                     ? (long)source.LogicalBucketCount * WaterCartScanner.BucketSizeBytes : Math.Max(0x400000, GetCurrentSingleGameLength());
             }
-            if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) { errorMessage = "合卡列表超过实际NOR容量。"; return false; }
+            if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) { errorMessage = ClientText.T("client", "multicart_exceeds_nor", "The multicart list exceeds the detected NOR capacity."); return false; }
             return true;
         }
-        if(HasUnreadyPlatformImports(workspaceSnapshot)){errorMessage="列表含其他平台或尚未开放的核心，请选择对应模式后烧录。";return false;}
+        if(HasUnreadyPlatformImports(workspaceSnapshot)){errorMessage=ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning.");return false;}
 
         if (currentScanResult is null)
         {
@@ -1259,7 +1260,7 @@ public partial class Form1
 
     private async Task ImportRomFilesAsync(IReadOnlyList<WorkspaceListRow> workspaceSnapshot)
     {
-        if(HasUnreadyPlatformImports(workspaceSnapshot)){AppendLog("列表含其他平台或尚未开放的核心，请选择对应模式后烧录。");return;}
+        if(HasUnreadyPlatformImports(workspaceSnapshot)){AppendLog(ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning."));return;}
         if (isBusy)
         {
             return;

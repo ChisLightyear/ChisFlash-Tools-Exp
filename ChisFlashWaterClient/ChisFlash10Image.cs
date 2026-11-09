@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using ChisFlashWaterClient.Services;
 
 namespace ChisFlashWaterClient;
@@ -9,7 +10,7 @@ public static class ChisFlash10Image
     public static DetectedSaveTypeInfo Analyze(ReadOnlySpan<byte> rom)
     {
         if (rom.Length < 192 || rom.Length > CapacityBytes)
-            throw new InvalidDataException("1.0V：游戏 ROM 必须为 192 字节至 32MB。");
+            throw new InvalidDataException(ClientText.T("client", "chis10_rom_size", "1.0V: the game ROM must be between 192 bytes and 32 MiB."));
         return SaveTypeDetectorService.Detect(rom);
     }
 

@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Buffers.Binary;
 using ChisFlashWaterClient.Services;
 
@@ -34,7 +35,7 @@ public static class WaterWlMappingCodec
         int count = capacityBytes / WaterCartScanner.BucketSizeBytes;
         if (capacityBytes % WaterCartScanner.BucketSizeBytes != 0 ||
             count < MinimumBucketCount || count > BucketCount)
-            throw new InvalidOperationException("水线容量须为 128～640 MiB，且按 4 MiB 对齐。");
+            throw new InvalidOperationException(ClientText.T("client", "water_capacity_alignment", "WaterLink capacity must be 128–640 MiB and aligned to 4 MiB."));
         return count;
     }
 
@@ -278,7 +279,7 @@ public static class WaterWlMappingCodec
 
         if (targetBucketCount < MinimumBucketCount || targetBucketCount > BucketCount)
         {
-            errorMessage = "水线映射表容量超出支持范围。";
+            errorMessage = ClientText.T("client", "water_mapping_capacity", "The WaterLink mapping table capacity is outside the supported range.");
             return false;
         }
 

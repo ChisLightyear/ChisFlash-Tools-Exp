@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
 public partial class Form1
@@ -39,7 +40,7 @@ public partial class Form1
             bool erased = kind == ProgrammerKind.BeggarLegacy && directLegacyErase
                 ? TryEraseLegacyBeggarSector(protocol, address, 60000)
                 : TryEraseRomSectorForProgrammer(protocol, kind, address);
-            if (!erased) throw new IOException($"清空菜单和游戏失败：0x{address:X8}。");
+            if (!erased) throw new IOException(ClientText.Tf("client", "clear_failed_address", "Failed to clear the menu and games at 0x{0:X8}.", address));
             AdvanceMeasuredProgress(scan.Geometry.SectorSizeBytes, 1, GbaCardText("clear_game_area", "正在清空卡内菜单和游戏", "Clearing on-card menu and games"));
         }
     }
@@ -50,8 +51,8 @@ public partial class Form1
         if (isBusy || isAnalyzingQueueImports || !HasPendingGbaWorkspaceClear()) return;
         if (!EnsureSelectedPortHasActiveScan(out string scanReason)) throw new InvalidOperationException(scanReason);
         if (!EnsureCurrentScanIsWritable(out string writeReason)) throw new InvalidOperationException(writeReason);
-        if (currentScanResult!.IsNorProbeOnly) throw new InvalidOperationException("请先分析卡带内容，再清空卡内游戏。");
-        if (IsChisFlash10Mode() && !CanWriteChisFlash10()) throw new InvalidOperationException("当前设备或卡带规格不支持1.0V游戏区擦除。");
+        if (currentScanResult!.IsNorProbeOnly) throw new InvalidOperationException(ClientText.T("client", "clear_analyze_first", "Analyze the cartridge contents before clearing its games."));
+        if (IsChisFlash10Mode() && !CanWriteChisFlash10()) throw new InvalidOperationException(ClientText.T("client", "chis10_erase_unsupported", "The current device or cartridge does not support erasing the 1.0V game area."));
         var scan = currentScanResult!;
         uint[] sectors = PendingGbaWorkspaceEraseSectors(scan);
         if (MessageBox.Show(this, GbaWorkspaceClearConfirmation(), T("ui", "clear_workspace", "Clear Workspace"),
@@ -69,10 +70,10 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                BeginMeasuredProgress("清空菜单和游戏", (long)sectors.Length * scan.Geometry.SectorSizeBytes, sectors.Length);
+                BeginMeasuredProgress(ClientText.T("client", "clear_menu_games", "Clear Menu and Games"), (long)sectors.Length * scan.Geometry.SectorSizeBytes, sectors.Length);
                 started = true;
                 EraseGbaWorkspaceSectors(protocol, kind, scan, sectors, directLegacyErase, cancellation.Token);
-                CompleteMeasuredProgress("清空菜单和游戏");
+                CompleteMeasuredProgress(ClientText.T("client", "clear_menu_games", "Clear Menu and Games"));
             });
             // 清空后重新添加的菜单继续作为草稿，旧菜单及目录不再出现在扫描缓存中。
             byte[]? draft = gbaDraftMenu; string draftName = gbaDraftMenuName;

@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Globalization;
 using System.Drawing;
 using System.Windows.Forms;
@@ -777,7 +778,7 @@ public partial class Form1 : DpiAwareForm
 
     private string FormatPendingSavePatchDisplay(PendingRomImportItem item)
     {
-        if(item.FcRom is not null)return item.FcRom.CanPack?$"NES · Mapper {item.FcRom.Mapper}，请选择NES模式":"NES · "+item.FcRom.Error;
+        if(item.FcRom is not null)return item.FcRom.CanPack?ClientText.Tf("client", "nes_select_mode", "NES · Mapper {0}; select NES mode", item.FcRom.Mapper):"NES · "+item.FcRom.Error;
         if(item.MdRom is not null)return GbaMultiMenuBuilder.Md.MdRomImportService.ImportStatus(item.MdRom,item.MdReadError);
         BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);
@@ -1439,9 +1440,9 @@ public partial class Form1 : DpiAwareForm
         {
             BurnProfileMode.GbaSingle => GbaCardText("single_profile", "单卡 · 32 MiB", "Single game · 32 MiB"),
             BurnProfileMode.ChisFlashFram10 => "ChisFlash 1.0 · FRAM",
-            BurnProfileMode.ChisFlashFlash11 => "ChisFlash 1.1 · FLASH · 无时钟",
-            BurnProfileMode.ChisFlashFlash11Rtc => "ChisFlash 1.1 · FLASH · 时钟",
-            BurnProfileMode.ChisFlashFram12 => "ChisFlash 1.2 · FRAM · 震动",
+            BurnProfileMode.ChisFlashFlash11 => ClientText.T("client", "chis11_no_rtc", "ChisFlash 1.1 · FLASH · No RTC"),
+            BurnProfileMode.ChisFlashFlash11Rtc => ClientText.T("client", "chis11_rtc", "ChisFlash 1.1 · FLASH · RTC"),
+            BurnProfileMode.ChisFlashFram12 => ClientText.T("client", "chis12_rumble", "ChisFlash 1.2 · FRAM · Rumble"),
             BurnProfileMode.ChisFlash10 => T("value", "burn_profile_chisflash10", "ChisFlash 1.0V · 32MB"),
             BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "01G/02G Ordinary Card (No Battery)"),
             BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "01G/02G Ordinary Card (Battery / FRAM)"),

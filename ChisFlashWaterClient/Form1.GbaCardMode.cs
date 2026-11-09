@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using ChisFlashWaterClient.Services;
 
 namespace ChisFlashWaterClient;
@@ -41,7 +42,7 @@ public partial class Form1
         components.Add(gbaConversionOptions);
         gbaKeepCurrentGame = new CheckBox { AutoSize = true, Margin = new Padding(4, 7, 8, 4) };
         gbaCurrentGameLength = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 125 };
-        gbaCurrentGameLength.Items.AddRange(new object[] { "请选择长度", "4 MiB", "8 MiB", "16 MiB", "32 MiB" });
+        gbaCurrentGameLength.Items.AddRange(new object[] { ClientText.T("client", "select_length", "Select length"), "4 MiB", "8 MiB", "16 MiB", "32 MiB" });
         gbaCurrentGameLength.SelectedIndex = 0;
         gbaKeepCurrentGame.CheckedChanged += (_, _) => UpdateActionButtons(isBusy);
         gbaCurrentGameLength.SelectedIndexChanged += (_, _) => UpdateActionButtons(isBusy);
@@ -60,6 +61,7 @@ public partial class Form1
             bool clearsHeadGame = conversion && currentScanResult?.MenuConfig.IsDetected != true &&
                 gbaSingleRom is null && GetGbaSingleGame() is not null;
             // 两种模式共用原表格和工具栏，不移除或替换工作区控件。
+            gbaCurrentGameLength!.Items[0] = ClientText.T("client", "select_length", "Select length");
             gbaKeepCurrentGame!.Text = GbaCardText("keep", "保留当前游戏", "Keep current game");
             gbaKeepCurrentGame.Enabled = conversion && !clearsHeadGame && !isBusy && gbaConversionOptions.Parent is null;
             gbaCurrentGameLength!.Visible = !clearsHeadGame && (GetGbaSingleGame() is not { } original || (!original.FoundInMenuConfig && !original.FoundInWlMapping));
@@ -112,7 +114,7 @@ public partial class Form1
                 string title = pending ? gbaSingleRomName : head!.Title;
                 string header = pending ? WaterCartScanner.DecodeGbaHeaderTitle(gbaSingleRom!) : head!.HeaderTitle;
                 string gameCode = pending ? WaterCartScanner.DecodeGbaHeaderGameCode(gbaSingleRom!) : head!.HeaderGame?.GameCode ?? string.Empty;
-                int index = dataGridViewRoms.Rows.Add("游戏1",
+                int index = dataGridViewRoms.Rows.Add(ClientText.T("client", "game_one", "Game 1"),
                     pending ? T("value", "row_state_pending", "Pending") : T("value", "row_state_cart", "On Cart"),
                     pending ? T("value", "source_file", "File") : head!.SourceText,
                     "GBA", title, header,
@@ -124,7 +126,7 @@ public partial class Form1
                 row.ReadOnly = true;
                 row.Tag = new WorkspaceListRow { CartEntry = head };
                 foreach (DataGridViewCell cell in row.Cells)
-                    cell.ToolTipText = $"{header}\n{gameCode}\n" + (gbaSingleNeedsRelocation ? "待烧录到0x000000；当前数据仍在原映射位置" : "0x000000") +
+                    cell.ToolTipText = $"{header}\n{gameCode}\n" + (gbaSingleNeedsRelocation ? ClientText.T("client", "single_relocation_hint", "Pending write to 0x000000; current data remains at its original mapped location") : "0x000000") +
                         (pending && head is not null ? "\n" + GbaCardText("on_card", "卡内游戏", "Current game") + ": " + head.Title : string.Empty);
                 row.Selected = true;
                 dataGridViewRoms.CurrentCell = row.Cells["Title"];
@@ -186,20 +188,20 @@ public partial class Form1
             throw new InvalidOperationException(T("ui", "delete_game_before_add", "Delete the existing game before adding another."));
         string[] files = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length != 1) throw new InvalidDataException(GbaCardText("one_rom", "单卡每次只导入一个 GBA ROM。", "Choose one GBA ROM for single-card mode."));
-        if (new FileInfo(files[0]).Length is < 192 or > ChisFlash10Image.CapacityBytes) throw new InvalidDataException("GBA ROM 大小应为192字节至32 MiB。");
-        SetBusy(true, "正在读取单游戏ROM…");
+        if (new FileInfo(files[0]).Length is < 192 or > ChisFlash10Image.CapacityBytes) throw new InvalidDataException(ClientText.T("client", "gba_rom_size", "The GBA ROM must be between 192 bytes and 32 MiB."));
+        SetBusy(true, ClientText.T("client", "single_reading", "Reading single-game ROM…"));
         try
         {
             byte[] bytes = await File.ReadAllBytesAsync(files[0]);
-            if (!WaterCartScanner.HasValidGbaHeader(bytes)) throw new InvalidDataException("未找到有效GBA游戏头部，请检查ROM。");
-            if (HasActiveScanResult() && bytes.Length > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException("游戏超过实际NOR容量。");
+            if (!WaterCartScanner.HasValidGbaHeader(bytes)) throw new InvalidDataException(ClientText.T("client", "gba_header_invalid", "No valid GBA header was found. Check the ROM file."));
+            if (HasActiveScanResult() && bytes.Length > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException(ClientText.T("client", "game_exceeds_nor", "The game exceeds the detected NOR capacity."));
             var save = ChisFlash10Image.Analyze(bytes);
             void Apply() { gbaSingleReplacementCapacityBytes = 0; gbaSingleRom = bytes; gbaSingleRomPath = Path.GetFullPath(files[0]); gbaSingleRomName = Path.GetFileName(files[0]); gbaSingleRomSave = save; gbaSingleWaitcntPatch = defaultWaitcntPatchEnabled; gbaSingleGameRemoved = false; RefreshGbaCardModeUi(); }
             if (InvokeRequired) Invoke(new Action(Apply)); else Apply();
         }
         finally
         {
-            void Complete() { SetBusy(false, "单卡ROM已就绪"); RefreshGbaCardModeUi(); }
+            void Complete() { SetBusy(false, ClientText.T("client", "single_ready", "Single-game ROM ready")); RefreshGbaCardModeUi(); }
             if (InvokeRequired) Invoke(new Action(Complete)); else Complete();
         }
     }
@@ -218,25 +220,25 @@ public partial class Form1
     private async Task ExportSingleGbaAsync()
     {
         if (isBusy || IsSelectedGbaMenuRow() || IsSelectedGbaDisabledGameRow() || !HasActiveScanResult() || GetGbaSingleGame() is not { } head) return;
-        using var lengthDialog = new Form { Text = "选择ROM读取长度", Width = 340, Height = 155, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var lengthDialog = new Form { Text = ClientText.T("client", "read_length_title", "Select ROM Read Length"), Width = 340, Height = 155, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var length = new ComboBox { Left = 18, Top = 18, Width = 280, DropDownStyle = ComboBoxStyle.DropDownList };
         length.Items.AddRange(new object[] { "4 MiB", "8 MiB", "16 MiB", "32 MiB" }); length.SelectedIndex = 2;
-        var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Left = 210, Top = 58 };
+        var ok = new Button { Text = ClientText.T("client", "ok", "OK"), DialogResult = DialogResult.OK, Left = 210, Top = 58 };
         lengthDialog.Controls.AddRange([length, ok]); lengthDialog.AcceptButton = ok;
         bool mapped = head.FoundInMenuConfig || head.FoundInWlMapping;
         if (!mapped && lengthDialog.ShowDialog(this) != DialogResult.OK) return;
         int bytes = mapped ? checked(head.LogicalBucketCount * WaterCartScanner.BucketSizeBytes) : (4 << length.SelectedIndex) * 1024 * 1024;
-        if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException("读取长度超过实际NOR容量。");
+        if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException(ClientText.T("client", "read_exceeds_nor", "The read length exceeds the detected NOR capacity."));
         using var destination = new SaveFileDialog { Filter = "GBA ROM (*.gba)|*.gba", FileName = head.Title + ".gba" };
         if (destination.ShowDialog(this) != DialogResult.OK) return;
         string port = GetSelectedPortName()!;
         var kind = GetRequiredSelectedProgrammerKind();
-        SetBusy(true, "正在导出单游戏ROM…");
+        SetBusy(true, ClientText.T("client", "single_exporting", "Exporting single-game ROM…"));
         try
         {
             byte[] data = await Task.Run(() => { using var protocol = new WaterDeviceProtocol(port); OpenProgrammerProtocol(protocol, kind); return ReadGbaSingleSource(protocol, kind, bytes); });
             await File.WriteAllBytesAsync(destination.FileName, data);
         }
-        finally { SetBusy(false, "ROM导出结束"); }
+        finally { SetBusy(false, ClientText.T("client", "rom_export_ended", "ROM export ended")); }
     }
 }

@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Buffers.Binary;
 using ChisFlashWaterClient.Services;
 
@@ -669,7 +670,7 @@ public static class WaterMagicUpgradeBuilder
     {
         ArgumentNullException.ThrowIfNull(records);
         if (bucketCount < WaterWlMappingCodec.MinimumBucketCount || bucketCount > WaterWlMappingCodec.BucketCount)
-            throw new InvalidOperationException("水线映射表容量超出支持范围。");
+            throw new InvalidOperationException(ClientText.T("client", "water_mapping_capacity", "The WaterLink mapping table capacity is outside the supported range."));
 
         byte[] mappingSector = Enumerable.Repeat((byte)0xFF, WaterWlMappingCodec.SectorSize).ToArray();
         ushort[] bucketOwners = Enumerable.Repeat(WaterWlMappingCodec.BucketOwnerFree, bucketCount).ToArray();

@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace GbaMultiMenuBuilder.Models;
 
 public sealed record CartridgeDefinition(
@@ -50,7 +51,7 @@ public sealed record CartridgeDefinition(
     public string UiDisplayName => Id switch
     {
         WaterlineCompatibleId => "128MiB（01G）",
-        WaterLinkMultiNorId => "640MiB（奇美拉水线）",
+        WaterLinkMultiNorId => ClientText.T("client", "chimera_capacity", "640MiB (Chimera WaterLink)"),
         S70Gl02GId => "256MiB（02G）",
         Gbc32MiBId => "32MiB",
         Gbc128MiBId => "128MiB",
