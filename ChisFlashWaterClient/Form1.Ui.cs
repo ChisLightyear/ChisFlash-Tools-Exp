@@ -419,6 +419,7 @@ public partial class Form1
         menuRom.DropDownOpening += (_, _) => UpdateActionButtons(isBusy);
         menuSave.DropDownOpening += (_, _) => UpdateActionButtons(isBusy);
         mainMenuStrip.Items.AddRange([menuDevice, menuCartridge, menuRom, menuSave]);
+        BuildUpdateMenu();
         BuildFcMenus();
     }
 
@@ -931,6 +932,7 @@ public partial class Form1
         menuRefreshPorts.Text = T("ui", "refresh", "Refresh");
         menuScan.Text = T("ui", "scan_roms", "Analyze Cart");
         menuExit.Text = T("ui", "exit", "Exit");
+        RefreshUpdateMenuText();
         menuFragmentTest.Text = T("ui", "fragment_test", "Fragment Test");
         menuDetectMagic.Text = T("ui", "detect_magic", "Detect Magic Support");
         menuUpdateMenu.Text = T("ui", "update_menu", "Update Menu");
