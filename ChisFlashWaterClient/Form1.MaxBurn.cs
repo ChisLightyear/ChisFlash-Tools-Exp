@@ -31,7 +31,6 @@ public partial class Form1
         public required long FileLength { get; init; }
         public required int AllocatedBytes { get; set; }
         public required int AllocatedRomBanks { get; set; }
-        public required int RequiredRomBanks { get; init; }
         public required int RamBankCount { get; init; }
         public required byte MbcType { get; init; }
         public required bool HasBattery { get; init; }
@@ -333,7 +332,7 @@ public partial class Form1
             {
                 PendingRomImportItem pending = row.PendingItem;
                 GameBoyRomMetadata metadata = GameBoyRomHeaderService.Read(pending.FilePath);
-                int allocatedBytes = GetPendingAllocatedSizeBytes(pending, burnProfileMode);
+                int allocatedBytes = Math.Max(GetPendingAllocatedSizeBytes(pending, burnProfileMode), checked((int)metadata.EffectiveRomSizeBytes));
                 bool usesDedicatedSave = ShouldUseDedicatedBeggarMaxSave(metadata, row);
                 plans.Add(new BeggarMaxWorkspaceRowPlan
                 {
@@ -346,7 +345,6 @@ public partial class Form1
                     FileLength = Math.Max(1L, pending.FileSizeBytes),
                     AllocatedBytes = allocatedBytes,
                     AllocatedRomBanks = allocatedBytes / GameBoyRomHeaderService.RomBankSize,
-                    RequiredRomBanks = Math.Max(2, metadata.EffectiveRomBankCount),
                     RamBankCount = metadata.EffectiveRamBankCount,
                     MbcType = metadata.CartridgeType,
                     HasBattery = metadata.HasBattery,
@@ -382,7 +380,6 @@ public partial class Form1
                 FileLength = 0,
                 AllocatedBytes = Math.Max(GameBoyRomHeaderService.RomBankSize * 2, entry.RomBankCount * GameBoyRomHeaderService.RomBankSize),
                 AllocatedRomBanks = Math.Max(2, entry.RomBankCount),
-                RequiredRomBanks = Math.Max(2, entry.RomBankCount),
                 RamBankCount = entry.RamBankCount,
                 MbcType = entry.MbcType,
                 HasBattery = entry.HasBattery,
@@ -414,11 +411,9 @@ public partial class Form1
             }
 
             if (plan.ExistingEntry is not null &&
-                plan.ExistingEntry.RomBankCount >= plan.RequiredRomBanks)
+                plan.ExistingEntry.RomBankCount >= plan.AllocatedRomBanks)
             {
                 plan.FinalRomOffsetBank = plan.ExistingEntry.RomOffsetBank;
-                plan.AllocatedRomBanks = plan.ExistingEntry.RomBankCount;
-                plan.AllocatedBytes = plan.AllocatedRomBanks * GameBoyRomHeaderService.RomBankSize;
                 continue;
             }
 
@@ -461,12 +456,12 @@ public partial class Form1
                 continue;
             }
 
-            if (plan.IsChanged && plan.ExistingEntry.RomBankCount < plan.RequiredRomBanks)
+            if (plan.IsChanged && plan.ExistingEntry.RomBankCount < plan.AllocatedRomBanks)
             {
                 continue;
             }
 
-            RemoveBeggarMaxRange(ranges, plan.ExistingEntry.RomOffsetBank, plan.ExistingEntry.RomOffsetBank + plan.ExistingEntry.RomBankCount - 1);
+            RemoveBeggarMaxRange(ranges, plan.ExistingEntry.RomOffsetBank, plan.ExistingEntry.RomOffsetBank + plan.AllocatedRomBanks - 1);
         }
 
         return ranges;

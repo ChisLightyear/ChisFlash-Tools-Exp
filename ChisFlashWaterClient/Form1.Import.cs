@@ -750,6 +750,8 @@ public partial class Form1
             bool isLoadingPlaceholder = row.IsLoadingPlaceholder;
             WaterCartEntry? entry = row.CartEntry;
             PendingRomImportItem? pending = row.PendingItem;
+            bool isReplacement = pending is not null && (entry is not null || pending.ReplacementCapacityBytes > 0);
+            int allocatedSizeBytes = isLoadingPlaceholder ? 0 : GetWorkspaceRowAllocatedSizeBytes(row);
             string saveStatusText = isLoadingPlaceholder
                 ? string.Empty
                 : entry is not null
@@ -779,11 +781,7 @@ public partial class Form1
                     : isPending
                     ? pending?.HeaderTitle ?? string.Empty
                     : entry?.HeaderTitle ?? string.Empty,
-                isLoadingPlaceholder
-                    ? string.Empty
-                    : isPending
-                    ? FormatAllocatedSizeText(GetWorkspaceRowAllocatedSizeBytes(row))
-                    : FormatAllocatedSizeText(GetWorkspaceRowAllocatedSizeBytes(row)),
+                FormatAllocatedSizeText(allocatedSizeBytes),
                 isLoadingPlaceholder
                     ? string.Empty
                     : isPending
@@ -802,6 +800,12 @@ public partial class Form1
             {
                 foreach(DataGridViewCell cell in gridRow.Cells)cell.ToolTipText=pending.MdRom.SourceLabel+"\n"+(pending.MdReadError??pending.MdRom.Assessment.Message);
                 if(pending.MdRom.Assessment.Excluded||pending.MdReadError is not null)gridRow.DefaultCellStyle.ForeColor=Color.Firebrick;
+            }
+            if (isReplacement)
+            {
+                gridRow.Cells["AllocSize"].ToolTipText = Tf("grid", "replacement_size_detail",
+                    "Replacement ROM: {0} | Planned allocation: {1}",
+                    FormatMiBSize(pending!.FileSizeBytes), FormatMiBSize(allocatedSizeBytes));
             }
             gridRow.Tag = row;
             ApplyGbcDedicatedSaveCellStyle(gridRow, row);
@@ -1101,7 +1105,7 @@ public partial class Form1
                 workspaceSnapshot,
                 burnProfileMode);
 
-            foreach (WorkspaceListRow row in workspaceSnapshot)
+            foreach (WorkspaceListRow row in workspaceSnapshot.OrderBy(row => row.CartEntry is null))
             {
                 if (!row.IsPending || row.PendingItem is null)
                 {
@@ -1549,7 +1553,8 @@ public partial class Form1
         List<PlannedWorkspaceImport> plannedImports = [];
         Dictionary<PendingRomImportItem, PendingRomPreparation> pendingPreparations = new();
 
-        for (int rowIndex = 0; rowIndex < workspaceSnapshot.Count; rowIndex++)
+        // 先确定原地替换保留的区块，新增游戏才可以使用释放出来的空间。
+        foreach (int rowIndex in Enumerable.Range(0, workspaceSnapshot.Count).OrderBy(index => workspaceSnapshot[index].CartEntry is null))
         {
             WorkspaceListRow row = workspaceSnapshot[rowIndex];
             if (!row.IsPending || row.PendingItem is null)

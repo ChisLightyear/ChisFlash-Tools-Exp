@@ -388,21 +388,22 @@ public static class WaterRomImportPlanner
                 LocalizedText.T("error", "replace_rom_target_invalid", "The selected ROM mapping cannot be replaced because its target area is invalid."));
         }
 
-        int replacementAllocatedSizeBytes = replacementTargetEntry.MenuItem is { RomSizeBlocks: > 0 } originalItem
+        int originalAllocatedSizeBytes = replacementTargetEntry.MenuItem is { RomSizeBlocks: > 0 } originalItem
             ? checked(originalItem.RomSizeBlocks * BlockSizeBytes)
             : checked(replacementTargetEntry.LogicalBucketCount * WaterCartScanner.BucketSizeBytes);
-        int requiredAllocatedSizeBytes = Math.Max(plannedRomLengthBytes ?? 0, romBytes.Length);
-        if (requiredAllocatedSizeBytes > replacementAllocatedSizeBytes)
+        int requiredLengthBytes = Math.Max(plannedRomLengthBytes ?? 0, romBytes.Length);
+        if (requiredLengthBytes > originalAllocatedSizeBytes)
         {
             throw new InvalidOperationException(
                 LocalizedText.Tf(
                     "error",
                     "replace_rom_target_too_small",
                     "The replacement ROM needs {0}, but the target mapping only allows {1}.",
-                    FormatMiB(requiredAllocatedSizeBytes),
-                    FormatMiB(replacementAllocatedSizeBytes)));
+                    FormatMiB(requiredLengthBytes),
+                    FormatMiB(originalAllocatedSizeBytes)));
         }
 
+        int replacementAllocatedSizeBytes = Math.Min(NormalizeLegacyRomLength(requiredLengthBytes), originalAllocatedSizeBytes);
         NorGeometryInfo geometry = scanResult.Geometry;
         if (geometry.SectorSizeBytes <= 0 || replacementAllocatedSizeBytes % geometry.SectorSizeBytes != 0)
         {
@@ -454,11 +455,9 @@ public static class WaterRomImportPlanner
             status.SectorSize);
 
         byte[] paddedRom = CreatePaddedRom(romBytes, replacementAllocatedSizeBytes);
-        List<int> coveredBuckets = replacementTargetEntry.PhysicalBuckets.ToList();
-        if (coveredBuckets.Count == 0)
-        {
-            coveredBuckets.Add(replacementTargetEntry.StartBucket);
-        }
+        List<int> coveredBuckets = Enumerable
+            .Range(newItem.StartBucket, newItem.CoveredBucketCount)
+            .ToList();
 
         return new WaterRomImportPlan
         {
@@ -469,7 +468,7 @@ public static class WaterRomImportPlanner
             InsertIndex = insertIndex,
             FileSizeBytes = romBytes.Length,
             AllocatedSizeBytes = replacementAllocatedSizeBytes,
-            LogicalBucketCount = Math.Max(1, replacementAllocatedSizeBytes / WaterCartScanner.BucketSizeBytes),
+            LogicalBucketCount = newItem.CoveredBucketCount,
             PhysicalBuckets = coveredBuckets,
             MenuItem = newItem,
             UpdatedMenuConfig = BuildUpdatedMenuConfig(status, indexedItems),
@@ -664,6 +663,8 @@ public static class WaterRomImportPlanner
                     FormatMiB(logicalBucketCount * WaterCartScanner.BucketSizeBytes)));
         }
 
+        physicalBuckets.RemoveRange(requiredLogicalBucketCount, logicalBucketCount - requiredLogicalBucketCount);
+        logicalBucketCount = requiredLogicalBucketCount;
         int insertIndex = replacementTargetEntry.EntrySlot >= 0
             ? Math.Clamp(replacementTargetEntry.EntrySlot, 0, scanResult.MenuConfig.ItemCount)
             : GetDefaultInsertIndex(scanResult.MenuConfig.Items);

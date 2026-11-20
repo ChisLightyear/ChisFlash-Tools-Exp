@@ -1008,14 +1008,12 @@ public partial class Form1 : DpiAwareForm
 
     private int GetWorkspaceRowAllocatedSizeBytes(WorkspaceListRow row)
     {
-        if (row.PendingItem is not null && row.CartEntry is not null)
-        {
-            return GetCartEntryAllocatedSizeBytes(row.CartEntry);
-        }
-
         if (row.PendingItem is not null)
         {
-            return GetPendingAllocatedSizeBytes(row.PendingItem);
+            int allocatedSizeBytes = GetPendingAllocatedSizeBytes(row.PendingItem);
+            return row.CartEntry is not null && currentScanResult?.IsBeggarMaxGbcMode != true
+                ? Math.Min(allocatedSizeBytes, GetCartEntryAllocatedSizeBytes(row.CartEntry))
+                : allocatedSizeBytes;
         }
 
         return row.CartEntry is not null
@@ -1643,7 +1641,10 @@ public partial class Form1 : DpiAwareForm
 
         IEnumerable<int> usedBuckets = workspaceRows
             .Where(row => row.CartEntry is not null)
-            .SelectMany(row => row.CartEntry!.PhysicalBuckets);
+            .SelectMany(row => row.PendingItem is null
+                ? row.CartEntry!.PhysicalBuckets
+                : row.CartEntry!.PhysicalBuckets.Take((GetWorkspaceRowAllocatedSizeBytes(row) + WaterCartScanner.BucketSizeBytes - 1)
+                    / WaterCartScanner.BucketSizeBytes));
 
         int used = usedBuckets
             .Distinct()
@@ -1721,7 +1722,14 @@ public partial class Form1 : DpiAwareForm
                 workspaceRows,
                 GetSelectedBurnProfileMode());
 
-            return GetLegacyLargestContiguousFreeBuckets(planningScan);
+            var replacements = workspaceRows
+                .Where(row => row.CartEntry is not null && row.PendingItem is not null)
+                .Select(row => (
+                    Start: row.CartEntry!.MenuItem is { } item
+                        ? item.RomOffsetBlocks * WaterRomImportPlanner.BlockSizeBytes
+                        : checked((int)row.CartEntry.StartAddress),
+                    Length: GetWorkspaceRowAllocatedSizeBytes(row)));
+            return GetLegacyLargestContiguousFreeBuckets(planningScan, replacements);
         }
         catch
         {
@@ -1729,7 +1737,9 @@ public partial class Form1 : DpiAwareForm
         }
     }
 
-    private static int GetLegacyLargestContiguousFreeBuckets(WaterCartScanResult scanResult)
+    private static int GetLegacyLargestContiguousFreeBuckets(
+        WaterCartScanResult scanResult,
+        IEnumerable<(int Start, int Length)> replacements)
     {
         NorGeometryInfo geometry = scanResult.Geometry;
         if (geometry.DeviceSizeBytes <= 0 || geometry.SectorSizeBytes <= 0)
@@ -1762,6 +1772,11 @@ public partial class Form1 : DpiAwareForm
             int itemStartSector = BytesToSector(item.RomOffsetBlocks * WaterRomImportPlanner.BlockSizeBytes, geometry.SectorSizeBytes);
             int itemSectorCount = BytesToSector(item.RomSizeBlocks * WaterRomImportPlanner.BlockSizeBytes, geometry.SectorSizeBytes);
             MarkUsedSectorRange(usedSectors, itemStartSector, itemSectorCount);
+        }
+
+        foreach (var (start, length) in replacements)
+        {
+            MarkUsedSectorRange(usedSectors, BytesToSector(start, geometry.SectorSizeBytes), BytesToSector(length, geometry.SectorSizeBytes));
         }
 
         foreach (DetectedNorGameInfo game in scanResult.Games.Where(game => !game.IsMenu))
