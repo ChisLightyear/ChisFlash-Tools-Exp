@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.23</FileVersion>
-    <InformationalVersion>2.046 r23</InformationalVersion>
+    <FileVersion>2.0.46.25</FileVersion>
+    <InformationalVersion>2.046 r25</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
