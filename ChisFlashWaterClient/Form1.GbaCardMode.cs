@@ -24,11 +24,11 @@ public partial class Form1
         !IsGbcRawImageMode() && !IsGbcProfileUnselected() && !IsMbc5FixedSlotMode() &&
         currentScanResult?.IsBeggarMaxGbcMode != true;
 
-    private static bool IsSingleGameOnlyGbaScan(WaterCartScanResult? scan) => scan is { NoCartridgeDetected: false, IsBeggarMaxGbcMode: false, IsChm1: false } &&
-        WaterCartScanner.IsSingleGameGbaNor(scan.NorId, scan.Geometry);
+    private static bool IsSingleGameOnlyGbaScan(WaterCartScanResult? scan) => scan is { NoCartridgeDetected: false, IsBeggarMaxGbcMode: false, IsChm1: false, IsChwq: false, StandardWaterLinkId: null } &&
+        WaterCartScanner.IsSingleGameGbaNor(scan.NorId);
     private bool IsGbaSingleGameOnlyHardware() => GetSelectedBeggarCartMode() == BeggarCartMode.Gba && HasActiveScanResult() && IsSingleGameOnlyGbaScan(currentScanResult);
 
-    private bool IsGbaSingleCardMode() => SupportsGbaCardMode() && (IsGbaMulticartUnavailable() || !HasGbaListMenu() && !IsGbaDirectoryDamaged());
+    private bool IsGbaSingleCardMode() => SupportsGbaCardMode() && IsGbaMulticartUnavailable();
 
     private bool IsGbaConversionDraft() => SupportsGbaCardMode() && !IsGbaMulticartUnavailable() && gbaDraftMenu is not null &&
         (gbaMenuRemoved || currentScanResult?.MenuConfig.IsDetected != true) && !IsGbaDirectoryDamaged();
@@ -58,18 +58,15 @@ public partial class Form1
         {
             bool single = IsGbaSingleCardMode();
             bool conversion = IsGbaConversionDraft();
-            bool clearsHeadGame = conversion && currentScanResult?.MenuConfig.IsDetected != true &&
-                gbaSingleRom is null && GetGbaSingleGame() is not null;
             // 两种模式共用原表格和工具栏，不移除或替换工作区控件。
             gbaCurrentGameLength!.Items[0] = ClientText.T("client", "select_length", "Select length");
             gbaKeepCurrentGame!.Text = GbaCardText("keep", "保留当前游戏", "Keep current game");
-            gbaKeepCurrentGame.Enabled = conversion && !clearsHeadGame && !isBusy && gbaConversionOptions.Parent is null;
-            gbaCurrentGameLength!.Visible = !clearsHeadGame && (GetGbaSingleGame() is not { } original || (!original.FoundInMenuConfig && !original.FoundInWlMapping));
-            gbaCurrentGameLength.Enabled = conversion && !isBusy && gbaKeepCurrentGame.Checked;
             if (single)
             {
                 RefreshSingleGbaGrid();
-                groupBoxList.Text = GbaCardText("single_list", "ROM 工作区（单卡）", "ROM Workspace (Single)");
+                groupBoxList.Text = IsGbaSingleProfileSelected()
+                    ? GbaCardText("single_list", "ROM 工作区（单卡）", "ROM Workspace (Single)")
+                    : ShellText("ROM 工作区（合卡）", "ROM Workspace (Multicart)");
                 if (currentScanResult is not null) labelCapacityValue.Text = FormatMiBSize(currentScanResult.Geometry.DeviceSizeBytes);
                 UpdateGbaSingleButtons(isBusy);
             }
@@ -154,7 +151,6 @@ public partial class Form1
         bool hasGame = HasActiveScanResult() && GetGbaSingleGame() is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
-        menuFcScan.Enabled = idle;
         menuScan.Enabled = buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && gbaSingleRom is null && GetGbaSingleGame() is null;
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = CanReplaceGbaWorkspaceSelection();
@@ -170,6 +166,7 @@ public partial class Form1
         dataGridViewRoms.Enabled = !busy;
         UpdateProgrammerModeSelectorUi(idle);
         UpdateGbaMenuRowActions(busy);
+        UpdateNativeSaveCommands(idle, GetHeadAreaGame() is not null);
     }
 
     private async Task SelectSingleGbaFileAsync()
@@ -194,7 +191,8 @@ public partial class Form1
         {
             byte[] bytes = await File.ReadAllBytesAsync(files[0]);
             if (!WaterCartScanner.HasValidGbaHeader(bytes)) throw new InvalidDataException(ClientText.T("client", "gba_header_invalid", "No valid GBA header was found. Check the ROM file."));
-            if (HasActiveScanResult() && bytes.Length > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException(ClientText.T("client", "game_exceeds_nor", "The game exceeds the detected NOR capacity."));
+            if (HasActiveScanResult() && currentScanResult!.Geometry is { IsCfiWindowBlank: false } geometry && bytes.Length > geometry.DeviceSizeBytes)
+                throw new InvalidDataException(ClientText.T("client", "game_exceeds_nor", "The game exceeds the detected NOR capacity."));
             var save = ChisFlash10Image.Analyze(bytes);
             void Apply() { gbaSingleReplacementCapacityBytes = 0; gbaSingleRom = bytes; gbaSingleRomPath = Path.GetFullPath(files[0]); gbaSingleRomName = Path.GetFileName(files[0]); gbaSingleRomSave = save; gbaSingleWaitcntPatch = defaultWaitcntPatchEnabled; gbaSingleGameRemoved = false; RefreshGbaCardModeUi(); }
             if (InvokeRequired) Invoke(new Action(Apply)); else Apply();

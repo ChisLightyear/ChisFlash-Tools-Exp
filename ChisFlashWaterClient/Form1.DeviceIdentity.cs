@@ -5,6 +5,14 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    private static ProgrammerModeSupport? GetProgrammerModeSupport(ProgrammerKind? kind) => kind switch
+    {
+        ProgrammerKind.BeggarLegacy => ProgrammerModeSupport.GbaAndGbc,
+        ProgrammerKind.WaterLink => ProgrammerModeSupport.GbaOnly,
+        ProgrammerKind.Dmg02 => ProgrammerModeSupport.GbcOnly,
+        _ => null,
+    };
+
     private static bool UsbDeviceIdMatches(string? pnpDeviceId, string vid, string pid, string? usbInterface = null)
     {
         string[] parts = (pnpDeviceId ?? string.Empty).Split('\\');
@@ -27,9 +35,23 @@ public partial class Form1
         !string.IsNullOrWhiteSpace(productName) && Regex.IsMatch(productName,
             @"^\s*GBA\s+Burner\s+for\s+ChisFlash\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    private static bool HasCarbonateNativeIdentity(string? pnpDeviceId, string? productName) =>
+        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, BeggarUsbPid) &&
+        !string.IsNullOrWhiteSpace(productName) && Regex.IsMatch(productName,
+            @"^\s*(?:GBA\s+Burner\s+for\s+ChisFlash|ChisFlash\s+Carbonate)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool HasDmg02ProductIdentity(string? productName) =>
+        string.Equals(productName?.Trim(), "DMG02 Board Control", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(productName?.Trim(), "DMG02 Clean CDC", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGbFlashUsbCandidate(string? pnpDeviceId) =>
+        UsbDeviceIdMatches(pnpDeviceId, "1A86", "7523") ||
+        UsbDeviceIdMatches(pnpDeviceId, "16C0", "27DD");
+
     private static bool HasSupportedUsbProductParent(string pnpDeviceId, string? parentId) =>
         UsbDeviceIdMatches(pnpDeviceId, TargetUsbVid, TargetUsbPid) && UsbDeviceIdMatches(parentId, TargetUsbVid, TargetUsbPid) ||
-        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, CarbonateFlashGbxUsbPid) && UsbDeviceIdMatches(parentId, BeggarUsbVid, CarbonateFlashGbxUsbPid);
+        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, CarbonateFlashGbxUsbPid) && UsbDeviceIdMatches(parentId, BeggarUsbVid, CarbonateFlashGbxUsbPid) ||
+        UsbDeviceIdMatches(pnpDeviceId, BeggarUsbVid, BeggarUsbPid) && UsbDeviceIdMatches(parentId, BeggarUsbVid, BeggarUsbPid);
 
     private static string ReadUsbProductName(ManagementObject device, string pnpDeviceId)
     {

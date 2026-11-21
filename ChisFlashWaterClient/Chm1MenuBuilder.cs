@@ -14,6 +14,17 @@ public static class Chm1MenuBuilder
             status.SaveAreaAddress != (magic ? Chm1Layout.SaveAreaOffset : Chm1Layout.StatusOffset + Chm1Layout.SectorBytes);
     }
 
+    internal static bool CanKeepSaveAreaInPlace(WaterCartScanResult scan, bool magic, bool battery)
+    {
+        if (!scan.MenuConfig.IsDetected || RequiresConversion(scan, magic, battery) ||
+            scan.MenuConfig.Status.SectorSize != Chm1Layout.SectorBytes)
+            return false;
+
+        int saveEnd = magic ? Chm1Layout.MappingOffset : Chm1Layout.BucketBytes;
+        int slotCount = (saveEnd - scan.MenuConfig.Status.SaveAreaAddress) / Chm1Layout.SectorBytes;
+        return !battery || scan.MenuConfig.Items.All(item => item.SaveType == 0 || item.SaveIndex < slotCount);
+    }
+
     public static MenuFlashStatusInfo CreateStatus(MenuFlashStatusInfo source, IReadOnlyList<MenuItemConfigInfo> items,
         bool magic = true, bool battery = true)
     {
@@ -35,7 +46,16 @@ public static class Chm1MenuBuilder
         };
     }
 
-    public static byte[] BuildHead(byte[] previousHead, byte[] menu, WaterCartScanResult scan, bool magic, bool battery = true)
+    public static bool RequiresEmptyDirectoryRebuild(byte[] previousHead, WaterCartScanResult scan) =>
+        scan.WlMapping.LegacyVersionDetected ||
+        (!scan.MenuConfig.IsDetected &&
+         (scan.WlMapping.IsDetected || !scan.Games.Any(game => !game.IsMenu && game.StartBucket > 0))) ||
+        (!scan.WlMapping.IsDetected &&
+         (previousHead.AsSpan(Chm1Layout.MappingOffset, 4).SequenceEqual("WLMI"u8) ||
+          previousHead.AsSpan(0xB0000, 4).SequenceEqual("UMMF"u8)));
+
+    public static byte[] BuildHead(byte[] previousHead, byte[] menu, WaterCartScanResult scan, bool magic, bool battery = true,
+        bool rebuildEmptyDirectory = false, bool keepSaveAreaInPlace = false)
     {
         if (previousHead.Length != Chm1Layout.BucketBytes || menu.Length > Chm1Layout.ItemListOffset ||
             scan.Geometry.SectorSizeBytes != Chm1Layout.SectorBytes || scan.Geometry.DeviceSizeBytes > Chm1Layout.MaxCapacity)
@@ -46,14 +66,14 @@ public static class Chm1MenuBuilder
             throw new InvalidOperationException("An ordinary layout requires a classic or NS menu; the WL menu requires bucket mapping.");
         if (scan.Games.Any(game => !game.IsMenu && game.StartBucket == 0))
             throw new InvalidOperationException("A game occupies the first 4 MiB; export or relocate it before installing a menu.");
-        if (scan.WlMapping.LegacyVersionDetected || (scan.MenuConfig.IsDetected && !scan.WlMapping.IsDetected &&
+        if (!rebuildEmptyDirectory && (scan.WlMapping.LegacyVersionDetected || (scan.MenuConfig.IsDetected && !scan.WlMapping.IsDetected &&
             (previousHead.AsSpan(Chm1Layout.MappingOffset, 4).SequenceEqual("WLMI"u8) ||
-             previousHead.AsSpan(0xB0000, 4).SequenceEqual("UMMF"u8))))
+             previousHead.AsSpan(0xB0000, 4).SequenceEqual("UMMF"u8)))))
             throw new InvalidOperationException("The existing fragmented map is invalid; restore its backup before converting the menu.");
-        if (scan.WlMapping.IsDetected && !scan.MenuConfig.IsDetected)
+        if (!rebuildEmptyDirectory && scan.WlMapping.IsDetected && !scan.MenuConfig.IsDetected)
             throw new InvalidOperationException("The fragmented map has no valid menu directory; restore the directory before converting the menu.");
 
-        var original = scan.MenuConfig.IsDetected
+        List<MenuItemConfigInfo> original = rebuildEmptyDirectory ? [] : scan.MenuConfig.IsDetected
             ? scan.MenuConfig.Items.Select(WaterMenuConfigCodec.Clone).ToList()
             : scan.Games.Where(game => !game.IsMenu && game.StartBucket > 0).Select(game => new MenuItemConfigInfo
             {
@@ -84,6 +104,7 @@ public static class Chm1MenuBuilder
         menu.CopyTo(head, 0);
         foreach (int oldSlot in oldSlots)
         {
+            if (keepSaveAreaInPlace) continue;
             int oldAddress = scan.MenuConfig.Status.SaveAreaAddress + oldSlot * scan.MenuConfig.Status.SectorSize;
             if (oldAddress < 0 || oldAddress + Chm1Layout.SectorBytes > previousHead.Length)
                 throw new InvalidOperationException("The existing save slot is outside the menu head area.");
@@ -93,7 +114,7 @@ public static class Chm1MenuBuilder
         {
             if (items[i].SaveType != 0) items[i].SaveIndex = (byte)slots[original[i].SaveIndex];
         }
-        var previousStatus = scan.MenuConfig.Status;
+        var previousStatus = rebuildEmptyDirectory ? new MenuFlashStatusInfo { LastBootSaveIndex = 0xFF } : scan.MenuConfig.Status;
         var status = CreateStatus(previousStatus, items, magic, battery);
         if (status.LastBootSaveType != 0)
             status.LastBootSaveIndex = (byte)slots[previousStatus.LastBootSaveIndex];

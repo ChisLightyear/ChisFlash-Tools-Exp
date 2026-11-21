@@ -27,7 +27,7 @@ public static class WaterWlMappingCodec
     private static readonly uint[] Crc32Table = BuildCrc32Table();
 
     public static bool IsChimeraConfiguration(WaterCartScanResult scan) =>
-        scan.Geometry.IsWaterLinkMultiNor || (scan.WlMapping.IsDetected &&
+        scan.IsChwq || scan.Geometry.IsWaterLinkMultiNor || (scan.WlMapping.IsDetected &&
             (scan.WlMapping.Header.Flags & GbaMultiMenuBuilder.Services.WaterLinkLayout.ChimeraFlag) != 0);
 
     public static int GetBucketCount(int capacityBytes)

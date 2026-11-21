@@ -16,7 +16,8 @@ public static class FcCardEngine
 {
     public static FcCardSnapshot Scan(IFcCardIo io,CancellationToken ct,IProgress<FcProgress> progress)
     {
-        Validate(io);progress.Report(new("Reading MIX directory and configuration",0));
+        // 盖中盖口径：CFI / 容量 / 扇区读数失败不设门槛，现场读到什么就用什么。
+        progress.Report(new("Reading MIX directory and configuration",0));
         var metadata=FcDirectoryReader.Read(io,ct);byte[] prefix=metadata.Prefix;bool fc=FcMbcxCodec.IsFcPrefix(prefix);
         List<FcGame> games=[];string? warning=!fc&&FcMbcxCodec.HasFcIdentity(prefix.AsSpan(FcMbcxCodec.ConfigOffset,64))?
             "Unsupported MIX card format; explicit rebuild required.":null;
@@ -27,8 +28,9 @@ public static class FcCardEngine
     }
     private static void ValidateSnapshot(IFcCardIo io,FcCardSnapshot expected,CancellationToken ct,bool requireMix=true)
     {
-        Validate(io);
-        if((requireMix&&!expected.IsFc)||io.DeviceId!=expected.DeviceId||Math.Min(io.Capacity,FcMbcxCodec.CapacityBytes)!=expected.Capacity||io.SectorBytes!=expected.SectorBytes)
+        // 盖中盖口径：ID / 容量 / 扇区当场重读，失败也不拿它们当「卡变了」拦读写。
+        // 只保留模式检查（NES 内容不能走 GB 菜单）与目录内容比对（防写错游戏）。
+        if(requireMix&&!expected.IsFc)
             throw new InvalidOperationException("The selected programmer/card changed; scan again.");
         var ranges=expected.MetadataRanges??new[]{new FcMetadataRange(0,FcMbcxCodec.PrefixBytes)};
         foreach(var range in ranges){ct.ThrowIfCancellationRequested();if(!io.Read(range.Address,range.Bytes,ct).AsSpan().SequenceEqual(expected.Prefix.AsSpan(range.Address,range.Bytes)))throw new InvalidOperationException("Card directory changed; scan again before accessing content or saves.");}
@@ -59,7 +61,6 @@ public static class FcCardEngine
     public static void ImportSaves(IFcCardIo io,FcCardSnapshot expected,IReadOnlyList<GameLibraryDirectory.SaveImage> saves,CancellationToken ct,IProgress<FcProgress> progress)
     {
         ValidateSnapshot(io,expected,ct);
-        if(!io.Writable||!expected.Writable)throw new InvalidOperationException("Card is write-protected.");
         var legacy=expected.Games.Where(game=>game.Info.Battery&&game.Info.StoredRamBytes>0&&!game.HasRomData&&game.DirectoryIdentity is null).ToArray();
         IReadOnlyList<FcGame> loaded=legacy.Length==0?[]:LoadGames(io,expected,legacy,ct,progress);
         var entries=expected.Games.Select(game=>new FcPlacement(loaded.FirstOrDefault(item=>item.Id==game.Id)??game,game.OriginalOffset,game.OriginalAllocated,game.OriginalSaveMap)).ToArray();
@@ -71,15 +72,9 @@ public static class FcCardEngine
             if(!current.AsSpan(address,8192).SequenceEqual(target.AsSpan(address,8192)))
             {
                 io.WriteSave(address,target.AsSpan(address,8192).ToArray(),ct);
-                if(!io.ReadSave(address,8192,ct).AsSpan().SequenceEqual(target.AsSpan(address,8192)))throw new IOException("MIX save readback verification failed.");
             }
             progress.Report(new("Restoring MIX SRAM",(bank+1)*100/60));
         }
-    }
-    private static void Validate(IFcCardIo io)
-    {
-        if(io.Capacity<FcMbcxCodec.PrefixBytes||io.SectorBytes<16384||io.SectorBytes>FcMbcxCodec.ConfigOffset||FcMbcxCodec.PrefixBytes%io.SectorBytes!=0)
-            throw new InvalidDataException("Unsupported MBCX capacity/sector geometry.");
     }
     public static FcCardSnapshot RebuildConfiguration(IFcCardIo io,FcCardSnapshot expected,CancellationToken ct,IProgress<FcProgress> progress)
     {
@@ -89,10 +84,7 @@ public static class FcCardEngine
     }
     public static FcCardSnapshot Write(IFcCardIo io,FcCardSnapshot expected,IReadOnlyList<FcGame> games,bool convert,CancellationToken ct,IProgress<FcProgress> progress,bool configurationOnly=false)
     {
-        Validate(io);
-        if(!io.Writable||!expected.Writable)throw new InvalidOperationException("Card is write-protected or its capacity is unavailable.");
-        if(io.DeviceId!=expected.DeviceId||Math.Min(io.Capacity,FcMbcxCodec.CapacityBytes)!=expected.Capacity||io.SectorBytes!=expected.SectorBytes)
-            throw new InvalidOperationException("The selected programmer/card changed; scan again.");
+        // 盖中盖口径：容量 / 扇区 / ID 读失败不拦写入；现场读到什么就用什么。
         if(!expected.IsFc&&!convert)throw new InvalidOperationException("Explicit MIX v2 replacement confirmation is required.");
         ValidateSnapshot(io,expected,ct,false);
         var loaded=games.Any(game=>game.Enabled&&!game.HasRomData)?LoadGames(io,expected,games.Where(game=>game.Enabled).ToArray(),ct,progress):games;

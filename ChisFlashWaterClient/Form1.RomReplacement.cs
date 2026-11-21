@@ -8,7 +8,8 @@ public partial class Form1
     private int gbaSingleReplacementCapacityBytes;
     private int chisFlash10ReplacementCapacityBytes;
 
-    private WaterCartEntry? GetChisFlash10CartGame() => HasPendingGbaWorkspaceClear() ? null : GetHeadAreaGame();
+    private WaterCartEntry? GetChisFlash10CartGame() =>
+        HasPendingGbaWorkspaceClear() || gbaSingleGameRemoved ? null : GetHeadAreaGame();
 
     private int GetSingleGbaReplacementCapacity(bool chisFlash10)
     {
@@ -22,7 +23,8 @@ public partial class Form1
             limit = currentScanResult?.Entries.FirstOrDefault(entry => !entry.IsMenu && entry.StartBucket == 0)?.AllocatedSizeBytesOverride ?? 0;
         // 只有头部时无法推断ROM长度；单卡独占可用ROM区，不把头部扫描步长当作容量。
         if (limit <= 0) limit = ChisFlash10Image.CapacityBytes;
-        if (HasActiveScanResult()) limit = Math.Min(limit, currentScanResult!.Geometry.DeviceSizeBytes);
+        if (HasActiveScanResult() && currentScanResult!.Geometry is { IsCfiWindowBlank: false } geometry)
+            limit = Math.Min(limit, geometry.DeviceSizeBytes);
         return Math.Min(limit, ChisFlash10Image.CapacityBytes);
     }
 
@@ -72,6 +74,7 @@ public partial class Form1
                 if (chisFlash10)
                 {
                     chisFlash10Rom = prepared.Bytes; chisFlash10Name = prepared.Item.FileName; chisFlash10Save = prepared.Save;
+                    gbaSingleGameRemoved = false;
                     chisFlash10WaitcntPatch = defaultWaitcntPatchEnabled; chisFlash10ReplacementCapacityBytes = limit;
                     RefreshChisFlash10Grid();
                 }

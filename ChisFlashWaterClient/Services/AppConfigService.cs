@@ -10,6 +10,15 @@ public static class AppConfigService
 
     private static string ConfigPath => Path.Combine(AppContext.BaseDirectory, ConfigFileName);
 
+    public static string LoadLastProgrammerPort() => IniDocument.Load(ConfigPath).Get(UiSection, "last_programmer_port", string.Empty);
+
+    public static void SaveLastProgrammerPort(string port)
+    {
+        var document = IniDocument.Load(ConfigPath);
+        document.Set(UiSection, "last_programmer_port", port);
+        document.Save(ConfigPath);
+    }
+
     public static string? LoadLanguageCode()
     {
         var document = IniDocument.Load(ConfigPath);

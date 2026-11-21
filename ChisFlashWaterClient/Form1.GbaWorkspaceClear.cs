@@ -4,6 +4,7 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private WaterCartScanResult? gbaWorkspaceClearSource;
+    private bool clearGbaGameArea;
 
     private bool HasPendingGbaWorkspaceClear() =>
         // 清空任务绑定扫描结果；后台判断只读取数据，不访问卡型选择控件。
@@ -18,31 +19,54 @@ public partial class Form1
 
     private void StageGbaWorkspaceClear()
     {
-        if (HasGbaGamesOnCard(currentScanResult) || currentScanResult?.MenuConfig.IsDetected == true ||
+        clearGbaGameArea = IsGbaSingleProfileSelected() || IsGbaSingleGameOnlyHardware();
+        if (clearGbaGameArea && HasGbaGamesOnCard(currentScanResult) || currentScanResult?.MenuConfig.IsDetected == true ||
             currentScanResult?.Games.Any(game => game.IsMenu) == true) gbaWorkspaceClearSource = currentScanResult;
     }
 
-    private string GbaWorkspaceClearConfirmation() => GbaCardText("clear_confirm",
+    private string GbaWorkspaceClearConfirmation() => !clearGbaGameArea
+        ? ShellText("将清除卡内菜单、游戏目录、状态和区块映射。原游戏数据及存档保留；新增游戏只擦写其占用范围。",
+            "Clear the menu, directory, status and block mapping? Existing game data and saves are retained. New games overwrite their allocated ranges.")
+        : GbaCardText("clear_confirm",
         "继续后将清除卡内菜单及其配置、游戏目录、映射和游戏区，再写入工作区中新加入的内容（如有）。系统区存档和独立存档芯片不参与清空。",
         "Clear the on-card menu and its settings, game list, mapping and game area, then program any newly added content? System-area saves and the separate save chip are excluded from clearing.");
 
     private uint[] PendingGbaWorkspaceEraseSectors(WaterCartScanResult scan, IEnumerable<WaterNorWriteSegment>? replacements = null) =>
         HasPendingGbaWorkspaceClear() && ReferenceEquals(gbaWorkspaceClearSource, scan)
-            ? GbaWorkspaceClearPlan.BuildEraseSectors(scan, replacements) : [];
+            ? GbaWorkspaceClearPlan.BuildEraseSectors(scan, replacements, clearGbaGameArea) : [];
+
+    private string GbaClearActionText() => clearGbaGameArea
+        ? ClientText.T("client", "clear_menu_games", "Clear Menu and Games")
+        : ShellText("清除合卡配置区", "Clear multicart configuration");
 
     private void EraseGbaWorkspaceSectors(WaterDeviceProtocol protocol, ProgrammerKind kind,
         WaterCartScanResult scan, IReadOnlyList<uint> sectors, bool directLegacyErase, CancellationToken cancellationToken)
     {
-        for (int index = 0; index < sectors.Count; index++)
+        if (sectors.Count == 0) return;
+        BeginMeasuredProgressPhase(sectors.Count, true, GbaClearActionText());
+        int selectedBucket = -1;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            uint address = sectors[index];
-            bool erased = kind == ProgrammerKind.BeggarLegacy && directLegacyErase
-                ? TryEraseLegacyBeggarSector(protocol, address, 60000)
-                : TryEraseRomSectorForProgrammer(protocol, kind, address);
-            if (!erased) throw new IOException(ClientText.Tf("client", "clear_failed_address", "Failed to clear the menu and games at 0x{0:X8}.", address));
-            AdvanceMeasuredProgress(scan.Geometry.SectorSizeBytes, 1, GbaCardText("clear_game_area", "正在清空卡内菜单和游戏", "Clearing on-card menu and games"));
+            for (int index = 0; index < sectors.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                uint address = sectors[index];
+                long eraseStart = StartLandscapeErase();
+                bool erased = kind == ProgrammerKind.BeggarLegacy && directLegacyErase
+                    ? TryEraseLegacyBeggarSector(protocol, address, Timeout.Infinite)
+                    : TryEraseRomSectorForProgrammer(protocol, kind, address, ref selectedBucket);
+                if (!erased) throw new IOException(ClientText.Tf("client", "clear_failed_address", "Failed to clear the menu and games at 0x{0:X8}.", address));
+                FinishLandscapeErase(eraseStart, scan.Geometry.SectorSizeBytes);
+                AdvanceMeasuredProgress(scan.Geometry.SectorSizeBytes, 1, GbaClearActionText());
+            }
         }
+        catch (OperationCanceledException)
+        {
+            RestoreGbaBatchBank(protocol, selectedBucket, reportFailure: false);
+            throw;
+        }
+
+        RestoreGbaBatchBank(protocol, selectedBucket);
     }
 
     private async Task BurnEmptySingleGbaWorkspaceAsync()
@@ -62,7 +86,7 @@ public partial class Form1
         bool directLegacyErase = UseDirectGbaWorkspaceErase(scan, GetSelectedBurnProfileMode());
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation; isBurnCancellationRequested = false;
-        SetBusy(true, GbaCardText("clear_game_area", "正在清空卡内菜单和游戏", "Clearing on-card menu and games"));
+        SetBusy(true, GbaClearActionText());
         bool started = false, succeeded = false;
         try
         {
@@ -70,10 +94,10 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                BeginMeasuredProgress(ClientText.T("client", "clear_menu_games", "Clear Menu and Games"), (long)sectors.Length * scan.Geometry.SectorSizeBytes, sectors.Length);
+                BeginMeasuredProgress(GbaClearActionText(), (long)sectors.Length * scan.Geometry.SectorSizeBytes, sectors.Length);
                 started = true;
                 EraseGbaWorkspaceSectors(protocol, kind, scan, sectors, directLegacyErase, cancellation.Token);
-                CompleteMeasuredProgress(ClientText.T("client", "clear_menu_games", "Clear Menu and Games"));
+                CompleteMeasuredProgress(GbaClearActionText());
             });
             // 清空后重新添加的菜单继续作为草稿，旧菜单及目录不再出现在扫描缓存中。
             byte[]? draft = gbaDraftMenu; string draftName = gbaDraftMenuName;
@@ -91,7 +115,7 @@ public partial class Form1
                 AbortMeasuredProgress();
                 if (started) { currentScanResult = null; lastScannedPortName = string.Empty; }
             }
-            SetBusy(false, succeeded ? GbaCardText("clear_done", "卡内菜单和游戏已清空。", "On-card menu and games cleared.") :
+            SetBusy(false, succeeded ? GbaClearActionText() + ShellText("完成", " complete") :
                 GbaCardText("clear_interrupted", "清空未完成，请重新分析卡带。", "Erase incomplete; analyze the cartridge again."));
         }
     }

@@ -2,6 +2,7 @@ using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using ChisFlashWaterClient.Services;
@@ -23,6 +24,7 @@ public partial class Form1
         public string SuggestedExtension { get; init; } = "gba";
     }
 
+    private readonly StringBuilder sessionLog = new();
     private string? replaceableLogKey;
     private int replaceableLogStart = -1;
     private int replaceableLogLength;
@@ -122,6 +124,7 @@ public partial class Form1
         if (!TryGetSelectedWorkspaceRow(out WorkspaceListRow? selectedRow, out int rowIndex) ||
             selectedRow is null ||
             (SupportsGbaCardMode() ? !CanReplaceGbaWorkspaceSelection() :
+                IsGbcFreeWorkspace() ? !CanReplaceGbcFreeSelection() :
                 selectedRow.CartEntry is not { IsMenu: false } entry ||
                 (!entry.FoundInMenuConfig && !entry.FoundInWlMapping && entry.RomOffsetBank < 0)))
         {
@@ -253,7 +256,39 @@ public partial class Form1
             FormatPendingPatchDisplay(replacementItem)));
     }
 
-    private async Task HandlePrimaryQueueActionAsync()
+    private Task HandlePrimaryQueueActionAsync() => TrackLandscapeAsync(RunPrimaryQueueActionAsync);
+
+    private async Task TrackLandscapeAsync(Func<Task> action, bool eraseOnly = false)
+    {
+        // 再次点击沿用原取消入口，山形仍归属于正在执行的烧录。
+        if (collectingBurnSpeed)
+        {
+            await action();
+            return;
+        }
+        landscapeLastBytes = Interlocked.Read(ref lifetimeTransferredBytes);
+        landscapeLastTick = System.Diagnostics.Stopwatch.GetTimestamp();
+        landscapeHasTransfer = false;
+        landscapeEraseOnly = eraseOnly;
+        lock (eraseSampleLock)
+        {
+            eraseSampleBytes = 0;
+            eraseSampleTicks = 0;
+            eraseInProgress = false;
+        }
+        collectingBurnSpeed = true;
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            SampleBurnSpeed(finalSample: true);
+            collectingBurnSpeed = false;
+        }
+    }
+
+    private async Task RunPrimaryQueueActionAsync()
     {
         if (activeBurnCancellation is not null)
         {
@@ -265,6 +300,16 @@ public partial class Form1
             (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
         { await BurnEmptySingleGbaWorkspaceAsync(); return; }
         if (IsGbaSingleCardMode()) { await BurnSingleGbaAsync(); return; }
+        if (SupportsGbaCardMode() && !HasGbaListMenu())
+        {
+            if (workspaceRows.Count <= 1)
+            {
+                await BurnSingleGbaAsync(workspaceRows.FirstOrDefault()?.PendingItem);
+                return;
+            }
+            await SelectGbaMenuAsync();
+            if (!HasGbaListMenu()) return;
+        }
         if (IsGbaConversionDraft()) { await BurnGbaConversionAsync(); return; }
         if (IsChisFlash10Mode()) { await HandleChisFlash10PrimaryActionAsync(); return; }
         if (IsGbcProfileUnselected()) { labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
@@ -280,6 +325,7 @@ public partial class Form1
         if(HasUnreadyPlatformImports(workspaceRows)){AppendLog(ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning."));return;}
 
         if (currentScanResult?.IsBeggarMaxGbcMode == true &&
+            (!IsGbcFreeWorkspace() || HasGbcFreeMenu()) &&
             GetSelectedGbcMenuLanguageMode() == GbcMenuLanguageMode.English &&
             !HasWorkspaceChanges())
         {
@@ -456,6 +502,10 @@ public partial class Form1
         LegacyFlashSlot,
         BeggarMaxRamSlot,
         BatterylessRomTail,
+        BeggarChipRam,
+        BeggarFram,
+        BeggarFlash,
+        GbcPhysicalRam,
     }
 
     private sealed class SelectedSaveTargetInfo
@@ -465,6 +515,7 @@ public partial class Form1
         public int EntrySlot { get; init; } = -1;
         public uint SaveAddress { get; init; }
         public int SaveLength { get; init; }
+        public int MaximumTransferLength { get; init; }
         public int? SaveSlotIndex { get; init; }
         public string SourceDescription { get; init; } = string.Empty;
         public bool SupportsClear { get; init; }
@@ -576,11 +627,8 @@ public partial class Form1
 
     private async Task ExportSelectedEntrySaveAsync()
     {
-        if (!TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason) || target is null)
-        {
-            AppendLog(reason);
-            return;
-        }
+        SelectedSaveTargetInfo? target = await ResolveSaveTransferTargetAsync(importing: false);
+        if (target is null) return;
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
@@ -602,7 +650,7 @@ public partial class Form1
 
         using var dialog = new SaveFileDialog
         {
-            Title = T("dialog", "export_save_title", "Export Save"),
+            Title = T("dialog", "export_save_title", "Export Save") + " · " + target.SourceDescription,
             FileName = $"{SanitizeSaveFileName(title)}.sav",
             Filter = T("dialog", "export_chip_save_filter", "Save File (*.sav)|*.sav|All files (*.*)|*.*"),
             AddExtension = true,
@@ -642,15 +690,12 @@ public partial class Form1
     {
         if (!EnsureCurrentScanIsWritable(out string writeProtectReason))
         {
-            AppendLog(writeProtectReason);
+            ShowSaveFailure(writeProtectReason);
             return;
         }
 
-        if (!TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason) || target is null)
-        {
-            AppendLog(reason);
-            return;
-        }
+        SelectedSaveTargetInfo? target = await ResolveSaveTransferTargetAsync(importing: true);
+        if (target is null) return;
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
@@ -679,46 +724,31 @@ public partial class Form1
         }
         catch (Exception ex)
         {
-            AppendLog(Tf("log", "import_save_read_failed", "Failed to read the save file: {0}", ex.Message));
+            ShowSaveFailure(Tf("log", "import_save_read_failed", "Failed to read the save file: {0}", ex.Message));
             return;
         }
 
         if (sourceData.Length <= 0)
         {
-            AppendLog(T("log", "import_chip_save_empty", "The selected save file is empty."));
+            ShowSaveFailure(T("log", "import_chip_save_empty", "The selected save file is empty."));
             return;
         }
 
         ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
         WaterCartScanResult scanSnapshot = currentScanResult ?? throw new InvalidOperationException("No active scan result.");
         int importCapacityBytes = GetSelectedSaveImportCapacityBytes(target, scanSnapshot);
-        int bytesToWrite = sourceData.Length;
-        if (sourceData.Length > importCapacityBytes)
+        int bytesToWrite = Math.Min(sourceData.Length, importCapacityBytes);
+        if (target.Kind == SelectedSaveStorageKind.BeggarFlash && bytesToWrite is not (0x10000 or 0x20000))
         {
-            string capacityText = FormatKiBSize(importCapacityBytes);
-            DialogResult confirm = MessageBox.Show(
-                this,
-                Tf(
-                    "dialog",
-                    "import_save_too_large_message",
-                    "The selected save file exceeds the target save capacity ({0}).\n\nContinuing will import only the first {0} and discard the remaining data.\n\nDo you want to continue?",
-                    capacityText),
-                T("dialog", "import_save_title", "Import Save"),
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-
-            if (confirm != DialogResult.Yes)
-            {
-                return;
-            }
-
-            bytesToWrite = importCapacityBytes;
+            ShowSaveFailure(ShellText("FLASH 存档需要 64 KiB 或 128 KiB 的原始 .sav 文件。", "FLASH saves require a 64 KiB or 128 KiB raw .sav file."));
+            return;
         }
 
         byte[] importData = sourceData.AsSpan(0, bytesToWrite).ToArray();
         string title = string.IsNullOrWhiteSpace(target.Entry.Title)
             ? Tf("value", "untitled_entry_slot", "Untitled Entry #{0:000}", target.Entry.EntrySlot + 1)
             : target.Entry.Title;
+        if (!ConfirmSaveImport(title, target, sourceData.Length, bytesToWrite)) return;
 
         SetBusy(true, T("status", "import_save_busy", "Importing save..."));
         AppendLog(Tf(
@@ -754,7 +784,7 @@ public partial class Form1
             return;
         }
 
-        if (!TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason) || target is null)
+        if (!TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason, resolveActiveChip: false) || target is null)
         {
             AppendLog(reason);
             return;
@@ -851,17 +881,16 @@ public partial class Form1
         using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, programmerKind);
 
-        if (currentScanResult?.IsChm1 == true && target.Kind == SelectedSaveStorageKind.LegacyFlashSlot &&
-            currentScanResult.MenuConfig.Status.LastBootSaveType != 0 &&
-            currentScanResult.MenuConfig.Status.LastBootSaveIndex == target.SaveSlotIndex)
-            return ReadBeggarChipSave(protocol, 0x20000).AsSpan(0, exportLengthBytes).ToArray();
-
         byte[] saveData = target.Kind switch
         {
             SelectedSaveStorageKind.WaterLinkLogicalSlot => ReadWaterLinkSelectedSave(protocol, target.EntrySlot),
             SelectedSaveStorageKind.LegacyFlashSlot => ReadRomRangeFromDevice(protocol, programmerKind, target.SaveAddress, exportLengthBytes),
             SelectedSaveStorageKind.BeggarMaxRamSlot => ReadBeggarMaxSave(protocol, target.Entry, exportLengthBytes),
             SelectedSaveStorageKind.BatterylessRomTail => ReadRomRangeFromDevice(protocol, programmerKind, target.SaveAddress, exportLengthBytes),
+            SelectedSaveStorageKind.BeggarChipRam when target.EntrySlot >= 0 => ReadBeggarChipSave(protocol, exportLengthBytes),
+            SelectedSaveStorageKind.BeggarChipRam or SelectedSaveStorageKind.BeggarFram or SelectedSaveStorageKind.BeggarFlash =>
+                TransferGbaNativeSave(protocol, target.Kind, exportLengthBytes),
+            SelectedSaveStorageKind.GbcPhysicalRam => TransferGbcPhysicalSave(protocol, target.SaveAddress, exportLengthBytes),
             _ => throw new InvalidOperationException("Unsupported save export target."),
         };
 
@@ -1011,71 +1040,12 @@ public partial class Form1
 
     private byte[] ReadBeggarMaxSave(WaterDeviceProtocol protocol, WaterCartEntry entry, int saveLengthBytes)
     {
-        if (saveLengthBytes <= 0)
-        {
-            throw new InvalidOperationException(T("error", "save_slot_invalid", "The selected save slot is invalid."));
-        }
-
-        if (!TryConfigureBeggarMaxGameMapping(protocol, entry))
+        if (!TryReadBeggarMaxRamImage(protocol, entry, saveLengthBytes, out byte[] saveData))
         {
             throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
         }
 
-        if (!TrySetBeggarMaxRamEnabled(protocol, true))
-        {
-            throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
-        }
-
-        try
-        {
-            byte[] saveData = new byte[saveLengthBytes];
-            int readOffset = 0;
-            int currentBank = -1;
-            int[] ramBankSequence = ResolveBeggarMaxSaveReadBanks(entry);
-            if (ramBankSequence.Length == 0)
-            {
-                throw new InvalidOperationException(T("error", "save_slot_invalid", "The selected save slot is invalid."));
-            }
-
-            while (readOffset < saveLengthBytes)
-            {
-                int absoluteAddress = readOffset;
-                int sequenceIndex = absoluteAddress >> 13;
-                int bankOffset = absoluteAddress & 0x1FFF;
-                int readLength = Math.Min(4096, saveLengthBytes - readOffset);
-                readLength = Math.Min(readLength, 0x2000 - bankOffset);
-                if (sequenceIndex >= ramBankSequence.Length)
-                {
-                    break;
-                }
-
-                int ramBank = ramBankSequence[sequenceIndex];
-
-                if (ramBank != currentBank)
-                {
-                    currentBank = ramBank;
-                    if (!TrySwitchBeggarMaxRamBank(protocol, ramBank))
-                    {
-                        throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
-                    }
-                }
-
-                byte[] chunk = new byte[readLength];
-                if (!protocol.TryReadGbc((uint)(0xA000 + bankOffset), chunk, 3000))
-                {
-                    throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
-                }
-
-                Buffer.BlockCopy(chunk, 0, saveData, readOffset, readLength);
-                readOffset += readLength;
-            }
-
-            return saveData;
-        }
-        finally
-        {
-            TrySetBeggarMaxRamEnabled(protocol, false);
-        }
+        return saveData;
     }
 
     private void WriteBeggarMaxSave(
@@ -1085,7 +1055,8 @@ public partial class Form1
         byte[] saveData,
         string operationTitle)
     {
-        if (saveLengthBytes <= 0)
+        int[] ramBankSequence = ResolveBeggarMaxPhysicalBanks(entry, saveLengthBytes);
+        if (ramBankSequence.Length == 0)
         {
             throw new InvalidOperationException(T("error", "save_slot_invalid", "The selected save slot is invalid."));
         }
@@ -1095,11 +1066,6 @@ public partial class Form1
         if (saveData.Length > 0)
         {
             Buffer.BlockCopy(saveData, 0, normalizedData, 0, Math.Min(saveData.Length, normalizedData.Length));
-        }
-
-        if (!TryConfigureBeggarMaxGameMapping(protocol, entry))
-        {
-            throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
         }
 
         if (!TrySetBeggarMaxRamEnabled(protocol, true))
@@ -1112,11 +1078,6 @@ public partial class Form1
             int writeOffset = 0;
             int currentBank = -1;
             int totalUnits = Math.Max(1, (normalizedData.Length + 4095) / 4096);
-            int[] ramBankSequence = ResolveBeggarMaxSaveWriteBanks(entry, normalizedData.Length);
-            if (ramBankSequence.Length == 0)
-            {
-                throw new InvalidOperationException(T("error", "save_slot_invalid", "The selected save slot is invalid."));
-            }
             BeginMeasuredProgress(operationTitle, normalizedData.Length, totalUnits);
 
             while (writeOffset < normalizedData.Length)
@@ -1126,11 +1087,6 @@ public partial class Form1
                 int bankOffset = absoluteAddress & 0x1FFF;
                 int writeLength = Math.Min(4096, normalizedData.Length - writeOffset);
                 writeLength = Math.Min(writeLength, 0x2000 - bankOffset);
-                if (sequenceIndex >= ramBankSequence.Length)
-                {
-                    break;
-                }
-
                 int ramBank = ramBankSequence[sequenceIndex];
 
                 if (ramBank != currentBank)
@@ -1143,7 +1099,7 @@ public partial class Form1
                 }
 
                 byte[] chunk = normalizedData.AsSpan(writeOffset, writeLength).ToArray();
-                if (!protocol.TryWriteGbc((uint)(0xA000 + bankOffset), chunk, 3000))
+                if (!protocol.TryWriteGbc((uint)(0xA000 + bankOffset), chunk, Timeout.Infinite))
                 {
                     throw new InvalidOperationException(T("error", "save_slot_summary_unavailable", "The device did not respond to the save-slot request."));
                 }
@@ -1182,32 +1138,26 @@ public partial class Form1
         WriteBeggarMaxSave(protocol, entry, saveLengthBytes, blankData, T("ui", "clear_save", "Clear Save"));
     }
 
-    private static int[] ResolveBeggarMaxSaveReadBanks(WaterCartEntry entry)
+    private static int[] ResolveBeggarMaxPhysicalBanks(WaterCartEntry entry, int transferLength)
     {
-        if (entry.SaveLengthBytes <= 0 ||
-            entry.RamBankCount <= 0 ||
-            entry.RamBankCount > BeggarMaxGameSramBankLimit)
+        const int bankSize = GameBoyRomHeaderService.RamBankSize;
+        if (transferLength <= 0 || transferLength > entry.SaveLengthBytes ||
+            entry.RamBankCount is < 1 or > BeggarMaxGameSramBankLimit ||
+            entry.SaveLengthBytes > entry.RamBankCount * bankSize ||
+            entry.SaveBankMap.Count < entry.RamBankCount)
         {
             return [];
         }
 
-        int bankCount = Math.Max(1, (entry.SaveLengthBytes + GameBoyRomHeaderService.RamBankSize - 1) / GameBoyRomHeaderService.RamBankSize);
-        if (bankCount > entry.RamBankCount || bankCount > BeggarMaxGameSramBankLimit)
+        // 菜单态通过 0x4000 选择 SRAM 的物理 bank。
+        int[] banks = entry.SaveBankMap.Take(entry.RamBankCount).Select(bank => (int)bank).ToArray();
+        if (banks.Any(bank => bank >= BeggarMaxSharedSaveBankStart + BeggarMaxSharedSaveBankCount) ||
+            banks.Distinct().Count() != banks.Length)
         {
             return [];
         }
 
-        return Enumerable.Range(0, bankCount).ToArray();
-    }
-
-    private static int[] ResolveBeggarMaxSaveWriteBanks(WaterCartEntry entry, int writeLengthBytes)
-    {
-        if (writeLengthBytes <= 0)
-        {
-            return [];
-        }
-
-        return ResolveBeggarMaxSaveReadBanks(entry);
+        return banks[..((transferLength + bankSize - 1) / bankSize)];
     }
 
     private static bool TryConfigureBeggarMaxGameMapping(WaterDeviceProtocol protocol, WaterCartEntry entry)
@@ -1217,12 +1167,15 @@ public partial class Form1
             return false;
         }
 
+        // 地址 0 的单游戏使用固件的默认映射。
+        if (entry.RomOffsetBank == 0) return true;
+
         byte romBankLow = (byte)(entry.RomOffsetBank & 0xFF);
         byte romBankHigh = (byte)((entry.RomOffsetBank >> 8) & 0xFF);
-        if (!protocol.TryWriteGbc(0x4000, [0x40], 3000) ||
-            !protocol.TryWriteGbc(0xB000, [romBankLow], 3000) ||
-            !protocol.TryWriteGbc(0xB000, [romBankHigh], 3000) ||
-            !protocol.TryWriteGbc(0xB000, [entry.MbcType], 3000))
+        if (!protocol.TryWriteGbc(0x4000, [0x40], Timeout.Infinite) ||
+            !protocol.TryWriteGbc(0xB000, [romBankLow], Timeout.Infinite) ||
+            !protocol.TryWriteGbc(0xB000, [romBankHigh], Timeout.Infinite) ||
+            !protocol.TryWriteGbc(0xB000, [entry.MbcType], Timeout.Infinite))
         {
             return false;
         }
@@ -1241,20 +1194,20 @@ public partial class Form1
             return false;
         }
 
-        if (!protocol.TryWriteGbc(0xB000, [0xFE], 3000))
+        if (!protocol.TryWriteGbc(0xB000, [0xFE], Timeout.Infinite))
         {
             return false;
         }
 
         foreach (byte bank in ramMap)
         {
-            if (!protocol.TryWriteGbc(0xB000, [bank], 3000))
+            if (!protocol.TryWriteGbc(0xB000, [bank], Timeout.Infinite))
             {
                 return false;
             }
         }
 
-        return protocol.TryWriteGbc(0xB000, [0xFF], 3000);
+        return protocol.TryWriteGbc(0xB000, [0xFF], Timeout.Infinite);
     }
 
     private byte[] ReadLinearRomRangeFromDevice(
@@ -1273,24 +1226,16 @@ public partial class Form1
         try
         {
             byte[] data = new byte[byteCount];
-            const int chunkSize = 4096;
-            int offset = 0;
-            while (offset < data.Length)
+            int bytesRead = 0;
+            string detail = BuildProgressDetailText(label, "progress_phase_read", "Read");
+            if (!TryReadRomRangeForProgrammer(protocol, programmerKind, startAddress, data, onRead: length =>
             {
-                int readLength = Math.Min(chunkSize, data.Length - offset);
-                byte[] chunk = new byte[readLength];
-                if (!TryReadRomRangeForProgrammer(protocol, programmerKind, startAddress + (uint)offset, chunk))
-                {
-                    throw new InvalidOperationException(Tf(
-                        "error",
-                        "read_save_range_failed",
-                        "Failed to read save data at 0x{0:X6}.",
-                        startAddress + (uint)offset));
-                }
-
-                Buffer.BlockCopy(chunk, 0, data, offset, readLength);
-                offset += readLength;
-                AdvanceMeasuredProgress(readLength, 0, BuildProgressDetailText(label, "progress_phase_read", "Read"));
+                bytesRead += length;
+                AdvanceMeasuredProgress(length, 0, detail);
+            }))
+            {
+                throw new InvalidOperationException(Tf("error", "read_save_range_failed",
+                    "Failed to read save data at 0x{0:X6}.", startAddress + (uint)bytesRead));
             }
 
             CompleteMeasuredProgress(T("ui", "export_rom", "Export ROM"));
@@ -1376,7 +1321,7 @@ public partial class Form1
 
                 byte[] chunk = new byte[chunkLength];
                 int cartAddress = GetBeggarMaxBankBaseAddress(bank) + bankOffset;
-                if (!protocol.TryReadGbc((uint)cartAddress, chunk, 3000))
+                if (!protocol.TryReadGbc((uint)cartAddress, chunk, Timeout.Infinite))
                 {
                     throw new InvalidOperationException(T("error", "beggar_max_read_sector_failed", "Failed to read the existing MAX flash sector image."));
                 }
@@ -1545,7 +1490,7 @@ public partial class Form1
 
     private void EraseSpiFlashBlock(WaterDeviceProtocol protocol, uint blockAddress, string label)
     {
-        if (!protocol.TryEraseSpiFlashBlock(blockAddress, 60000))
+        if (!protocol.TryEraseSpiFlashBlock(blockAddress, Timeout.Infinite))
         {
             throw new InvalidOperationException(Tf(
                 "error",
@@ -1571,7 +1516,7 @@ public partial class Form1
             byte[] chunk = data.AsSpan(offset, writeLength).ToArray();
             uint address = startAddress + (uint)offset;
 
-            if (!protocol.TryWriteSpiFlash(address, chunk, 60000))
+            if (!protocol.TryWriteSpiFlash(address, chunk, Timeout.Infinite))
             {
                 throw new InvalidOperationException(Tf(
                     "error",
@@ -1619,6 +1564,17 @@ public partial class Form1
 
         switch (target.Kind)
         {
+            case SelectedSaveStorageKind.BeggarChipRam when target.EntrySlot >= 0:
+                WriteBeggarChipSave(protocol, saveData);
+                break;
+            case SelectedSaveStorageKind.BeggarChipRam:
+            case SelectedSaveStorageKind.BeggarFram:
+            case SelectedSaveStorageKind.BeggarFlash:
+                TransferGbaNativeSave(protocol, target.Kind, saveData.Length, saveData);
+                break;
+            case SelectedSaveStorageKind.GbcPhysicalRam:
+                TransferGbcPhysicalSave(protocol, target.SaveAddress, saveData.Length, saveData);
+                break;
             case SelectedSaveStorageKind.WaterLinkLogicalSlot:
                 {
                     ImportWaterLinkSelectedSave(protocol, target.EntrySlot, saveData);
@@ -1908,7 +1864,7 @@ public partial class Form1
             return string.Empty;
         }
 
-        int[] ramBanks = ResolveBeggarMaxSaveReadBanks(entry);
+        int[] ramBanks = ResolveBeggarMaxPhysicalBanks(entry, slotLengthBytes);
         if (ramBanks.Length == 0)
         {
             return string.Empty;
@@ -1946,6 +1902,7 @@ public partial class Form1
 
     private static int GetSelectedSaveImportCapacityBytes(SelectedSaveTargetInfo target, WaterCartScanResult scanSnapshot)
     {
+        if (target.MaximumTransferLength > 0) return target.MaximumTransferLength;
         return target.Kind switch
         {
             SelectedSaveStorageKind.WaterLinkLogicalSlot => 0x20000,
@@ -2013,7 +1970,9 @@ public partial class Form1
             Width = 352,
             DropDownStyle = ComboBoxStyle.DropDownList,
         };
-        comboBox.Items.AddRange(options);
+        comboBox.Items.AddRange(options.Where(option => option.SizeBytes is null ||
+            (option.SizeBytes <= maximumLengthBytes && (target.Kind != SelectedSaveStorageKind.BeggarFlash || option.SizeBytes >= 0x10000)))
+            .Cast<object>().ToArray());
         comboBox.SelectedIndex = 0;
 
         Button okButton = new()
@@ -2077,6 +2036,7 @@ public partial class Form1
 
     private static int GetSelectedSaveMaximumExportBytes(SelectedSaveTargetInfo target, WaterCartScanResult scanSnapshot)
     {
+        if (target.MaximumTransferLength > 0) return target.MaximumTransferLength;
         return target.Kind switch
         {
             SelectedSaveStorageKind.LegacyFlashSlot => scanSnapshot.MenuConfig.Status.SectorSize > 0
@@ -2087,7 +2047,8 @@ public partial class Form1
         };
     }
 
-    private bool TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason)
+    private bool TryResolveSelectedSaveTarget(out SelectedSaveTargetInfo? target, out string reason,
+        bool forImport = false, bool resolveActiveChip = true)
     {
         target = null;
         reason = string.Empty;
@@ -2157,7 +2118,9 @@ public partial class Form1
                 Kind = SelectedSaveStorageKind.BeggarMaxRamSlot,
                 EntrySlot = entry.EntrySlot,
                 SaveLength = entry.SaveLengthBytes,
-                SourceDescription = Tf("value", "beggar_max_save_slot", "MAX save slot #{0:000}", entry.EntrySlot + 1),
+                SourceDescription = entry.UsesSharedSave
+                    ? ShellText("共享 SRAM（可能属于其他游戏）", "Shared SRAM (may contain another game's data)")
+                    : Tf("value", "beggar_max_save_slot", "MAX save slot #{0:000}", entry.EntrySlot + 1),
                 SupportsClear = true,
             };
             return true;
@@ -2176,6 +2139,16 @@ public partial class Form1
                 : scanSnapshot.Geometry.SectorSizeBytes;
             uint saveAreaBase = (uint)scanSnapshot.MenuConfig.Status.SaveAreaAddress;
             int saveLength = ResolveLegacySaveLengthBytes(entry);
+            if (resolveActiveChip && TryResolveActiveBeggarSave(entry, scanSnapshot, forImport, out int chipLength))
+            {
+                target = new SelectedSaveTargetInfo
+                {
+                    Entry = entry, EntrySlot = entry.EntrySlot, Kind = SelectedSaveStorageKind.BeggarChipRam,
+                    SaveLength = Math.Min(saveLength, chipLength), MaximumTransferLength = chipLength,
+                    SourceDescription = ShellText("当前 SRAM／FRAM 芯片", "Current SRAM/FRAM chip"),
+                };
+                return true;
+            }
             target = new SelectedSaveTargetInfo
             {
                 Entry = entry,
@@ -2184,7 +2157,8 @@ public partial class Form1
                 SaveAddress = saveAreaBase + (uint)(entry.SaveIndex.Value * sectorSize),
                 SaveLength = saveLength,
                 SaveSlotIndex = entry.SaveIndex.Value,
-                SourceDescription = Tf("value", "legacy_save_slot", "Legacy save slot #{0:000}", entry.SaveIndex.Value + 1),
+                SourceDescription = ShellText("NOR 归档 · ", "NOR archive · ") +
+                    Tf("value", "legacy_save_slot", "Legacy save slot #{0:000}", entry.SaveIndex.Value + 1),
                 SupportsClear = true,
             };
             return true;
@@ -2268,7 +2242,7 @@ public partial class Form1
             return;
         }
 
-        if (!TryResolveChipSaveExportTarget(out WaterCartEntry? entry, out _, out string reason) ||
+        if (!TryResolveChipSaveExportTarget(out WaterCartEntry? entry, out int saveSizeBytes, out string reason) ||
             entry is null)
         {
             AppendLog(reason);
@@ -2312,32 +2286,17 @@ public partial class Form1
             return;
         }
 
-        const int MaximumChipSaveImportBytes = 0x20000;
-        int bytesToWrite = sourceData.Length;
-        if (sourceData.Length > MaximumChipSaveImportBytes)
-        {
-            DialogResult confirm = MessageBox.Show(
-                this,
-                Tf(
-                    "dialog",
-                    "import_chip_save_too_large_message",
-                    "The selected save file is larger than 128 KiB.\n\nContinuing will import only the first 128 KiB and discard the remaining data.\n\nDo you want to continue?"),
-                T("dialog", "import_chip_save_title", "Import Chip Save"),
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-
-            if (confirm != DialogResult.Yes)
-            {
-                return;
-            }
-
-            bytesToWrite = MaximumChipSaveImportBytes;
-        }
-
+        int bytesToWrite = Math.Min(sourceData.Length, saveSizeBytes);
         byte[] importData = sourceData.AsSpan(0, bytesToWrite).ToArray();
         string title = string.IsNullOrWhiteSpace(entry.Title)
             ? Tf("value", "untitled_entry_slot", "Untitled Entry #{0:000}", entry.EntrySlot + 1)
             : entry.Title;
+        var target = new SelectedSaveTargetInfo
+        {
+            Kind = SelectedSaveStorageKind.BeggarChipRam,
+            SourceDescription = ShellText("当前 SRAM／FRAM 芯片", "Current SRAM/FRAM chip"),
+        };
+        if (!ConfirmSaveImport(title, target, sourceData.Length, bytesToWrite)) return;
 
         SetBusy(true, T("status", "import_chip_save_busy", "Importing chip save..."));
         AppendLog(Tf(
@@ -2476,7 +2435,7 @@ public partial class Form1
 
                 int currentBankSize = Math.Min(bankSizeBytes, saveSizeBytes - offset);
                 byte[] bankData = new byte[currentBankSize];
-                if (!protocol.TryReadRamRange(0, bankData, 4096, 3000))
+                if (!protocol.TryReadRamRange(0, bankData, 4096, Timeout.Infinite))
                 {
                     throw new InvalidOperationException(Tf(
                         "error",
@@ -2522,7 +2481,7 @@ public partial class Form1
                 {
                     int writeLength = Math.Min(ChunkSizeBytes, currentBankSize - offset);
                     byte[] chunk = saveData.AsSpan(bankOffset + offset, writeLength).ToArray();
-                    if (!protocol.TryWriteRam((uint)offset, chunk, 3000))
+                    if (!protocol.TryWriteRam((uint)offset, chunk, Timeout.Infinite))
                     {
                         throw new InvalidOperationException(Tf(
                             "error",
@@ -2540,7 +2499,7 @@ public partial class Form1
         }
     }
 
-    private static bool TrySwitchBeggarSramBank(WaterDeviceProtocol protocol, int bank, int timeoutMs = 3000)
+    private static bool TrySwitchBeggarSramBank(WaterDeviceProtocol protocol, int bank, int timeoutMs = Timeout.Infinite)
     {
         if (!protocol.TryWriteRom(0x800000, BitConverter.GetBytes((ushort)(bank == 0 ? 0 : 1)), timeoutMs))
         {
@@ -2568,14 +2527,14 @@ public partial class Form1
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
         if (missingMenuActionMode == MissingMenuActionMode.None && !CanRepairMenuCurrentScan(out string reason))
         {
-            AppendLog(reason);
+            ShowMenuActionFailure(reason);
             return;
         }
 
         string? portName = GetSelectedPortName();
         if (string.IsNullOrWhiteSpace(portName))
         {
-            AppendLog(T("log", "select_port_first", "Please select a serial port first."));
+            ShowMenuActionFailure(T("log", "select_port_first", "Please select a serial port first."));
             return;
         }
 
@@ -2603,7 +2562,7 @@ public partial class Form1
             }
             catch (Exception ex)
             {
-                AppendLog(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
+                ShowMenuActionFailure(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
                 return;
             }
 
@@ -2643,23 +2602,8 @@ public partial class Form1
                 await Task.Run(() => RepairLegacyMenuOnDevice(portName, programmerKind, scanSnapshot, repairPlan));
                 AppendLog(T("log", "repair_legacy_save_slots_done", "Legacy menu save slots were assigned successfully."));
 
-                try
-                {
-                    ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                    if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                    {
-                        AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", failureMessage));
-                        SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                        return;
-                    }
-
-                    SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
-                }
-                catch (Exception ex)
-                {
-                    AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", ex.Message));
-                    SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                }
+                ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scanSnapshot, repairPlan.RepairedMenuConfig));
+                SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
             }
             catch (Exception ex)
             {
@@ -2687,7 +2631,7 @@ public partial class Form1
             }
             catch (Exception ex)
             {
-                AppendLog(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
+                ShowMenuActionFailure(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
                 return;
             }
 
@@ -2753,23 +2697,10 @@ public partial class Form1
                 await Task.Run(() => InstallLegacyMenuOnDevice(portName, programmerKind, scanSnapshot, installPlan, menuRomPath));
                 AppendLog(T("log", "repair_menu_done_legacy", "Legacy menu head area, itemlist, and status were written successfully."));
 
-                try
-                {
-                    ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                    if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                    {
-                        AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", failureMessage));
-                        SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                        return;
-                    }
-
-                    SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
-                }
-                catch (Exception ex)
-                {
-                    AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", ex.Message));
-                    SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                }
+                ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(
+                    scanSnapshot, installPlan.InstalledMenuConfig, installPlan.HeadAreaImage,
+                    preserveWlMapping: installPlan.InstalledMenuConfig.Status.BatteryPresent));
+                SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
             }
             catch (Exception ex)
             {
@@ -2792,7 +2723,7 @@ public partial class Form1
         }
         catch (Exception ex)
         {
-            AppendLog(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
+            ShowMenuActionFailure(Tf("log", "repair_menu_prepare_failed", "Unable to prepare menu repair/install: {0}", ex.Message));
             return;
         }
 
@@ -2845,23 +2776,8 @@ public partial class Form1
             await Task.Run(() => InstallMagicMenuOnDevice(portName, programmerKind, scanSnapshot, wlInstallPlan, wlMenuRomPath));
             AppendLog(T("log", "repair_menu_done_wl", "WL menu head area, itemlist, status, and WL mapping were written successfully."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scanSnapshot, wlInstallPlan.InstalledMenuConfig, wlInstallPlan.HeadAreaImage));
+            SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
         }
         catch (Exception ex)
         {
@@ -2944,23 +2860,8 @@ public partial class Form1
             await Task.Run(() => RepairLegacyMenuOnDevice(portName, programmerKind, scanSnapshot, repairPlan));
             AppendLog(T("log", "repair_legacy_menu_done", "Legacy menu itemlist/status were written successfully."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "repair_legacy_menu_rescan_failed", "Legacy menu repair finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "repair_legacy_menu_rescan_failed", "Repair complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "repair_legacy_menu_done", "Repair complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "repair_legacy_menu_rescan_failed", "Legacy menu repair finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "repair_legacy_menu_rescan_failed", "Repair complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scanSnapshot, repairPlan.RepairedMenuConfig));
+            SetBusy(false, T("status", "repair_legacy_menu_done", "Repair complete"));
         }
         catch (Exception ex)
         {
@@ -3036,23 +2937,8 @@ public partial class Form1
                 ? T("log", "erase_config_done_gbc", "MBCX head 1 MiB erase completed successfully.")
                 : T("log", "erase_config_done", "Head 4 MiB erase completed successfully."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "erase_config_rescan_failed", "Erase finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "erase_config_rescan_failed", "Erase complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "erase_config_done", "Head area erased"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "erase_config_rescan_failed", "Erase finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "erase_config_rescan_failed", "Erase complete, rescan failed"));
-            }
+            ApplyScanAfterNorErase(scanSnapshot, entireNor: false);
+            SetBusy(false, T("status", "erase_config_done", "Head area erased"));
         }
         catch (Exception ex)
         {
@@ -3208,7 +3094,7 @@ public partial class Form1
                 EraseEntireNorOnDevice(portName, programmerKind, scanSnapshot, targetMask);
             });
 
-            AppendLog(T("log", "erase_entire_nor_done", "Entire NOR erase and verification completed successfully."));
+            AppendLog(T("log", "erase_entire_nor_done", "Entire NOR erase completed successfully."));
 
             if (IsFcWorkspaceActive)
             {
@@ -3218,23 +3104,13 @@ public partial class Form1
                 return;
             }
 
-            try
+            if (!useGbcErase && programmerKind != ProgrammerKind.BeggarLegacy && !SkipPpbUnlockForPowerMeasurement)
             {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "erase_entire_nor_rescan_failed", "Full erase finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "erase_entire_nor_rescan_failed", "Full erase complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "erase_entire_nor_done", "Entire NOR erased"));
+                scanSnapshot.IsWriteProtected = false;
+                scanSnapshot.WriteProtectionReason = string.Empty;
             }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "erase_entire_nor_rescan_failed", "Full erase finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "erase_entire_nor_rescan_failed", "Full erase complete, rescan failed"));
-            }
+            ApplyScanAfterNorErase(scanSnapshot, entireNor: true);
+            SetBusy(false, T("status", "erase_entire_nor_done", "Entire NOR erased"));
         }
         catch (Exception ex)
         {
@@ -3324,29 +3200,33 @@ public partial class Form1
             });
             AppendLog(T("log", "unlock_ppb_done", "The cartridge passed PPB unlock verification."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "unlock_ppb_rescan_failed", "PPB unlock finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "unlock_ppb_rescan_failed", "PPB unlocked, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "unlock_ppb_done", "PPB unlocked"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "unlock_ppb_rescan_failed", "PPB unlock finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "unlock_ppb_rescan_failed", "PPB unlocked, rescan failed"));
-            }
+            scanSnapshot.IsWriteProtected = false;
+            scanSnapshot.WriteProtectionReason = string.Empty;
+            ApplyScanResult(scanSnapshot);
+            SetBusy(false, T("status", "unlock_ppb_done", "PPB unlocked"));
         }
         catch (Exception ex)
         {
             AppendLog(Tf("log", "unlock_ppb_failed", "PPB unlock failed: {0}", ex.Message));
             SetBusy(false, T("status", "unlock_ppb_failed", "PPB unlock failed"));
         }
+    }
+
+    private void ShowMenuActionFailure(string message)
+    {
+        labelStatus.Text = message;
+        AppendLog(message);
+    }
+
+    private string EmptyMenuDirectoryConfirmation(WaterCartEntry? headGame = null)
+    {
+        string message = ShellText(
+            "现有目录和映射无法恢复游戏列表。继续将重建空目录，旧游戏不会出现在新菜单中。",
+            "The current directory and mapping cannot restore the game list. Continue to rebuild an empty menu? Existing games will be absent from the new menu.");
+        if (headGame is not null)
+            message += "\n\n" + ShellText($"新菜单会覆盖头部游戏《{headGame.Title}》。",
+                $"The new menu will overwrite the game in the head area: {headGame.Title}.");
+        return message;
     }
 
     private async Task UpdateMenuAsync()
@@ -3356,7 +3236,26 @@ public partial class Form1
             if(fcWorkspace!.Snapshot is null)await fcWorkspace.ScanAsync();
             await fcWorkspace.RebuildCardConfigurationAsync();return;
         }
-        if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
+        if (currentScanResult?.IsChm1 == true)
+        {
+            await InstallChm1MenuAsync(allowEmptyDirectory: true);
+            return;
+        }
+        if (currentScanResult is { IsBeggarMaxGbcMode: false, MenuConfig.IsDetected: false } scan)
+        {
+            if (UsesSelectedMagicTargetMode() && (scan.WlMapping.IsDetected ||
+                scan.WlMapping.LegacyVersionDetected || scan.WlMapping.Header.Magic == WaterWlMappingCodec.Magic ||
+                !scan.Games.Any(game => !game.IsMenu && game.StartBucket > 0)))
+            {
+                await UpdateWaterLinkMenuAsync(rebuildEmptyDirectory: true);
+                return;
+            }
+            if (CanInstallLegacyCurrentScan(out _))
+            {
+                await RepairMissingMenuAsync();
+                return;
+            }
+        }
         MenuUpdateActionMode actionMode = GetMenuUpdateActionMode();
         if (actionMode == MenuUpdateActionMode.None)
         {
@@ -3365,13 +3264,13 @@ public partial class Form1
                 : UsesSelectedWaterLinkTargetMode()
                     ? CanUpdateWaterLinkMenuCurrentScan(out string wlReason) ? string.Empty : wlReason
                     : CanUpdateLegacyMenuCurrentScan(out string legacyReason) ? string.Empty : legacyReason;
-            AppendLog(reason);
+            ShowMenuActionFailure(reason);
             return;
         }
 
         if (actionMode == MenuUpdateActionMode.UpdateBeggarMaxMenu)
         {
-            await UpdateBeggarMaxMenuAsync();
+            await UpdateBeggarMaxMenuAsync(rebuildFromCard: true);
             return;
         }
 
@@ -3390,7 +3289,7 @@ public partial class Form1
         MenuUpdateActionMode actionMode = GetMenuUpdateActionMode();
         if (actionMode is not (MenuUpdateActionMode.UpdateWaterLinkMenu or MenuUpdateActionMode.UpdateLegacyMenu))
         {
-            AppendLog(T("error", "replace_menu_file_not_available", "Replacing the menu from a file is not available for the current cart mode."));
+            ShowMenuActionFailure(T("error", "replace_menu_file_not_available", "Replacing the menu from a file is not available for the current cart mode."));
             return;
         }
 
@@ -3416,7 +3315,7 @@ public partial class Form1
         }
         catch (Exception ex)
         {
-            AppendLog(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
+            ShowMenuActionFailure(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
             return;
         }
 
@@ -3429,11 +3328,21 @@ public partial class Form1
         await UpdateLegacyMenuAsync(dialog.FileName);
     }
 
-    private async Task UpdateBeggarMaxMenuAsync()
+    private string MaxSaveMigrationNotice(IReadOnlyList<WorkspaceListRow> rows)
+    {
+        string notice = ShellText("\n\n重建目录时，需搬移的存档会先备份到电脑，再写回连续 SRAM。",
+            "\n\nSaves that need relocation will be backed up to the computer before being moved.");
+        if (rows.Any(row => (row.PendingItem?.GameBoyEffectiveRamBankCount ?? row.CartEntry?.RamBankCount) > 8))
+            notice += ShellText("\n本次包含 128 KiB 存档。请确认此卡已刷入支持 16 个 bank 的 MAX CPLD 固件。",
+                "\nThis layout needs 128 KiB saves. Confirm this cartridge has the 16-bank MAX CPLD firmware.");
+        return notice;
+    }
+
+    private async Task UpdateBeggarMaxMenuAsync(bool rebuildFromCard = false)
     {
         if (!CanUpdateBeggarMaxMenuCurrentScan(out string reason))
         {
-            AppendLog(reason);
+            ShowMenuActionFailure(reason);
             return;
         }
 
@@ -3445,8 +3354,33 @@ public partial class Form1
         }
 
         WaterCartScanResult scanSnapshot = currentScanResult!;
-        IReadOnlyList<WorkspaceListRow> workspaceSnapshot = CreateWorkspaceCartSnapshot(CreateWorkspaceSnapshot());
+        IReadOnlyList<WorkspaceListRow> workspaceSnapshot = rebuildFromCard
+            ? scanSnapshot.Entries
+                .Where(entry => !entry.IsMenu && entry.RomOffsetBank >= 0 && entry.RomBankCount > 0)
+                .Select(entry => new WorkspaceListRow
+                {
+                    CartEntry = entry,
+                    GbcDedicatedSaveAllocationOverride = entry.HasBattery && entry.RamBankCount > 0
+                        ? !entry.UsesSharedSave : null,
+                })
+                .ToArray()
+            : CreateWorkspaceCartSnapshot(CreateWorkspaceSnapshot());
         int detectedEntryCount = workspaceSnapshot.Count;
+        BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
+        GbcMenuLanguageMode gbcMenuLanguageSnapshot = GetSelectedGbcMenuLanguageMode();
+        string recoveryError = string.Empty;
+        if (rebuildFromCard && detectedEntryCount > 0)
+        {
+            try
+            {
+                ValidateBeggarMaxWorkspaceSnapshot(workspaceSnapshot, burnProfileMode, gbcMenuLanguageSnapshot);
+            }
+            catch (InvalidOperationException ex)
+            {
+                recoveryError = ex.Message;
+            }
+        }
+        bool rebuildEmptyDirectory = rebuildFromCard && (detectedEntryCount == 0 || recoveryError.Length > 0);
         bool hasQueuedChanges = pendingImportItems.Count > 0;
         string queuedHint = hasQueuedChanges
             ? T(
@@ -3460,8 +3394,13 @@ public partial class Form1
                 "beggar_max_update_menu_english_language_hint",
                 "\n\nThe English MAX/MBCX menu will be used. No external font rendering is needed for this update.")
             : string.Empty;
-        string updateHint = queuedHint + languageHint;
-        string message = scanSnapshot.HasBeggarMaxDirectoryHeaders
+        string updateHint = queuedHint + languageHint + MaxSaveMigrationNotice(workspaceSnapshot);
+        string message = rebuildEmptyDirectory
+            ? EmptyMenuDirectoryConfirmation() + ShellText(
+                "\n\n将重写头部 1 MiB 的菜单和配置区。后面的游戏 ROM 与存档芯片保留。",
+                "\n\nThe first 1 MiB will be rewritten. Game ROM data beyond that range and the save chip are preserved.")
+                + (recoveryError.Length > 0 ? "\n\n" + recoveryError : string.Empty) + updateHint
+            : scanSnapshot.HasBeggarMaxDirectoryHeaders
             ? Tf(
                 "dialog",
                 "beggar_max_update_menu_clear_config_prompt",
@@ -3479,17 +3418,17 @@ public partial class Form1
             this,
             message,
             T("dialog", "update_menu_confirm_title", "更新菜单"),
-            MessageBoxButtons.YesNoCancel,
+            rebuildEmptyDirectory ? MessageBoxButtons.YesNo : MessageBoxButtons.YesNoCancel,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2);
 
-        if (confirm == DialogResult.Cancel)
+        if (rebuildEmptyDirectory ? confirm != DialogResult.Yes : confirm == DialogResult.Cancel)
         {
             return;
         }
 
         bool clearConfigArea = confirm == DialogResult.Yes;
-        if (!clearConfigArea && !TryValidateWorkspaceCapacity(workspaceSnapshot, out string capacityErrorMessage))
+        if (!rebuildFromCard && !clearConfigArea && !TryValidateWorkspaceCapacity(workspaceSnapshot, out string capacityErrorMessage))
         {
             AppendLog(Tf(
                 "log",
@@ -3510,8 +3449,6 @@ public partial class Form1
 
         try
         {
-            BurnProfileMode burnProfileMode = GetSelectedBurnProfileMode();
-            GbcMenuLanguageMode gbcMenuLanguageSnapshot = GetSelectedGbcMenuLanguageMode();
             string? gbcFontPathSnapshot = ResolveSelectedGbcFontPath();
             string? gbcBackgroundPathSnapshot = ResolveSelectedGbcBackgroundPath();
             WaterCartScanResult refreshed = await Task.Run(() => clearConfigArea || detectedEntryCount == 0
@@ -3615,25 +3552,11 @@ public partial class Form1
             await Task.Run(() => UpdateMenuBackgroundOnDevice(portName, programmerKind, scanSnapshot, encodedBackground.bitmapData, encodedBackground.paletteData));
             AppendLog(Tf("log", "update_menu_background_done", "Menu background updated successfully: {0}", dialog.FileName));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "update_menu_background_rescan_failed", "Background update finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "update_menu_background_rescan_failed", "Menu background updated, rescan failed"));
-                    return false;
-                }
-
-                SetBusy(false, T("status", "update_menu_background_done", "Menu background updated"));
-                return true;
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "update_menu_background_rescan_failed", "Background update finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "update_menu_background_rescan_failed", "Menu background updated, rescan failed"));
-                return false;
-            }
+            scanSnapshot.MenuBackgroundBitmapData = encodedBackground.bitmapData;
+            scanSnapshot.MenuBackgroundPaletteData = encodedBackground.paletteData;
+            UpdateMenuBackgroundPreview(scanSnapshot);
+            SetBusy(false, T("status", "update_menu_background_done", "Menu background updated"));
+            return true;
         }
         catch (Exception ex)
         {
@@ -3673,12 +3596,12 @@ public partial class Form1
         }
     }
 
-    private async Task UpdateWaterLinkMenuAsync(string? customMenuRomPath = null)
+    private async Task UpdateWaterLinkMenuAsync(string? customMenuRomPath = null, bool rebuildEmptyDirectory = false)
     {
         EnsureGbaMulticartSupported();
         if (!CanUpdateWaterLinkMenuCurrentScan(out string reason))
         {
-            AppendLog(reason);
+            ShowMenuActionFailure(reason);
             return;
         }
 
@@ -3703,7 +3626,11 @@ public partial class Form1
                 "Clear the config area?\n\nThe first 4 MiB currently contains:\n{0}\n\nYes: clear current itemlist/WL mapping, fully erase and rewrite the head 4 MiB, then flash a fresh empty WL Magic menu.\nNo: inherit the current config area, preserve the current NS menu covers, update the menu with its bundled background, and rewrite the inherited itemlist/status/WL mapping.\nCancel: do nothing.\n\nWriting the menu will overwrite the head-area game above.",
                 headAreaGame.Title) + customMenuHint;
 
-        DialogResult clearConfigConfirm = MessageBox.Show(
+        DialogResult clearConfigConfirm = rebuildEmptyDirectory
+            ? MessageBox.Show(this, EmptyMenuDirectoryConfirmation(headAreaGame),
+                T("dialog", "force_rebuild_menu_confirm_title", "Rebuild Menu"),
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+            : MessageBox.Show(
             this,
             clearConfigMessage,
             T("dialog", "force_rebuild_menu_confirm_title", "Rebuild Menu"),
@@ -3711,7 +3638,7 @@ public partial class Form1
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2);
 
-        if (clearConfigConfirm == DialogResult.Cancel)
+        if (rebuildEmptyDirectory ? clearConfigConfirm != DialogResult.Yes : clearConfigConfirm == DialogResult.Cancel)
         {
             return;
         }
@@ -3725,7 +3652,7 @@ public partial class Form1
         }
         catch (Exception ex)
         {
-            AppendLog(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
+            ShowMenuActionFailure(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
             return;
         }
 
@@ -3755,7 +3682,7 @@ public partial class Form1
         try
         {
             ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
-            await Task.Run(() => UpdateWaterLinkMenuOnDevice(
+            byte[] headImage = await Task.Run(() => UpdateWaterLinkMenuOnDevice(
                 portName,
                 programmerKind,
                 scanSnapshot,
@@ -3763,7 +3690,7 @@ public partial class Form1
                 T("ui", "force_rebuild_menu", "重建菜单"),
                 preserveCurrentBackground: false,
                 preserveCurrentCovers: !clearConfigArea,
-                rewriteFullHeadArea: clearConfigArea));
+                rewriteFullHeadArea: clearConfigArea && !rebuildEmptyDirectory));
             AppendLog(T(
                 "log",
                 clearConfigArea ? "force_rebuild_menu_done_wl_clear" : "force_rebuild_menu_done_wl_inherit",
@@ -3771,23 +3698,8 @@ public partial class Form1
                     ? "The WL Magic menu was rebuilt after clearing the config area."
                     : "The WL Magic menu was rebuilt while inheriting the current config area."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "update_menu_rescan_failed", "Menu update finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "update_menu_rescan_failed", "Menu update complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "update_menu_done", "Menu update complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "update_menu_rescan_failed", "Menu update finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "update_menu_rescan_failed", "Menu update complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scanSnapshot, updatePlan.MenuConfig, headImage));
+            SetBusy(false, T("status", "update_menu_done", "Menu update complete"));
         }
         catch (Exception ex)
         {
@@ -3868,7 +3780,7 @@ public partial class Form1
         try
         {
             ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
-            await Task.Run(() => UpdateWaterLinkMenuOnDevice(
+            byte[] headImage = await Task.Run(() => UpdateWaterLinkMenuOnDevice(
                 portName,
                 programmerKind,
                 scanSnapshot,
@@ -3878,23 +3790,8 @@ public partial class Form1
                 preserveCurrentCovers: true));
             AppendLog(T("log", "repair_menu_done_wl_from_legacy", "WL menu, itemlist, status, and WL mapping were rebuilt from the current legacy menu config."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "repair_menu_rescan_failed", "Repair finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "repair_menu_rescan_failed", "Repair complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scanSnapshot, updatePlan.MenuConfig, headImage));
+            SetBusy(false, T("status", "repair_menu_done", "Repair complete"));
         }
         catch (Exception ex)
         {
@@ -3909,7 +3806,7 @@ public partial class Form1
         EnsureGbaMulticartSupported();
         if (!CanUpdateLegacyMenuCurrentScan(out string reason))
         {
-            AppendLog(reason);
+            ShowMenuActionFailure(reason);
             return;
         }
 
@@ -3929,7 +3826,7 @@ public partial class Form1
         }
         catch (Exception ex)
         {
-            AppendLog(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
+            ShowMenuActionFailure(Tf("log", "update_menu_prepare_failed", "Unable to prepare menu update: {0}", ex.Message));
             return;
         }
 
@@ -3975,26 +3872,12 @@ public partial class Form1
         try
         {
             ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
-            await Task.Run(() => UpdateLegacyMenuOnDevice(portName, programmerKind, scanSnapshot, updatePlan));
+            byte[] headImage = await Task.Run(() => UpdateLegacyMenuOnDevice(portName, programmerKind, scanSnapshot, updatePlan));
             AppendLog(T("log", "update_menu_done_gba", "The selected GBA menu, itemlist, and status were written successfully."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "update_menu_rescan_failed", "Menu update finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "update_menu_rescan_failed", "Menu update complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "update_menu_done", "Menu update complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "update_menu_rescan_failed", "Menu update finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "update_menu_rescan_failed", "Menu update complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(
+                scanSnapshot, updatePlan.MenuConfig, headImage, preserveWlMapping: updatePlan.MenuConfig.Status.BatteryPresent));
+            SetBusy(false, T("status", "update_menu_done", "Menu update complete"));
         }
         catch (Exception ex)
         {
@@ -4414,26 +4297,12 @@ public partial class Form1
         try
         {
             ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
-            await Task.Run(() => RepairMagicMetadataOnDevice(portName, programmerKind, scanSnapshot));
+            await Task.Run(() => RepairMagicMetadataOnDevice(portName, programmerKind, scanSnapshot, repairPlan));
             AppendLog(T("log", "repair_magic_done", "Magic itemlist and WL mapping sector were repaired successfully."));
 
-            try
-            {
-                ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-                if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-                {
-                    AppendLog(Tf("log", "repair_magic_rescan_failed", "Repair finished, but rescan failed: {0}", failureMessage));
-                    SetBusy(false, T("status", "repair_magic_rescan_failed", "Repair complete, rescan failed"));
-                    return;
-                }
-
-                SetBusy(false, T("status", "repair_magic_done", "Repair complete"));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(Tf("log", "repair_magic_rescan_failed", "Repair finished, but rescan failed: {0}", ex.Message));
-                SetBusy(false, T("status", "repair_magic_rescan_failed", "Repair complete, rescan failed"));
-            }
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(
+                scanSnapshot, repairPlan.RepairedMenuConfig, mappingSector: repairPlan.MappingSector));
+            SetBusy(false, T("status", "repair_magic_done", "Repair complete"));
         }
         catch (Exception ex)
         {
@@ -4509,7 +4378,7 @@ public partial class Form1
         CompleteMeasuredProgress(T("ui", "upgrade_magic", "Upgrade Magic"));
     }
 
-    private void UpdateWaterLinkMenuOnDevice(
+    private byte[] UpdateWaterLinkMenuOnDevice(
         string portName,
         ProgrammerKind programmerKind,
         WaterCartScanResult scanResult,
@@ -4567,13 +4436,15 @@ public partial class Form1
 
         RewriteNorSectorBatch(protocol, sectorBatch, scanResult.Geometry, programmerKind);
         CompleteMeasuredProgress(progressTitle);
+        return headAreaImage;
     }
 
     private void PreserveCurrentGbaMenuCovers(
         WaterDeviceProtocol protocol,
         ProgrammerKind programmerKind,
         WaterCartScanResult scanResult,
-        byte[] targetHeadAreaImage)
+        byte[] targetHeadAreaImage,
+        byte[]? originalHead = null)
     {
         if (!scanResult.IsUniversalGbaMenuDetected ||
             !scanResult.GbaMenuFirstScreenPreview.IsDetected ||
@@ -4591,7 +4462,8 @@ public partial class Form1
                 "The current NS menu area length is invalid. The menu update was canceled to avoid losing covers."));
         }
 
-        byte[] currentMenuArea = ReadRomRangeFromDevice(protocol, programmerKind, 0, menuAreaLength);
+        byte[] currentMenuArea = originalHead?.AsSpan(0, menuAreaLength).ToArray()
+            ?? ReadRomRangeFromDevice(protocol, programmerKind, 0, menuAreaLength);
         if (!GbaMenuFirstScreenPreviewCodec.TryCopyCoverPack(
                 currentMenuArea,
                 targetHeadAreaImage,
@@ -4614,7 +4486,8 @@ public partial class Form1
 
     private List<WaterNorWriteSegment> BuildWaterLinkInheritedMenuWriteSegments(
         byte[] headAreaImage,
-        WaterMenuConfigInfo menuConfig)
+        WaterMenuConfigInfo menuConfig,
+        bool includeWlMapping = true)
     {
         int sectorSize = menuConfig.Status.SectorSize > 0
             ? menuConfig.Status.SectorSize
@@ -4628,7 +4501,7 @@ public partial class Form1
             statusAddress <= 0 ||
             statusAddress % sectorSize != 0 ||
             statusAddress + sectorSize > headAreaImage.Length ||
-            WaterWlMappingCodec.Offset + sectorSize > headAreaImage.Length)
+            (includeWlMapping && WaterWlMappingCodec.Offset + sectorSize > headAreaImage.Length))
         {
             throw new InvalidOperationException(T(
                 "error",
@@ -4636,7 +4509,7 @@ public partial class Form1
                 "Magic metadata target range is invalid."));
         }
 
-        return
+        List<WaterNorWriteSegment> segments =
         [
             new WaterNorWriteSegment
             {
@@ -4656,16 +4529,20 @@ public partial class Form1
                 Data = headAreaImage.AsSpan(statusAddress, sectorSize).ToArray(),
                 Label = T("value", "status_label", "status"),
             },
-            new WaterNorWriteSegment
+        ];
+        if (includeWlMapping)
+        {
+            segments.Add(new WaterNorWriteSegment
             {
                 StartAddress = (uint)WaterWlMappingCodec.Offset,
                 Data = headAreaImage.AsSpan(WaterWlMappingCodec.Offset, sectorSize).ToArray(),
                 Label = T("value", "wl_mapping_label", "WL mapping"),
-            },
-        ];
+            });
+        }
+        return segments;
     }
 
-    private void UpdateLegacyMenuOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult, LegacyMenuUpdatePlan updatePlan)
+    private byte[] UpdateLegacyMenuOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult, LegacyMenuUpdatePlan updatePlan)
     {
         using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, programmerKind);
@@ -4688,6 +4565,7 @@ public partial class Form1
         AppendLog(Tf("log", "use_gba_menu_rom", "Use GBA menu ROM: {0}", updatePlan.MenuRomPath));
         RewriteMenuHeadArea(protocol, programmerKind, scanResult.Geometry, headAreaImage, updatePlan.MenuConfig.Status, false, legacyHeadAreaLabel);
         CompleteMeasuredProgress(T("ui", "update_menu", "更新菜单"));
+        return headAreaImage;
     }
 
     private void UpdateMenuBackgroundOnDevice(
@@ -4782,20 +4660,19 @@ public partial class Form1
         SetBusy(true, T("status", "update_menu_covers_busy", "Saving menu covers..."));
         try
         {
-            await Task.Run(() => UpdateGbaMenuCoversOnDevice(
+            byte[] menuArea = await Task.Run(() => UpdateGbaMenuCoversOnDevice(
                 portName,
                 programmerKind,
                 scanResult,
                 items,
                 build.PackData));
 
-            ScanReadAttempt refreshed = await ReadScanResultAsync(portName);
-            if (!TryApplyScanReadAttempt(refreshed, out string failureMessage))
-            {
-                AppendLog(Tf("log", "update_menu_covers_rescan_failed", "Covers saved, but rescan failed: {0}", failureMessage));
-                SetBusy(false, T("status", "update_menu_covers_rescan_failed", "Covers saved, rescan failed"));
-                return true;
-            }
+            var preview = GbaMenuFirstScreenPreviewCodec.Decode(menuArea, items);
+            scanResult.MenuConfig.Items = items.Select(WaterMenuConfigCodec.Clone).ToList();
+            foreach (var entry in scanResult.Entries.Where(entry => entry.MenuItem is not null))
+                entry.MenuItem = scanResult.MenuConfig.Items.FirstOrDefault(item => item.Index == entry.MenuItem!.Index);
+            scanResult.GbaMenuFirstScreenPreview = preview;
+            ApplyScanResult(scanResult);
 
             AppendLog(T("log", "update_menu_covers_done", "Menu covers saved successfully."));
             SetBusy(false, T("status", "update_menu_covers_done", "Menu covers saved"));
@@ -4810,7 +4687,7 @@ public partial class Form1
         }
     }
 
-    private void UpdateGbaMenuCoversOnDevice(
+    private byte[] UpdateGbaMenuCoversOnDevice(
         string portName,
         ProgrammerKind programmerKind,
         WaterCartScanResult scanResult,
@@ -4892,6 +4769,7 @@ public partial class Form1
             sectors.Sum(sector => CountRewriteSectorProgressUnits(sector.Data)));
         RewriteNorSectorBatch(protocol, sectors, scanResult.Geometry, programmerKind);
         CompleteMeasuredProgress(T("ui", "save_cover_changes", "Save Covers"));
+        return currentMenuArea;
     }
 
     private int ResolveCoverPackOffset(
@@ -4950,7 +4828,8 @@ public partial class Form1
         ProgrammerKind programmerKind,
         WaterCartScanResult scanResult,
         byte[] targetHeadAreaImage,
-        bool targetUsesWlLayout)
+        bool targetUsesWlLayout,
+        byte[]? originalHead = null)
     {
         int currentMenuAreaLength = scanResult.MenuConfig.Status.ItemListAddress;
         if (currentMenuAreaLength <= 0 || currentMenuAreaLength > WaterCartScanner.BucketSizeBytes)
@@ -4961,7 +4840,8 @@ public partial class Form1
                 "当前菜单区长度无效，无法在“更新菜单”时保留现有背景图。"));
         }
 
-        byte[] currentMenuArea = ReadRomRangeFromDevice(protocol, programmerKind, 0, currentMenuAreaLength);
+        byte[] currentMenuArea = originalHead?.AsSpan(0, currentMenuAreaLength).ToArray()
+            ?? ReadRomRangeFromDevice(protocol, programmerKind, 0, currentMenuAreaLength);
         if (!TryResolveMenuBackgroundRegion(currentMenuArea, UsesWlMode(scanResult), out int sourceBackgroundOffset))
         {
             throw new InvalidOperationException(T(
@@ -5048,14 +4928,9 @@ public partial class Form1
         CompleteMeasuredProgress(T("ui", "repair_menu", "Repair Menu"));
     }
 
-    private void RepairMagicMetadataOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult)
+    private void RepairMagicMetadataOnDevice(
+        string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult, WaterMagicRepairPlan repairPlan)
     {
-        if (!WaterMagicUpgradeBuilder.CanRepairMagicMetadata(scanResult, out string reason))
-        {
-            throw new InvalidOperationException(reason);
-        }
-
-        WaterMagicRepairPlan repairPlan = WaterMagicUpgradeBuilder.BuildRepairPlan(scanResult);
         long totalBytes = CountRewriteSectorProgressWorkBytes(repairPlan.ItemListSector, scanResult.Geometry)
             + CountRewriteSectorProgressWorkBytes(repairPlan.StatusSector, scanResult.Geometry)
             + CountRewriteSectorProgressWorkBytes(repairPlan.MappingSector, scanResult.Geometry);
@@ -5138,6 +5013,38 @@ public partial class Form1
         CompleteMeasuredProgress(T("ui", "repair_legacy_menu", "Repair Legacy Menu"));
     }
 
+    private void ApplyScanAfterNorErase(WaterCartScanResult scan, bool entireNor)
+    {
+        if (scan.IsBeggarMaxGbcMode && IsMbc5FixedSlotMode())
+        {
+            ActiveMbc5Layout = IsMbc5MaxMode() ? new Mbc5MaxThirtyTwoMiBLayout() : new Mbc5EightMiBLayout();
+            ActiveMbc5LayoutChanged = false;
+        }
+        ApplyScanResult(BuildScanAfterNorErase(scan, entireNor));
+    }
+
+    private static WaterCartScanResult BuildScanAfterNorErase(WaterCartScanResult scan, bool entireNor)
+    {
+        var result = WaterCartScanner.RebuildCachedScanResult(scan,
+            wlMappingOverride: new(), menuConfigOverride: new(),
+            gamesOverride: entireNor || scan.IsBeggarMaxGbcMode ? [] : scan.Games.Where(game => game.StartBucket > 0).ToList());
+        WaterCartScanner.ClearCachedSavePresence(result);
+        result.IsNorProbeOnly = false;
+        result.IsUniversalGbaMenuDetected = false;
+        result.IsSimplifiedNsGbaMenuDetected = false;
+        result.GbaMenuFirstScreenPreview = new();
+        result.MenuBackgroundBitmapData = [];
+        result.MenuBackgroundPaletteData = [];
+        if (scan.IsBeggarMaxGbcMode)
+        {
+            result.Entries.Clear();
+            result.HasBeggarMaxDirectoryHeaders = false;
+            result.IsFcMbcxContent = false;
+            result.IsMdMbcxContent = false;
+        }
+        return result;
+    }
+
     private void EraseHeadAreaOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult)
     {
         int sectorSize = scanResult.Geometry.SectorSizeBytes > 0
@@ -5166,7 +5073,7 @@ public partial class Form1
             T("ui", "erase_config", "Erase Config"),
             (long)sectorSize * sectorCount,
             sectorCount);
-        ProgramNorSegment(protocol, programmerKind, scanResult.Geometry, segment, 1, 1);
+        ProgramNorSegments(protocol, programmerKind, scanResult.Geometry, [segment]);
         CompleteMeasuredProgress(T("ui", "erase_config", "Erase Config"));
     }
 
@@ -5187,6 +5094,7 @@ public partial class Form1
             T("ui", "erase_entire_nor", "Erase Entire NOR"),
             deviceSizeBytes,
             targetCount);
+        BeginMeasuredProgressPhase(targetCount, true, T("status", "erase_entire_nor_busy", "Erasing entire NOR…"));
 
         try
         {
@@ -5218,7 +5126,8 @@ public partial class Form1
                     targetStartBytes,
                     targetStartBytes + targetLengthBytes - 1));
 
-                if (!TryEraseWaterLinkChipTarget(protocol, targetIndex, 20 * 60 * 1000))
+                long eraseStart = StartLandscapeErase();
+                if (!TryEraseWaterLinkChipTarget(protocol, targetIndex, Timeout.Infinite))
                 {
                     throw new IOException(Tf(
                         "error",
@@ -5227,6 +5136,7 @@ public partial class Form1
                         targetIndex,
                         protocol.DescribeLastAckFailure()));
                 }
+                FinishLandscapeErase(eraseStart, targetLengthBytes);
                 AdvanceMeasuredProgress(
                     targetLengthBytes,
                     1,
@@ -5247,7 +5157,7 @@ public partial class Form1
                 if ((targetMask & (1 << targetIndex)) != 0)
                 {
                     uint targetWordBase = (uint)targetIndex * (LogicalTargetSizeBytes / 2u);
-                    TryWriteWaterLinkCommandWord(protocol, targetWordBase, 0xF0, 3000);
+                    TryWriteWaterLinkCommandWord(protocol, targetWordBase, 0xF0, Timeout.Infinite);
                 }
             }
         }
@@ -5265,12 +5175,15 @@ public partial class Form1
     // ---------------------------------------------------------------------
     private const int ErasePollDelayMs = 200;
     private const int ErasePollFirstProbeDelayMs = 30;
-    private const int ErasePollReadTimeoutMs = 3000;
+    private const int ErasePollReadTimeoutMs = Timeout.Infinite;
 
     /// <summary>
-    /// 0xAD 擦除序列命令的能力探测超时。
-    /// 不支持该命令的旧固件会静默丢弃、不回 ACK，所以这里必须用一个
-    /// 明显短于擦除超时的值，否则每次擦除都要先干等一轮才回退。
+    /// 0xAD 擦除序列命令的「能力探测」超时，是全链路唯一保留的等待时限。
+    /// 旧固件不认识 0xAD 时会在 default 分支静默丢弃、不回任何 ACK，
+    /// 必须靠这次超时判定「固件不支持」并回退到逐字下发；改成无限等会让
+    /// 旧固件的擦除永久卡死。盖中盖没有这条命令，因而没有对应的超时。
+    /// 这属于协议能力协商，不是「等设备把活干完」；其余所有设备等待
+    /// 一律为 Timeout.Infinite。
     /// </summary>
     private const int EraseSequenceProbeTimeoutMs = 2000;
 
@@ -5292,7 +5205,7 @@ public partial class Form1
 
         uint targetWordBase = (uint)targetIndex * LogicalTargetWords;
         uint targetByteBase = targetWordBase << 1;
-        int effectiveTimeoutMs = Math.Max(timeoutMs, 5000);
+        int effectiveTimeoutMs = Timeout.Infinite;
 
         try
         {
@@ -5300,7 +5213,7 @@ public partial class Form1
             // 旧实现是 7 条命令各自一次 USB 往返 + 各自一次独立 CS 周期。
             //
             // 注意：不支持该命令的旧固件会在 default 分支静默丢弃，
-            // 不返回任何 ACK —— 所以这里用较短的探测超时，避免卡满整个擦除超时。
+            // 不返回任何 ACK —— 所以这里保留短探测超时，否则旧固件擦除会永久卡死。
             if (!TryWriteWaterLinkEraseSequence(
                     protocol,
                     targetWordBase,
@@ -5317,11 +5230,11 @@ public partial class Form1
             }
 
             Thread.Sleep(100);
-            return WaitForWaterLinkSectorErase(protocol, targetByteBase, effectiveTimeoutMs);
+            return WaitForWaterLinkSectorErase(protocol, targetByteBase);
         }
         finally
         {
-            TryWriteWaterLinkCommandWord(protocol, targetWordBase, 0xF0, 3000);
+            TryWriteWaterLinkCommandWord(protocol, targetWordBase, 0xF0, Timeout.Infinite);
         }
     }
 
@@ -5386,7 +5299,7 @@ public partial class Form1
         try
         {
             if (programmerKind == ProgrammerKind.BeggarLegacy &&
-                !TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000))
+                !TrySwitchLegacyBeggarBucketLocal(protocol, 0, Timeout.Infinite))
             {
                 throw new IOException(Tf(
                     "error",
@@ -5474,7 +5387,7 @@ public partial class Form1
             if (programmerKind == ProgrammerKind.BeggarLegacy)
             {
                 ResetGbaPpbMode(protocol, 0, 0, throwOnFailure: false);
-                TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000);
+                TrySwitchLegacyBeggarBucketLocal(protocol, 0, Timeout.Infinite);
             }
         }
     }
@@ -5611,7 +5524,7 @@ public partial class Form1
             WriteGbaPpbCommandOrThrow(protocol, chipIndex, chipWordBase + 0x555, asoCommand, phase);
 
             byte[] word = new byte[2];
-            if (!protocol.TryReadRom(byteAddress, word, 3000))
+            if (!protocol.TryReadRom(byteAddress, word, Timeout.Infinite))
             {
                 throw new IOException(Tf(
                     "error",
@@ -5644,16 +5557,13 @@ public partial class Form1
         int chipIndex,
         uint chipByteBase)
     {
-        const int eraseTimeoutMs = 60000;
         const ushort Dq5Timeout = 0x0020;
         const ushort Dq6Toggle = 0x0040;
-        Stopwatch stopwatch = Stopwatch.StartNew();
-
         // All PPB Erase 的典型完成时间远小于首次探测间隔，先静默一段时间，
         // 避免在芯片刚进入擦除状态时就开始反复切换 ASO 模式。
         Thread.Sleep(ErasePollDelayMs);
 
-        while (stopwatch.ElapsedMilliseconds < eraseTimeoutMs)
+        while (true)
         {
             ushort first = ReadGbaPpbRawWord(protocol, chipIndex, chipByteBase, "erase status");
             ushort second = ReadGbaPpbRawWord(protocol, chipIndex, chipByteBase, "erase status");
@@ -5680,12 +5590,6 @@ public partial class Form1
             Thread.Sleep(ErasePollDelayMs);
         }
 
-        throw new TimeoutException(Tf(
-            "error",
-            "unlock_ppb_erase_timeout",
-            "NOR target {0} did not finish erasing its PPB array within {1} seconds.",
-            chipIndex,
-            eraseTimeoutMs / 1000));
     }
 
     private void VerifyGbaPpbTarget(
@@ -5720,7 +5624,7 @@ public partial class Form1
         string phase)
     {
         byte[] word = new byte[2];
-        if (!protocol.TryReadRom(byteAddress, word, 3000))
+        if (!protocol.TryReadRom(byteAddress, word, Timeout.Infinite))
         {
             throw new IOException(Tf(
                 "error",
@@ -5741,15 +5645,15 @@ public partial class Form1
         bool throwOnFailure)
     {
         string? failureDetail = null;
-        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0x90, 3000))
+        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0x90, Timeout.Infinite))
         {
             failureDetail = protocol.DescribeLastAckFailure();
         }
-        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0x00, 3000))
+        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0x00, Timeout.Infinite))
         {
             failureDetail ??= protocol.DescribeLastAckFailure();
         }
-        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0xF0, 3000))
+        if (!TryWriteWaterLinkCommandWord(protocol, chipWordBase, 0xF0, Timeout.Infinite))
         {
             failureDetail ??= protocol.DescribeLastAckFailure();
         }
@@ -5773,7 +5677,7 @@ public partial class Form1
         ushort value,
         string phase)
     {
-        if (!TryWriteWaterLinkCommandWord(protocol, wordAddress, value, 5000))
+        if (!TryWriteWaterLinkCommandWord(protocol, wordAddress, value, Timeout.Infinite))
         {
             throw new IOException(Tf(
                 "error",
@@ -5880,7 +5784,7 @@ public partial class Form1
             WriteGbcPpbCommandOrThrow(protocol, 0x0AAA, asoCommand, phase);
 
             byte[] value = new byte[1];
-            if (!protocol.TryReadGbc(readAddress, value, 3000))
+            if (!protocol.TryReadGbc(readAddress, value, Timeout.Infinite))
             {
                 throw new IOException(Tf(
                     "error",
@@ -5901,15 +5805,15 @@ public partial class Form1
     private void ResetGbcPpbMode(WaterDeviceProtocol protocol, bool throwOnFailure)
     {
         string? failureDetail = null;
-        if (!protocol.TryWriteGbc(0x0000, [0x90], 3000))
+        if (!protocol.TryWriteGbc(0x0000, [0x90], Timeout.Infinite))
         {
             failureDetail = protocol.DescribeLastAckFailure();
         }
-        if (!protocol.TryWriteGbc(0x0000, [0x00], 3000))
+        if (!protocol.TryWriteGbc(0x0000, [0x00], Timeout.Infinite))
         {
             failureDetail ??= protocol.DescribeLastAckFailure();
         }
-        if (!protocol.TryWriteGbc(0x0000, [0xF0], 3000))
+        if (!protocol.TryWriteGbc(0x0000, [0xF0], Timeout.Infinite))
         {
             failureDetail ??= protocol.DescribeLastAckFailure();
         }
@@ -5931,7 +5835,7 @@ public partial class Form1
         byte value,
         string phase)
     {
-        if (!protocol.TryWriteGbc(byteAddress, [value], 5000))
+        if (!protocol.TryWriteGbc(byteAddress, [value], Timeout.Infinite))
         {
             throw new IOException(Tf(
                 "error",
@@ -5942,7 +5846,8 @@ public partial class Form1
         }
     }
 
-    private void EraseBeggarMaxHeadAreaOnDevice(WaterDeviceProtocol protocol, WaterCartScanResult scanResult)
+    private void EraseBeggarMaxHeadAreaOnDevice(
+        WaterDeviceProtocol protocol, WaterCartScanResult scanResult, CancellationToken cancellationToken = default)
     {
         int sectorSize = scanResult.Geometry.SectorSizeBytes > 0
             ? scanResult.Geometry.SectorSizeBytes
@@ -5954,6 +5859,7 @@ public partial class Form1
             T("ui", "erase_config", "Erase Config"),
             (long)sectorSize * sectorCount,
             sectorCount);
+        BeginMeasuredProgressPhase(sectorCount, true, T("status", "erase_config_busy", "Erasing head area…"));
 
         try
         {
@@ -5965,7 +5871,8 @@ public partial class Form1
                     sectorAddress,
                     blankSector,
                     scanResult.Geometry,
-                    T("value", "gbc_head_area_label", "MBCX head 1MiB"));
+                    T("value", "gbc_head_area_label", "MBCX head 1MiB"),
+                    cancellationToken);
             }
 
             CompleteMeasuredProgress(T("ui", "erase_config", "Erase Config"));
@@ -6096,95 +6003,78 @@ public partial class Form1
         }
 
         ushort bufferWriteBytes = GetEffectiveBufferWriteBytes(geometry);
+        BeginMeasuredProgressPhase(sectors.Count, true, T("value", "progress_phase_erase", "Erase"));
 
-        foreach (var sector in sectors)
+        int selectedBucket = -1;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            uint sectorAddress = sector.Address;
-            string label = sector.Label;
-            if (emitLogs)
-            {
-                AppendLog(Tf("log", "erase_sector", "Erase {0}: 0x{1:X6}", label, sectorAddress));
-            }
-
-            if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress))
-            {
-                throw new InvalidOperationException(
-                    Tf("error", "erase_sector_failed", "Failed to erase {0}.", label) +
-                    BuildProgrammerFailureDetail(protocol, sectorAddress, sectorSize, 0, sectorSize));
-            }
-
-            AdvanceMeasuredProgress(
-                sectorSize,
-                1,
-                BuildProgressDetailText(label, "progress_phase_erase", "Erase"));
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-
-        foreach (var sector in sectors)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            uint sectorAddress = sector.Address;
-            byte[] sectorData = sector.Data;
-            string label = sector.Label;
-            if (IsAllBytes(sectorData, 0xFF))
-            {
-                if (emitLogs)
-                {
-                    AppendLog(Tf("log", "skip_blank_sector", "Skip programming blank {0}: 0x{1:X6}", label, sectorAddress));
-                }
-                continue;
-            }
-
-            if (emitLogs)
-            {
-                AppendLog(Tf("log", "write_sector", "Write {0}: 0x{1:X6}", label, sectorAddress));
-            }
-
-            for (int offset = 0; offset < sectorData.Length; offset += NorProgramChunkSizeBytes)
+            foreach (var sector in sectors)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                int writeLength = Math.Min(NorProgramChunkSizeBytes, sectorData.Length - offset);
-                byte[] chunk = sectorData.AsSpan(offset, writeLength).ToArray();
-                uint chunkAddress = sectorAddress + (uint)offset;
+                uint sectorAddress = sector.Address;
+                string label = sector.Label;
+                if (emitLogs)
+                {
+                    AppendLog(Tf("log", "erase_sector", "Erase {0}: 0x{1:X6}", label, sectorAddress));
+                }
+
+                long eraseStart = StartLandscapeErase();
+                if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress, ref selectedBucket))
+                {
+                    throw new InvalidOperationException(
+                        Tf("error", "erase_sector_failed", "Failed to erase {0}.", label) +
+                        BuildProgrammerFailureDetail(protocol, sectorAddress, sectorSize, 0, sectorSize));
+                }
+
+                FinishLandscapeErase(eraseStart, sectorSize);
+                AdvanceMeasuredProgress(
+                    sectorSize,
+                    1,
+                    BuildProgressDetailText(label, "progress_phase_erase", "Erase"));
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            int sectorsToWrite = sectors.Count(sector => !IsAllBytes(sector.Data, 0xFF));
+            if (sectorsToWrite > 0)
+                BeginMeasuredProgressPhase(sectorsToWrite, false, T("value", "progress_phase_write", "Write"));
+            foreach (var sector in sectors)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                uint sectorAddress = sector.Address;
+                byte[] sectorData = sector.Data;
+                string label = sector.Label;
+                if (IsAllBytes(sectorData, 0xFF))
+                {
+                    if (emitLogs)
+                    {
+                        AppendLog(Tf("log", "skip_blank_sector", "Skip programming blank {0}: 0x{1:X6}", label, sectorAddress));
+                    }
+                    continue;
+                }
 
                 if (emitLogs)
                 {
-                    AppendLog(Tf(
-                        "log",
-                        "write_chunk",
-                        "  Write chunk: 0x{0:X6}+0x{1:X4} ({2} bytes, buffer {3} bytes)",
-                        sectorAddress,
-                        offset,
-                        writeLength,
-                        bufferWriteBytes));
+                    AppendLog(Tf("log", "write_sector", "Write {0}: 0x{1:X6}", label, sectorAddress));
                 }
 
-                if (!TryProgramRomForProgrammer(protocol, programmerKind, chunkAddress, chunk, bufferWriteBytes, 60000))
-                {
-                    throw new InvalidOperationException(
-                        Tf(
-                            "error",
-                            "segment_program_failed",
-                            "Failed to program {0} at offset 0x{1:X}.",
-                            label,
-                            offset) +
-                        BuildProgrammerFailureDetail(
-                            protocol,
-                            chunkAddress,
-                            sectorSize,
-                            offset,
-                            writeLength));
-                }
+                ProgramNorSectorChunks(protocol, programmerKind, sectorAddress, sectorData, bufferWriteBytes,
+                    label, segmentOffset: 0, emitLogs, cancellationToken, ref selectedBucket);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                AdvanceMeasuredProgress(
+                    sectorData.Length,
+                    1,
+                    BuildProgressDetailText(label, "progress_phase_write", "Write"));
+                cancellationToken.ThrowIfCancellationRequested();
             }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            AdvanceMeasuredProgress(
-                sectorData.Length,
-                1,
-                BuildProgressDetailText(label, "progress_phase_write", "Write"));
-            cancellationToken.ThrowIfCancellationRequested();
         }
+        catch (OperationCanceledException)
+        {
+            RestoreGbaBatchBank(protocol, selectedBucket, reportFailure: false);
+            throw;
+        }
+
+        RestoreGbaBatchBank(protocol, selectedBucket);
     }
 
     private void RewriteNorSector(
@@ -6259,7 +6149,8 @@ public partial class Form1
         WaterDeviceProtocol protocol,
         ProgrammerKind programmerKind,
         uint byteAddress,
-        int timeoutMs = 60000)
+        ref int selectedBucket,
+        int timeoutMs = Timeout.Infinite)
     {
         if (programmerKind != ProgrammerKind.BeggarLegacy)
         {
@@ -6269,13 +6160,8 @@ public partial class Form1
         int bucket = (int)(byteAddress / WaterCartScanner.BucketSizeBytes);
         uint localAddress = byteAddress % (uint)WaterCartScanner.BucketSizeBytes;
 
-        if (!TrySwitchLegacyBeggarBucketLocal(protocol, bucket, timeoutMs) ||
-            !TryEraseLegacyBeggarSector(protocol, localAddress, timeoutMs))
-        {
-            return false;
-        }
-
-        return TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000);
+        return TrySelectLegacyBeggarBucket(protocol, bucket, ref selectedBucket, timeoutMs) &&
+            TryEraseLegacyBeggarSector(protocol, localAddress, timeoutMs);
     }
 
     /// <summary>
@@ -6299,7 +6185,7 @@ public partial class Form1
 
         const uint NorChipWords = 128u * 1024u * 1024u / 2u; // 0x0400_0000
 
-        int effectiveTimeoutMs = timeoutMs < 0 ? Timeout.Infinite : Math.Max(timeoutMs, 5000);
+        int effectiveTimeoutMs = Timeout.Infinite;
         uint sectorWordAddress = byteAddress >> 1;
         uint chipBase = sectorWordAddress & ~(NorChipWords - 1u);
 
@@ -6311,12 +6197,12 @@ public partial class Form1
             !TryWriteWaterLinkCommandWord(protocol, chipBase + 0x555, 0xAA, effectiveTimeoutMs) ||
             !TryWriteWaterLinkCommandWord(protocol, chipBase + 0x2AA, 0x55, effectiveTimeoutMs) ||
             !TryWriteWaterLinkCommandWord(protocol, sectorWordAddress, 0x30, effectiveTimeoutMs) ||
-            !WaitForWaterLinkSectorErase(protocol, byteAddress, effectiveTimeoutMs))
+            !WaitForWaterLinkSectorErase(protocol, byteAddress))
         {
             return false;
         }
 
-        return TryWriteWaterLinkCommandWord(protocol, chipBase + 0x000, 0xF0, 3000);
+        return TryWriteWaterLinkCommandWord(protocol, chipBase + 0x000, 0xF0, Timeout.Infinite);
     }
 
     private static bool TryWriteWaterLinkCommandWord(
@@ -6339,11 +6225,9 @@ public partial class Form1
     /// </summary>
     private static bool WaitForWaterLinkSectorErase(
         WaterDeviceProtocol protocol,
-        uint byteAddress,
-        int timeoutMs)
+        uint byteAddress)
     {
         byte[] word = new byte[2];
-        Stopwatch stopwatch = Stopwatch.StartNew();
         int pollDelayMs = ErasePollFirstProbeDelayMs;
         bool firstProbe = true;
 
@@ -6359,11 +6243,6 @@ public partial class Form1
                 return true;
             }
 
-            if (timeoutMs >= 0 && stopwatch.ElapsedMilliseconds >= timeoutMs)
-            {
-                throw new TimeoutException($"NOR erase timeout at byte address 0x{byteAddress:X8}.");
-            }
-
             Thread.Sleep(pollDelayMs);
             if (firstProbe)
             {
@@ -6374,29 +6253,62 @@ public partial class Form1
         }
     }
 
-    private bool TryProgramRomForProgrammer(
+    private void ProgramNorSectorChunks(
         WaterDeviceProtocol protocol,
         ProgrammerKind programmerKind,
-        uint byteAddress,
-        byte[] bytes,
+        uint sectorAddress,
+        byte[] sectorData,
         ushort bufferWriteBytes,
-        int timeoutMs = 60000)
+        string label,
+        int segmentOffset,
+        bool emitLogs,
+        CancellationToken cancellationToken,
+        ref int selectedBucket)
     {
-        if (programmerKind != ProgrammerKind.BeggarLegacy)
+        bool usesLegacyBanks = programmerKind == ProgrammerKind.BeggarLegacy;
+        for (int offset = 0; offset < sectorData.Length;)
         {
-            return protocol.TryProgramRom(byteAddress, bytes, bufferWriteBytes, timeoutMs);
+            cancellationToken.ThrowIfCancellationRequested();
+            int length = Math.Min(NorProgramChunkSizeBytes, sectorData.Length - offset);
+            uint absoluteAddress = sectorAddress + (uint)offset;
+            uint writeAddress = absoluteAddress;
+
+            if (emitLogs)
+            {
+                AppendLog(Tf(
+                    "log",
+                    "write_chunk",
+                    "  Write chunk: 0x{0:X6}+0x{1:X4} ({2} bytes, buffer {3} bytes)",
+                    sectorAddress, offset, length, bufferWriteBytes));
+            }
+
+            if (usesLegacyBanks)
+            {
+                int bucket = (int)(absoluteAddress / WaterCartScanner.BucketSizeBytes);
+                writeAddress %= (uint)WaterCartScanner.BucketSizeBytes;
+                length = Math.Min(length, WaterCartScanner.BucketSizeBytes - (int)writeAddress);
+                if (!TrySelectLegacyBeggarBucket(protocol, bucket, ref selectedBucket))
+                    throw WriteFailure(absoluteAddress, offset, length);
+            }
+
+            byte[] chunk = sectorData.AsSpan(offset, length).ToArray();
+            if (!protocol.TryProgramRom(writeAddress, chunk, bufferWriteBytes, Timeout.Infinite))
+                throw WriteFailure(absoluteAddress, offset, length);
+            offset += length;
         }
 
-        int bucket = (int)(byteAddress / WaterCartScanner.BucketSizeBytes);
-        uint localAddress = byteAddress % (uint)WaterCartScanner.BucketSizeBytes;
+        InvalidOperationException WriteFailure(uint address, int offset, int length) => new(
+            Tf("error", "segment_program_failed", "Failed to program {0} at offset 0x{1:X}.",
+                label, segmentOffset + offset) +
+            BuildProgrammerFailureDetail(protocol, address, sectorData.Length, segmentOffset + offset, length));
+    }
 
-        if (!TrySwitchLegacyBeggarBucketLocal(protocol, bucket, timeoutMs) ||
-            !protocol.TryProgramRom(localAddress, bytes, bufferWriteBytes, timeoutMs))
-        {
-            return false;
-        }
-
-        return TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000);
+    private void RestoreGbaBatchBank(WaterDeviceProtocol protocol, int selectedBucket, bool reportFailure = true)
+    {
+        if (selectedBucket > 0 &&
+            !TrySwitchLegacyBeggarBucketLocal(protocol, 0, Timeout.Infinite) && reportFailure)
+            throw new IOException(T("error", "erase_restore_bank_failed",
+                "Could not restore ROM bank 0.") + " " + protocol.DescribeLastAckFailure());
     }
 
     private static bool TryEraseLegacyBeggarSector(
@@ -6412,22 +6324,16 @@ public partial class Form1
         // The firmware-side F3 handler uses a fixed 2 s watchdog. On slower
         // S70GL02GS sector erases that can expire before the chip reaches read
         // array mode, so we issue the legacy erase sequence directly and poll.
-        int effectiveTimeoutMs = timeoutMs < 0 ? Timeout.Infinite : Math.Max(timeoutMs, 5000);
+        int effectiveTimeoutMs = Timeout.Infinite;
         uint sectorWordAddress = localByteAddress >> 1;
 
-        if (!TryWriteLegacyBeggarCommandWord(protocol, 0x000, 0xF0, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0xAA, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, 0x2AA, 0x55, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0x80, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0xAA, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, 0x2AA, 0x55, effectiveTimeoutMs) ||
-            !TryWriteLegacyBeggarCommandWord(protocol, sectorWordAddress, 0x30, effectiveTimeoutMs) ||
-            !WaitForLegacyBeggarSectorErase(protocol, localByteAddress, effectiveTimeoutMs))
-        {
-            return false;
-        }
-
-        return TryWriteLegacyBeggarCommandWord(protocol, 0x000, 0xF0, 3000);
+        return TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0xAA, effectiveTimeoutMs) &&
+            TryWriteLegacyBeggarCommandWord(protocol, 0x2AA, 0x55, effectiveTimeoutMs) &&
+            TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0x80, effectiveTimeoutMs) &&
+            TryWriteLegacyBeggarCommandWord(protocol, 0x555, 0xAA, effectiveTimeoutMs) &&
+            TryWriteLegacyBeggarCommandWord(protocol, 0x2AA, 0x55, effectiveTimeoutMs) &&
+            TryWriteLegacyBeggarCommandWord(protocol, sectorWordAddress, 0x30, effectiveTimeoutMs) &&
+            WaitForLegacyBeggarSectorErase(protocol, localByteAddress);
     }
 
     private static bool TryWriteLegacyBeggarCommandWord(
@@ -6442,14 +6348,13 @@ public partial class Form1
     private static bool WaitForLegacyBeggarSectorErase(
         WaterDeviceProtocol protocol,
         uint localByteAddress,
-        int timeoutMs)
+        int pollDelayMs = 20)
     {
         byte[] word = new byte[2];
-        Stopwatch stopwatch = Stopwatch.StartNew();
 
         while (true)
         {
-            if (!protocol.TryReadRom(localByteAddress, word, 3000))
+            if (!protocol.TryReadRom(localByteAddress, word, Timeout.Infinite))
             {
                 return false;
             }
@@ -6459,12 +6364,7 @@ public partial class Form1
                 return true;
             }
 
-            if (timeoutMs >= 0 && stopwatch.ElapsedMilliseconds >= timeoutMs)
-            {
-                throw new TimeoutException($"NOR erase timeout at local byte address 0x{localByteAddress:X8}.");
-            }
-
-            Thread.Sleep(20);
+            Thread.Sleep(pollDelayMs);
         }
     }
 
@@ -6591,11 +6491,13 @@ public partial class Form1
     private void AppendLogLine(string timestamp, string message, string? replaceKey = null)
     {
         string line = timestamp + message + Environment.NewLine;
-        int start = textBoxLog.TextLength;
-        textBoxLog.AppendText(line);
-        textBoxLog.SelectionStart = textBoxLog.TextLength;
-        textBoxLog.SelectionLength = 0;
-        textBoxLog.ScrollToCaret();
+        int start = sessionLog.Length;
+        sessionLog.Append(line);
+        if (textBoxLog is { } viewer)
+        {
+            viewer.AppendText(line);
+            ScrollLogToEnd(viewer);
+        }
 
         if (string.IsNullOrWhiteSpace(replaceKey))
         {
@@ -6619,23 +6521,31 @@ public partial class Form1
         }
 
         string replacement = replaceableLogTimestamp + message + Environment.NewLine;
-        if (replaceableLogStart + replaceableLogLength > textBoxLog.TextLength)
+        if (replaceableLogStart + replaceableLogLength != sessionLog.Length)
         {
             ClearReplaceableLogState();
             return false;
         }
 
-        bool wasReadOnly = textBoxLog.ReadOnly;
-        textBoxLog.ReadOnly = false;
-        textBoxLog.Select(replaceableLogStart, replaceableLogLength);
-        textBoxLog.SelectedText = replacement;
-        textBoxLog.ReadOnly = wasReadOnly;
+        sessionLog.Length = replaceableLogStart;
+        sessionLog.Append(replacement);
+        if (textBoxLog is { } viewer)
+        {
+            viewer.ReadOnly = false;
+            viewer.Select(replaceableLogStart, replaceableLogLength);
+            viewer.SelectedText = replacement;
+            viewer.ReadOnly = true;
+            ScrollLogToEnd(viewer);
+        }
 
         replaceableLogLength = replacement.Length;
-        textBoxLog.SelectionStart = textBoxLog.TextLength;
-        textBoxLog.SelectionLength = 0;
-        textBoxLog.ScrollToCaret();
         return true;
+    }
+
+    private static void ScrollLogToEnd(TextBox viewer)
+    {
+        viewer.Select(viewer.TextLength, 0);
+        viewer.ScrollToCaret();
     }
 
     private void ClearReplaceableLogState()

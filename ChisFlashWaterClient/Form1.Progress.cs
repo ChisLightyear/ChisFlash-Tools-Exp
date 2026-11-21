@@ -11,17 +11,75 @@ public partial class Form1
     private const int UiProgressUpdateIntervalMs = 100;
 
     private ProgressBar progressBarTotal = null!;
-    private StatusStrip statusStripProgress = null!;
-    private ToolStripStatusLabel labelProgress = null!;
-    private ToolStripStatusLabel labelProgressSpring = null!;
-    private ToolStripStatusLabel labelSpeed = null!;
+    private Label labelProgress = null!;
+    private Label labelSpeed = null!;
     private System.Windows.Forms.Timer? transferSpeedTimer;
+    private readonly BurnSpeedLandscape burnLandscape = new();
+    private long lifetimeTransferredBytes;
+    private long landscapeLastBytes;
+    private long landscapeLastTick;
+    private bool collectingBurnSpeed;
+    private bool landscapeHasTransfer;
+    private bool landscapeEraseOnly;
+    private readonly object eraseSampleLock = new();
+    private long eraseSampleBytes;
+    private long eraseSampleTicks;
+    private bool eraseInProgress;
+
+    private long StartLandscapeErase()
+    {
+        lock (eraseSampleLock) eraseInProgress = true;
+        return Stopwatch.GetTimestamp();
+    }
+
+    private void FinishLandscapeErase(long start, int bytes)
+    {
+        long ticks = Stopwatch.GetTimestamp() - start;
+        lock (eraseSampleLock)
+        {
+            eraseSampleBytes += bytes;
+            eraseSampleTicks += ticks;
+            eraseInProgress = false;
+        }
+    }
+
+    private void SampleBurnSpeed(bool finalSample = false)
+    {
+        if (!collectingBurnSpeed) return;
+        long total = Interlocked.Read(ref lifetimeTransferredBytes);
+        long delta = total - landscapeLastBytes;
+        long now = Stopwatch.GetTimestamp();
+        double seconds = Stopwatch.GetElapsedTime(landscapeLastTick, now).TotalSeconds;
+        bool erasing;
+        long erased, eraseTicks;
+        lock (eraseSampleLock)
+        {
+            erasing = eraseInProgress;
+            erased = eraseSampleBytes;
+            eraseTicks = eraseSampleTicks;
+            eraseSampleBytes = eraseSampleTicks = 0;
+        }
+        if (erased > 0 && eraseTicks > 0)
+        {
+            burnLandscape.Append(erased * (double)Stopwatch.Frequency / eraseTicks, !landscapeHasTransfer, true);
+            landscapeHasTransfer = true;
+        }
+        burnLandscape.SetEraseWaiting(!finalSample && erasing && !landscapeHasTransfer);
+        if (!erasing && erased == 0 && !landscapeEraseOnly && seconds > 0 && (delta > 0 || (landscapeHasTransfer && !finalSample)))
+        {
+            burnLandscape.Append(delta / seconds, !landscapeHasTransfer, false);
+            landscapeHasTransfer = true;
+        }
+        landscapeLastBytes = total;
+        landscapeLastTick = now;
+    }
 
     private Stopwatch? progressStopwatch;
     private long progressTotalBytes;
     private long progressCompletedBytes;
     private int progressTotalUnits;
     private int progressCompletedUnits;
+    private bool progressCountsDown;
     private string progressOperationTitle = string.Empty;
     private string progressDetailText = string.Empty;
     private long transferredBytesWindow;
@@ -45,6 +103,7 @@ public partial class Form1
         progressCompletedBytes = 0;
         progressTotalUnits = 0;
         progressCompletedUnits = 0;
+        progressCountsDown = false;
         progressOperationTitle = string.Empty;
         progressDetailText = string.Empty;
         Interlocked.Exchange(ref transferredBytesWindow, 0);
@@ -79,6 +138,7 @@ public partial class Form1
         progressCompletedBytes = 0;
         progressTotalUnits = Math.Max(1, totalUnits);
         progressCompletedUnits = 0;
+        progressCountsDown = false;
         progressStopwatch = Stopwatch.StartNew();
         progressDetailText = string.Empty;
         Interlocked.Exchange(ref transferredBytesWindow, 0);
@@ -97,6 +157,27 @@ public partial class Form1
         UpdateMeasuredProgressUi();
     }
 
+    private void BeginMeasuredProgressPhase(
+        int totalUnits, bool erasing, string detailText, long totalBytes = 0, int completedUnits = 0)
+    {
+        if (InvokeRequired)
+        {
+            Invoke(new Action<int, bool, string, long, int>(BeginMeasuredProgressPhase),
+                totalUnits, erasing, detailText, totalBytes, completedUnits);
+            return;
+        }
+
+        if (progressStopwatch is null) return;
+        FlushPendingMeasuredProgressUpdates();
+        progressTotalUnits = Math.Max(1, totalUnits);
+        progressTotalBytes = totalBytes;
+        progressCompletedUnits = completedUnits;
+        progressCompletedBytes = 0;
+        progressCountsDown = erasing;
+        progressDetailText = detailText;
+        UpdateMeasuredProgressUi();
+    }
+
     private void BeginIndeterminateProgress(string operationTitle, string detailText)
     {
         if (InvokeRequired)
@@ -110,6 +191,7 @@ public partial class Form1
         progressCompletedBytes = 0;
         progressTotalUnits = 0;
         progressCompletedUnits = 0;
+        progressCountsDown = false;
         progressStopwatch = Stopwatch.StartNew();
         progressDetailText = detailText?.Trim() ?? string.Empty;
         Interlocked.Exchange(ref transferredBytesWindow, 0);
@@ -209,6 +291,24 @@ public partial class Form1
         progressStopwatch = null;
     }
 
+    private void FinishLegacyRomSectorErase(long start, int bytes)
+    {
+        FinishLandscapeErase(start, bytes);
+        AdvanceMeasuredProgress(bytes, 1);
+    }
+
+    private void CompleteLegacyGbaRomProgress(int romBytes, (TimeSpan Erase, TimeSpan Program) timing)
+    {
+        CompleteMeasuredProgress(appendSummaryLog: false);
+        if (timing.Erase > TimeSpan.Zero)
+            AppendLog(Tf("log", "legacy_rom_erase_time", "ROM erase took {0:F3} s.", timing.Erase.TotalSeconds));
+
+        double seconds = timing.Program.TotalSeconds;
+        AppendLog(Tf("log", "legacy_rom_program_speed",
+            "ROM programming took {0:F3} s, average speed {1:F3} KiB/s.",
+            seconds, romBytes / Math.Max(0.001, seconds) / 1024.0));
+    }
+
     private void AbortMeasuredProgress()
     {
         if (InvokeRequired)
@@ -249,23 +349,15 @@ public partial class Form1
             return;
         }
 
-        int progressValue = Math.Clamp(progressCompletedUnits, 0, progressTotalUnits);
         int progressMaximum = GetProgressBarMaximum();
         if (progressBarTotal.Maximum != progressMaximum)
         {
             progressBarTotal.Maximum = progressMaximum;
         }
 
-        if (progressTotalBytes > 0)
-        {
-            int max = GetProgressBarMaximum();
-            int value = (int)Math.Clamp(progressCompletedBytes, progressBarTotal.Minimum, max);
-            progressBarTotal.Value = value;
-            labelProgress.Text = BuildProgressStatusText();
-            return;
-        }
-
-        progressBarTotal.Value = Math.Clamp(progressValue, progressBarTotal.Minimum, progressBarTotal.Maximum);
+        long completed = progressTotalBytes > 0 ? progressCompletedBytes : progressCompletedUnits;
+        int value = (int)Math.Clamp(completed, 0, progressMaximum);
+        progressBarTotal.Value = progressCountsDown ? progressMaximum - value : value;
         labelProgress.Text = BuildProgressStatusText();
     }
 
@@ -277,6 +369,7 @@ public partial class Form1
         }
 
         Interlocked.Add(ref transferredBytesWindow, byteCount);
+        Interlocked.Add(ref lifetimeTransferredBytes, byteCount);
         Interlocked.Add(ref transferredBytesTotal, byteCount);
     }
 
@@ -347,6 +440,7 @@ public partial class Form1
 
     private void TransferSpeedTimer_Tick(object? sender, EventArgs e)
     {
+        SampleBurnSpeed();
         long bytes = Interlocked.Exchange(ref transferredBytesWindow, 0);
         if (bytes <= 0)
         {

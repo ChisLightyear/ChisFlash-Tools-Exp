@@ -40,7 +40,15 @@ public sealed class CompilationBuilder
     private const string GbcFontSignature = "MBCXFNT";
     private const string GbcBackgroundSignature = "MBCXBG1";
     private const int GbcMaxGames = 99;
-    private const int GbcMaxGameSramBanks = 8;
+    public const int GbcMaxGameSramBanks = 16;
+
+    public static void ValidateGbcSaveBankCount(byte mbcType, int count, bool dedicated)
+    {
+        int limit = !dedicated ? GbcFixedSharedSramBanks :
+            mbcType is 0x19 or 0x1A or 0x1B ? GbcMaxGameSramBanks : 8;
+        if (count < 0 || count > limit)
+            throw new InvalidOperationException($"MAX/MBCX SRAM: MBC 0x{mbcType:X2}, {count} banks (max {limit}).");
+    }
     private const int GbcFixedSharedSramBanks = 4;
     private const int GbcSharedSramBankStart = 60;
     private const int GbcIndependentSramBankCapacity = 60;
@@ -1920,6 +1928,7 @@ public sealed class CompilationBuilder
                         title));
             }
 
+            ValidateGbcSaveBankCount(metadata.CartridgeType, ramBankCount, usesDedicatedSaveAllocation);
             var sramBankMap = Enumerable.Repeat((byte)0xFF, GbcMaxGameSramBanks).ToArray();
             if (usesDedicatedSaveAllocation)
             {

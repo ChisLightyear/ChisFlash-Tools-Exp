@@ -7,7 +7,7 @@ public partial class Form1
     private bool currentGbaPreviewUsesSelectedMenu;
     private bool currentPreviewShowsSingleGbaHint;
 
-    private bool IsSingleGbaMenuPreviewDisabled() => IsGbaSingleCardMode() || IsChisFlash10Mode();
+    private bool IsSingleGbaMenuPreviewDisabled() => IsGbaSingleProfileSelected();
 
     private bool TryShowSingleGbaMenuPreviewHint()
     {

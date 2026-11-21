@@ -28,6 +28,7 @@ public partial class Form1
     private string Mbc5ProfileName => IsMbc5MaxMode() ? "MBC5 MAX 32M" : "MBC5 8M";
     private string Mbc5ImageSize => IsMbc5MaxMode() ? "32M" : "8M";
     private byte[]? mbc5LoadedScanImage;
+    private Mbc5EightMiBLayout? mbc5ScannedSaveLayout;
     private bool rebuildingMbc5Grid;
     private bool resizingMbc5Rows;
 
@@ -43,7 +44,11 @@ public partial class Form1
             lastScannedPortName = string.Empty;
         }
         mbc5ActiveProfile = profile;
-        if (!selected) mbc5LoadedScanImage = null;
+        if (!selected)
+        {
+            mbc5LoadedScanImage = null;
+            mbc5ScannedSaveLayout = null;
+        }
         if (selected && GetSelectedProgrammerKind() != ProgrammerKind.WaterLink)
         {
             bool initialized = beggarCartModeSelectionInitialized;
@@ -121,6 +126,8 @@ public partial class Form1
             dataGridViewRoms.Columns["SpiSlot"]!.HeaderText = Mbc5Text("nor_offset", "NOR起点", "NOR Offset");
             dataGridViewRoms.Columns["SaveStatus"]!.HeaderText = Mbc5Text("slot_hint", "槽位状态", "Slot Status");
             dataGridViewRoms.Rows.Clear();
+            bool maxMode = IsMbc5MaxMode();
+            int addGameSlot = maxMode ? FindEmptyMbc5GameSlot() : -1;
             for (int slot = 0; slot < ActiveMbc5Layout.NumberOfSlots; slot++)
             {
                 Mbc5SlotDefinition definition = ActiveMbc5Layout.GetSlot(slot);
@@ -131,9 +138,17 @@ public partial class Form1
                 string hint = slot == 3 && ActiveMbc5Layout.HasMenu && !IsMbc5MaxMode()
                     ? Mbc5Text("game3_hint", "超过2M将占用第四槽", "Above 2 MiB occupies Game 4")
                     : slot == 0 ? Mbc5Text("menu_hint", IsMbc5MaxMode() ? "需使用匹配的16in1菜单" : "需使用匹配的3/4in1菜单", IsMbc5MaxMode() ? "Use a matching 16in1 menu" : "Use a matching 3/4in1 menu") : string.Empty;
-                int rowIndex = dataGridViewRoms.Rows.Add(Mbc5SlotName(slot),
-                    !definition.Enabled ? Mbc5Text("disabled", "不可用", "Unavailable") : content is null ? Mbc5Text("empty", "可添加", "Empty") : content.Source == "cart" ? T("value", "row_state_cart", "On Cart") : T("value", "source_file", "File"),
-                    content?.Source ?? string.Empty, slot == 0 ? "Menu" : "Game", content?.Title ?? Mbc5Text("not_added", "未添加", "Not added"),
+                string state = !definition.Enabled ? Mbc5Text("disabled", "不可用", "Unavailable")
+                    : content is null ? Mbc5Text("empty", "可添加", "Empty")
+                    : content.Source == "cart" ? T("value", "row_state_cart", "On Cart")
+                    : maxMode && ActiveMbc5LayoutChanged ? T("value", "row_state_pending", "Pending") : T("value", "source_file", "File");
+                string title = content?.Title ?? Mbc5Text("not_added", "未添加", "Not added");
+                if (maxMode && slot == 0 && content is null)
+                    title = GbaCardText("select_menu_hint", "双击选择菜单", "Double-click to select a menu");
+                else if (slot == addGameSlot)
+                    title = GbaCardText("add_game_hint", "点击添加游戏", "Click to add a game");
+                int rowIndex = dataGridViewRoms.Rows.Add(Mbc5SlotName(slot), state,
+                    content?.Source ?? string.Empty, slot == 0 ? "Menu" : "Game", title,
                     content is null ? "—" : FormatMbc5Size(content.Data.Length),
                     definition.Enabled ? "≤ " + FormatMbc5Size(definition.CapacityBytes) : "—",
                     slot == 0 || !definition.Enabled ? "—" : FormatMbc5Size(definition.SaveCapacityBytes), false, hint,
@@ -171,7 +186,7 @@ public partial class Form1
                 menuRom.DropDownItems.Add(menuExportMbc5Image);
             }
             RefreshMbc5Preview();
-            UpdateMbc5ActionButtons(isBusy);
+            UpdateActionButtons(isBusy);
         }
         finally
         {
@@ -197,13 +212,16 @@ public partial class Form1
 
     private int SelectedMbc5Slot() => dataGridViewRoms.SelectedRows.Count > 0 ? dataGridViewRoms.SelectedRows[0].Index : 1;
 
-    private bool CanWriteMbc5Image() => IsMbc5FixedSlotMode() &&
-        GetSelectedBeggarCartMode() == BeggarCartMode.Gb && HasActiveScanResult() &&
-        currentScanResult?.IsBeggarMaxGbcMode == true && currentScanResult.Geometry.DeviceSizeBytes == ActiveMbc5Layout.ImageCapacityBytes &&
-        !currentScanResult.IsWriteProtected && currentScanResult.Geometry.PrimaryCommandSetId == 2 &&
-        currentScanResult.Geometry.RegionCount == 1 && currentScanResult.Geometry.BufferWriteBytes is > 0 and <= ushort.MaxValue &&
-        currentScanResult.Geometry.SectorSizeBytes >= Mbc5EightMiBWriter.BankBytes &&
-        (long)currentScanResult.Geometry.SectorSizeBytes * currentScanResult.Geometry.SectorCount == ActiveMbc5Layout.ImageCapacityBytes;
+    private bool CanWriteMbc5Image()
+    {
+        if (!IsMbc5FixedSlotMode() ||
+            GetSelectedBeggarCartMode() != BeggarCartMode.Gb || !HasActiveScanResult() ||
+            currentScanResult is not { IsBeggarMaxGbcMode: true })
+            return false;
+
+        // 盖中盖口径：不设任何读数失败门槛，容量与扇区表在烧录时现场重读 CFI。
+        return true;
+    }
 
     private void UpdateMbc5ActionButtons(bool busy)
     {
@@ -212,18 +230,21 @@ public partial class Form1
         bool enabled = ActiveMbc5Layout.GetSlot(selected).Enabled;
         bool occupied = ActiveMbc5Layout.GetContent(selected) is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
-        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
-        menuFcScan.Enabled = idle;
         menuSave.Enabled = false;
         buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         menuScan.Enabled = buttonScan.Enabled;
-        buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && enabled;
-        buttonQueueAdd.Text = menuAddRom.Text = selected == 0 ? Mbc5Text("add_menu", "添加菜单", "Add Menu") : Mbc5Text("add_game", "添加游戏", "Add Game");
+        bool maxMode = IsMbc5MaxMode();
+        buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && (maxMode ? FindEmptyMbc5GameSlot() >= 0 : enabled);
+        buttonQueueAdd.Text = menuAddRom.Text = selected == 0 && !maxMode
+            ? Mbc5Text("add_menu", "添加菜单", "Add Menu")
+            : Mbc5Text("add_game", "添加游戏", "Add Game");
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && ActiveMbc5Layout.HasContent;
-        buttonQueueClear.Text = menuClearRomQueue.Text = Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
+        buttonQueueClear.Text = menuClearRomQueue.Text = maxMode
+            ? T("ui", "clear_workspace", "Clear Workspace") : Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
         buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && ActiveMbc5Layout.HasContent;
-        buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : CanWriteMbc5Image()
+        buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel")
+            : maxMode ? T("ui", "queue_burn", "Start Burn") : CanWriteMbc5Image()
             ? Mbc5Text("burn_image", "烧录完整ROM", "Burn Full ROM") : Mbc5Text("export_image", $"导出完整{Mbc5ImageSize} ROM", $"Export Full {ActiveMbc5Layout.ImageCapacityBytes / Mbc5EightMiBLayout.MiB} MiB ROM");
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = idle && enabled;
         menuExportSelectedRom.Enabled = menuItemExportRom.Enabled = idle && occupied;
@@ -235,6 +256,7 @@ public partial class Form1
         comboBoxBurnProfileMode.Enabled = idle && burnProfileModeOptions.Count > 0;
         checkBoxWaitcntPatch.Enabled = comboBoxGbaMenu.Enabled = comboBoxGbcMenuLanguage.Enabled = false;
         dataGridViewRoms.Enabled = groupBoxList.Enabled = !busy;
+        UpdateNativeSaveCommands(idle, selected > 0);
         if (menuExportMbc5Image is not null)
         {
             menuExportMbc5Image.Visible = true;
@@ -246,10 +268,14 @@ public partial class Form1
         if (idle) labelStatus.Text = Mbc5LayoutDescription();
     }
 
-    private Task SelectMbc5FilesAsync()
+    private int FindEmptyMbc5GameSlot() => Enumerable.Range(1, ActiveMbc5Layout.NumberOfSlots - 1)
+        .FirstOrDefault(slot => ActiveMbc5Layout.GetSlot(slot).Enabled && ActiveMbc5Layout.GetContent(slot) is null, -1);
+
+    private Task SelectMbc5FilesAsync() => SelectMbc5SlotFilesAsync(SelectedMbc5Slot());
+
+    private Task SelectMbc5SlotFilesAsync(int slot)
     {
-        int slot = SelectedMbc5Slot();
-        if (isBusy || !ActiveMbc5Layout.GetSlot(slot).Enabled)
+        if (isBusy || isAnalyzingQueueImports || slot < 0 || !ActiveMbc5Layout.GetSlot(slot).Enabled)
             return Task.CompletedTask;
         using var dialog = new OpenFileDialog
         {
@@ -277,7 +303,9 @@ public partial class Form1
     {
         if (isBusy || isAnalyzingQueueImports) return;
         string[] files = paths.ToArray();
-        int slot = targetSlot ?? SelectedMbc5Slot();
+        int slot = targetSlot ?? (IsMbc5MaxMode() ? FindEmptyMbc5GameSlot() : SelectedMbc5Slot());
+        if (slot < 0)
+            throw new InvalidOperationException(Mbc5Text("no_slot", "没有足够的可用槽位，本次文件未加入。", "Not enough available slots; this batch was not added."));
         if (!ActiveMbc5Layout.GetSlot(slot).Enabled)
             throw new InvalidOperationException(Mbc5ErrorMessage(Mbc5LayoutError.FourthSlotUnavailable));
         if (ActiveMbc5Layout.GetContent(slot) is not null && MessageBox.Show(this,
@@ -356,10 +384,12 @@ public partial class Form1
     private byte[] ReadMbc5ImageFromDevice(WaterDeviceProtocol protocol, int capacity)
     {
         byte[] image = new byte[capacity];
+        int selectedBank = -1;
         try
         {
             for (int bank = 0; bank < image.Length / Mbc5EightMiBWriter.BankBytes; bank++)
-                ReadBeggarMaxSectorImage(protocol, bank * Mbc5EightMiBWriter.BankBytes, Mbc5EightMiBWriter.BankBytes).CopyTo(image, bank * Mbc5EightMiBWriter.BankBytes);
+                ReadBeggarMaxSectorImage(protocol, bank * Mbc5EightMiBWriter.BankBytes, Mbc5EightMiBWriter.BankBytes, ref selectedBank)
+                    .CopyTo(image, bank * Mbc5EightMiBWriter.BankBytes);
             return image;
         }
         finally
@@ -396,6 +426,7 @@ public partial class Form1
         else if (first is not null && !proposed.TrySet(1, first, out Mbc5LayoutError error))
             throw new InvalidOperationException(Mbc5ErrorMessage(error));
         ActiveMbc5Layout = proposed;
+        mbc5ScannedSaveLayout = proposed.Snapshot();
         ActiveMbc5LayoutChanged = false;
     }
 
@@ -415,7 +446,13 @@ public partial class Form1
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
         if (isBusy || !ActiveMbc5Layout.HasContent) return;
-        if (!CanWriteMbc5Image()) { await ExportMbc5ImageAsync(); return; }
+        if (!CanWriteMbc5Image())
+        {
+            if (IsMbc5MaxMode())
+                throw new InvalidOperationException(T("error", "select_and_scan_first", "Please select and scan the current cart first."));
+            await ExportMbc5ImageAsync();
+            return;
+        }
         if (!ActiveMbc5LayoutChanged && MessageBox.Show(this, Mbc5Text("unchanged_confirm", "工作区没有修改，仍要完整擦写吗？", "The workspace is unchanged. Rewrite the entire ROM anyway?"), Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         if (MessageBox.Show(this, Mbc5Text("burn_confirm", $"将全擦除{Mbc5ImageSize} NOR并烧录当前固定槽位布局。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请确认卡带已安装匹配的{(IsMbc5MaxMode() ? "MBC5 MAX 16in1" : "MBC5 3/4in1")}固件。继续？", $"Erase the entire {Mbc5ImageSize} NOR and write this layout? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nConfirm matching fixed-slot firmware before continuing."),
             Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
@@ -430,6 +467,7 @@ public partial class Form1
         {
             await Task.Run(() => WriteMbc5ImageOnDevice(port, scan, image, cancellation.Token));
             ActiveMbc5LayoutChanged = false;
+            if (IsMbc5MaxMode()) RefreshMbc5Grid(SelectedMbc5Slot());
             AppendLog(Mbc5Text("written", $"完整{Mbc5ImageSize} ROM写入完成。", $"The full {Mbc5ImageSize} ROM was written."));
         }
         finally
@@ -447,29 +485,61 @@ public partial class Form1
 
     private void WriteGbcImageOnDevice(string port, WaterCartScanResult expected, byte[] image, CancellationToken cancellationToken)
     {
+        // expected 仅为调用点兼容保留：盖中盖口径下烧录不复用扫描缓存。
+        _ = expected;
         cancellationToken.ThrowIfCancellationRequested();
         using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-        WaterCartScanResult live = expected;
-        int total = checked(live.Geometry.SectorCount + image.Length / GbcNorImageWriter.BankBytes);
-        BeginMeasuredProgress("GB/GBC NOR", total, total);
+        // 盖中盖口径：写入时现场重读 CFI，容量 / 写缓冲 / 逐扇区表全部取自这一次读，
+        // 直接使用本次读数进行原版的镜像空间检查。
+        GbcCfiBurnGeometry burn = ReadGbcBurnGeometry(protocol);
+        // 盖中盖用 CFI 解析出的容量判断是否有足够的 Flash 空间。
+        if (image.Length > burn.DeviceSizeBytes)
+            throw new InvalidOperationException("Flash 空间不足：镜像长度超过现场读到的 NOR 容量。");
+
+        IReadOnlyList<(int Offset, int Size)> sectors = burn.Sectors;
+        const string title = "GB/GBC NOR";
+        int banks = image.Length / GbcNorImageWriter.BankBytes;
+        int total = checked(sectors.Count + banks);
+        BeginMeasuredProgress(title, total, total);
+        if (sectors.Count > 0)
+            BeginMeasuredProgressPhase(sectors.Count, true, BuildProgressDetailText(title, "progress_phase_erase", "Erase"));
+        int selectedBank = -1;
+        bool SelectBank(int bank) => TrySelectBeggarMaxRomBank(protocol, bank, ref selectedBank);
+        bool programming = false;
+        void BeginProgramPhase()
+        {
+            if (programming) return;
+            programming = true;
+            BeginMeasuredProgressPhase(banks, false, BuildProgressDetailText(title, "progress_phase_write", "Write"));
+        }
         try
         {
-            GbcNorImageWriter.Write(image, live.Geometry.DeviceSizeBytes, live.Geometry.SectorSizeBytes, live.Geometry.SectorCount,
-                address => EraseBeggarMaxRange(protocol, address, address + live.Geometry.SectorSizeBytes - 1, live.Geometry.SectorSizeBytes, cancellationToken),
-                (bank, data) =>
+            Action<int, byte[]> programBank = (bank, data) =>
+            {
+                BeginProgramPhase();
+                if (!SelectBank(bank)) throw new IOException("ROM bank selection failed.");
+                for (int offset = 0; offset < data.Length; offset += 4096)
                 {
-                    if (!TrySwitchBeggarMaxRomBank(protocol, bank)) throw new IOException("ROM bank selection failed.");
-                    for (int offset = 0; offset < data.Length; offset += 4096)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (!protocol.TryProgramGbcRom((uint)(GetBeggarMaxBankBaseAddress(bank) + offset), data.AsSpan(offset, 4096).ToArray(), (ushort)live.Geometry.BufferWriteBytes, BeggarMaxWriteTimeoutMs))
-                            throw new IOException("GB ROM programming failed.");
-                    }
-                },
-                () => { if (!protocol.TryWriteGbc(0, [0xF0], 3000) || !TrySwitchBeggarMaxRomBank(protocol, 0)) throw new IOException("Could not restore ROM bank 0."); },
-                (_, _, phase) => AdvanceMeasuredProgress(1, 1, phase), cancellationToken);
-            CompleteMeasuredProgress("GB/GBC NOR");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!protocol.TryProgramGbcRom((uint)(GetBeggarMaxBankBaseAddress(bank) + offset), data.AsSpan(offset, 4096).ToArray(), (ushort)burn.BufferWriteBytes, BeggarMaxWriteTimeoutMs))
+                        throw new IOException("GB ROM programming failed.");
+                }
+            };
+            Action restoreBank = () =>
+            {
+                if (!SelectBank(0)) throw new IOException("Could not restore ROM bank 0.");
+            };
+            Action<int, int, string> progress = (_, _, phase) =>
+            {
+                if (phase == "write") BeginProgramPhase();
+                AdvanceMeasuredProgress(1, 1);
+            };
+
+            Action<int, int> eraseSector = CreateGbcSectorEraser(protocol, SelectBank, cancellationToken);
+            GbcNorImageWriter.WriteForSectorMap(image, burn.DeviceSizeBytes, sectors,
+                eraseSector, programBank, restoreBank, progress, cancellationToken);
+            CompleteMeasuredProgress(title);
         }
         catch { AbortMeasuredProgress(); throw; }
     }

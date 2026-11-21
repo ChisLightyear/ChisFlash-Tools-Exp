@@ -14,12 +14,13 @@ public partial class Form1
         {
             changeMenu.Text = GbaCardText("change_menu", "换菜单", "Change Menu");
             changeMenu.Enabled = !isBusy && !isAnalyzingQueueImports &&
-                (IsSelectedGbaMenuRow() || IsMbc5FixedSlotMode() && SelectedMbc5Slot() == 0);
+                (IsSelectedGbaMenuRow() || IsSelectedGbcFreeMenuRow() || IsMbc5FixedSlotMode() && SelectedMbc5Slot() == 0);
         };
         changeMenu.Click += async (_, _) => await RunUiActionSafelyAsync(async () =>
         {
             if (isBusy || isAnalyzingQueueImports) return;
             if (IsSelectedGbaMenuRow()) await SelectGbaMenuAsync();
+            else if (IsSelectedGbcFreeMenuRow()) SelectGbcFreeMenu();
             else if (IsMbc5FixedSlotMode() && SelectedMbc5Slot() == 0) await SelectMbc5FilesAsync();
         });
         return menuRowContextMenu;

@@ -1,22 +1,32 @@
-using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
-    private static bool IsGbaSingleProfile(BurnProfileMode mode) => mode is BurnProfileMode.GbaSingle or BurnProfileMode.ChisFlash10 or
-        BurnProfileMode.ChisFlashFram10 or BurnProfileMode.ChisFlashFlash11 or BurnProfileMode.ChisFlashFlash11Rtc or BurnProfileMode.ChisFlashFram12;
+    private static readonly BurnProfileMode[] GbaSingleProfileOrder =
+    [
+        BurnProfileMode.GbaSingle,
+        BurnProfileMode.ChisFlashFram10,
+        BurnProfileMode.ChisFlashFlash11,
+        BurnProfileMode.ChisFlashFlash11Rtc,
+        BurnProfileMode.ChisFlashFram12,
+        BurnProfileMode.ChisFlash10,
+        BurnProfileMode.ChisFlash11VRealClock,
+        BurnProfileMode.ChisFlash11VVirtualClock,
+        BurnProfileMode.ChisFlash12V,
+    ];
+
+    private static bool IsGbaSingleProfile(BurnProfileMode mode) => GbaSingleProfileOrder.Contains(mode);
 
     private bool IsGbaSingleProfileSelected() => GetSelectedBeggarCartMode() == BeggarCartMode.Gba && IsGbaSingleProfile(GetSelectedBurnProfileMode());
     private bool IsGbaMulticartUnavailable() => IsGbaSingleGameOnlyHardware() || IsGbaSingleProfileSelected();
 
     private IEnumerable<BurnProfileModeOption> GetGbaSingleProfileOptions()
     {
-        foreach (var mode in new[] { BurnProfileMode.GbaSingle, BurnProfileMode.ChisFlashFram10,
-            BurnProfileMode.ChisFlashFlash11, BurnProfileMode.ChisFlashFlash11Rtc, BurnProfileMode.ChisFlashFram12, BurnProfileMode.ChisFlash10 })
+        foreach (var mode in GbaSingleProfileOrder)
             yield return new(GetBurnProfileModeDisplayName(mode), mode);
     }
 
-    private void BindBurnProfileOptions()
+    private void BindBurnProfileOptions(BurnProfileModeOption? analysisPrompt = null)
     {
         if (GetSelectedBeggarCartMode() != BeggarCartMode.Gba)
         {
@@ -24,6 +34,7 @@ public partial class Form1
             return;
         }
         var options = new List<BurnProfileModeOption>();
+        if (analysisPrompt is not null) options.Add(analysisPrompt);
         var multicart = burnProfileModeOptions.Where(option => !IsGbaSingleProfile(option.Mode)).ToList();
         if (multicart.Count > 0)
         {
@@ -35,7 +46,6 @@ public partial class Form1
         {
             options.Add(new(GbaCardText("single_group", "——单卡——", "—— Single game ——"), (BurnProfileMode)(-1), true, false));
             options.AddRange(single);
-            options.Add(new(ClientText.T("client", "chis11v_unconfirmed", "ChisFlash 1.1V (Unconfirmed)"), (BurnProfileMode)(-2), false, false));
         }
         comboBoxBurnProfileMode.DataSource = options;
     }

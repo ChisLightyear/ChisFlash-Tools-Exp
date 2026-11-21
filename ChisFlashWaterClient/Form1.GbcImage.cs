@@ -152,12 +152,18 @@ public partial class Form1
         if (dialog.ShowDialog(this) == DialogResult.OK) await File.WriteAllBytesAsync(dialog.FileName, BuildGbcImage());
     }
 
-    private bool CanWriteGbcImage() => IsGbcRawImageMode() &&
-        GetSelectedBeggarCartMode() == BeggarCartMode.Gb && HasActiveScanResult() &&
-        currentScanResult is { IsBeggarMaxGbcMode: true, IsWriteProtected: false } scan && scan.Geometry.DeviceSizeBytes == SelectedGbcImageCapacity() &&
-        scan.Geometry.PrimaryCommandSetId == 2 && scan.Geometry.RegionCount == 1 &&
-        scan.Geometry.BufferWriteBytes is > 0 and <= ushort.MaxValue && scan.Geometry.SectorSizeBytes >= GbcNorImageWriter.BankBytes &&
-        (long)scan.Geometry.SectorSizeBytes * scan.Geometry.SectorCount == scan.Geometry.DeviceSizeBytes;
+    private bool CanWriteGbcImage()
+    {
+        if (!IsGbcRawImageMode() ||
+            GetSelectedBeggarCartMode() != BeggarCartMode.Gb || !HasActiveScanResult() ||
+            currentScanResult is not { IsBeggarMaxGbcMode: true })
+            return false;
+
+        // 盖中盖口径：不设任何读数失败门槛（写保护 / 容量 / 命令集 / 写缓冲 / 扇区表都不看）。
+        // 容量、写缓冲、逐扇区表在烧录时现场重读 CFI；只保留盖中盖也有的
+        // 「镜像长度 ≤ deviceSize」空间检查，在 WriteGbcImageOnDevice 里做。
+        return true;
+    }
 
     private async Task HandleGbcImagePrimaryActionAsync()
     {
@@ -190,8 +196,6 @@ public partial class Form1
         bool raw = IsGbcRawImageMode();
         bool idle = !busy && !isAnalyzingQueueImports;
         bool hasImage = raw && gbcImageData is not null && GbcRtcRomValidator.IsValid(gbcImageData);
-        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
-        menuFcScan.Enabled = idle;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
         if (menuFcTools is not null) menuFcTools.Visible = false;
@@ -208,11 +212,15 @@ public partial class Form1
             ? T("gbc_profile", "burn_image", "Burn complete ROM") : T("gbc_profile", "export_image", "Export complete ROM");
         buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && hasImage;
         menuExportSelectedRom.Enabled = idle && hasImage;
-        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = item == menuFcScan && idle;
+        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
         menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);
         menuPendingGbaCovers.Enabled = menuDeleteSelectedMapping.Enabled = menuFragmentTest.Enabled = false;
         menuItemReplaceRom.Enabled = menuItemExportRom.Enabled = false;
-        if (raw) RefreshGbcImageDetails();
+        if (raw)
+        {
+            RefreshGbcImageDetails();
+            UpdateNativeSaveCommands(idle, hasGame: true);
+        }
         else
         {
             groupBoxList.Text = T("gbc_profile", "choose", "Choose cartridge type");

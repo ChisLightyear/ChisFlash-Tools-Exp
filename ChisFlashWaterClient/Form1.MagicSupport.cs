@@ -56,26 +56,23 @@ public partial class Form1
         return true;
     }
 
-    private bool IsCurrentScanCapacityInvalid()
+    /// <summary>
+    /// 盖中盖口径（11-18 定案）：读数失败不设失败状态。CFI / NOR ID 读不到、容量 0、
+    /// 判定无卡、写保护、01G/02G 硬件未确认，一律不再让界面进入「容量无效 / 只读」，
+    /// GBA / GBC / MIX 三类卡都一样：扫描结果照样可用、按钮照样可点、擦写照跑。
+    /// 保留的只有下面的内容分流（MD / NES 内容必须走各自工作区），那不是读数失败。
+    /// </summary>
+    private bool IsCurrentScanCapacityInvalid() => false;
+
+    private static void EnsureCfiWindowAllowsBurn(NorGeometryInfo geometry)
     {
-        return HasActiveScanResult() &&
-               currentScanResult is not null &&
-               (currentScanResult.NoCartridgeDetected || currentScanResult.Geometry.DeviceSizeBytes <= 0);
+        // 全 00 和全 FF 的 CFI 按盖中盖的容量判断无法容纳 ROM 镜像。
+        if (geometry.IsCfiWindowBlank)
+            throw new InvalidOperationException(ClientText.T("client", "flash_no_space", "Not enough flash space."));
     }
 
     private bool EnsureCurrentScanCapacityValid(out string reason)
     {
-        if (IsCurrentScanCapacityInvalid())
-        {
-            reason = string.IsNullOrWhiteSpace(currentScanResult?.WriteProtectionReason)
-                ? T(
-                    "error",
-                    "scan_capacity_unavailable",
-                    "A valid NOR capacity was not obtained. Read the cartridge again before writing.")
-                : currentScanResult!.WriteProtectionReason;
-            return false;
-        }
-
         reason = string.Empty;
         return true;
     }
@@ -86,24 +83,6 @@ public partial class Form1
         if(currentScanResult?.IsFcMbcxContent == true)
         {
             reason=T("fc","use_nes_workspace","This card contains NES games. Use the MIX workspace; GB menu actions are disabled.");
-            return false;
-        }
-        if (!EnsureCurrentScanCapacityValid(out reason))
-        {
-            return false;
-        }
-
-        if (currentScanResult?.IsWriteProtected == true)
-        {
-            reason = string.IsNullOrWhiteSpace(currentScanResult.WriteProtectionReason)
-                ? T("error", "current_scan_read_only", "The current scan is read-only, so write/erase actions are disabled.")
-                : currentScanResult.WriteProtectionReason;
-            return false;
-        }
-
-        if (!allowLayoutReset && currentScanResult?.UsesChm1Layout == true && !currentScanResult.IsChm1)
-        {
-            reason = T("error", "chm1_hardware_unconfirmed", "The image uses 01G/02G fragment management local saves, but 01G/02G fragment management hardware was not identified. Editing is unavailable; full erase remains available.");
             return false;
         }
         reason = string.Empty;
@@ -143,12 +122,7 @@ public partial class Form1
             return false;
         }
 
-        if (currentScanResult?.NoCartridgeDetected == true)
-        {
-            reason = T("error", "unlock_ppb_no_cartridge", "No cartridge was detected, so PPB unlock cannot run.");
-            return false;
-        }
-
+        // 盖中盖口径：判定「无卡」也不再阻止 PPB 解锁。
         reason = string.Empty;
         return true;
     }
@@ -167,28 +141,7 @@ public partial class Form1
             return false;
         }
 
-        if (scan.NoCartridgeDetected)
-        {
-            reason = T("error", "erase_entire_nor_no_cartridge", "No cartridge was detected, so full NOR erase cannot run.");
-            return false;
-        }
-
-        if (scan.IsWriteProtected)
-        {
-            reason = string.IsNullOrWhiteSpace(scan.WriteProtectionReason)
-                ? T("error", "current_scan_read_only", "The current scan is read-only, so write/erase actions are disabled.")
-                : scan.WriteProtectionReason;
-            return false;
-        }
-
-        const int MaximumSupportedNorBytes = 4 * 128 * 1024 * 1024;
-        if (scan.Geometry.DeviceSizeBytes <= 0 ||
-            scan.Geometry.DeviceSizeBytes > MaximumSupportedNorBytes)
-        {
-            reason = T("error", "erase_entire_nor_capacity_invalid", "The detected NOR capacity is invalid.");
-            return false;
-        }
-
+        // 盖中盖口径：无卡 / 写保护 / 容量非法（含读数为 0 与超上限）全部不拦全片擦除。
         reason = string.Empty;
         return true;
     }
@@ -423,8 +376,8 @@ public partial class Form1
     private bool IsWorkspaceModificationLocked()
     {
         if (IsGbaConversionDraft()) return false;
-        return !HasActiveScanResult() || currentScanResult is null ||
-               currentScanResult.NoCartridgeDetected || currentScanResult.Geometry.DeviceSizeBytes <= 0;
+        // 盖中盖口径：无卡 / 容量读不到都不再锁工作区编辑。
+        return !HasActiveScanResult() || currentScanResult is null;
     }
 
     private string GetWorkspaceLockedMessage()
@@ -926,6 +879,13 @@ public partial class Form1
 
     private void UpdateActionButtons(bool busy)
     {
+        if (groupBoxList is not null) groupBoxList.Enabled = WorkspaceUnlocked;
+        UpdateCardActionButtons(busy);
+        RefreshPixelShell(busy);
+    }
+
+    private void UpdateCardActionButtons(bool busy)
+    {
         RefreshWaitcntPatchUi();
         RefreshGbaCardModeUi();
         if (IsGbaSingleCardMode()) { UpdateGbaSingleButtons(busy); return; }
@@ -941,15 +901,12 @@ public partial class Form1
         menuRom.Enabled=true;
         if (menuFcTools is not null) menuFcTools.Visible = false;
         menuCartridge.Enabled = true;
-        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
-        menuFcScan.Enabled = !busy;
         menuSave.Enabled = true;
         bool workspaceUiBusy = busy;
         bool hasMdImports = pendingImportItems.Any(item=>item.MdRom is not null);
         bool hasActiveScan = HasActiveScanResult();
         bool usesWaterLinkTargetMode = UsesSelectedMagicTargetMode();
-        MenuUpdateActionMode menuUpdateActionMode = GetMenuUpdateActionMode();
-        MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
+        bool isGbaWorkspace = SupportsGbaCardMode();
         bool workspaceLocked = IsWorkspaceModificationLocked();
         bool scanCapacityInvalid = IsCurrentScanCapacityInvalid();
         bool scanWriteProtected = currentScanResult?.IsWriteProtected == true;
@@ -978,19 +935,18 @@ public partial class Form1
         menuExit.Enabled = !workspaceUiBusy;
         menuFragmentTest.Enabled = !workspaceUiBusy && canRunFragmentTest;
         menuFragmentTest.Text = T("ui", "fragment_test", "Fragment Test");
-        menuUpdateMenu.Enabled = !workspaceUiBusy &&
-            !scanCapacityInvalid &&
-            menuUpdateActionMode != MenuUpdateActionMode.None;
+        menuUpdateMenu.Enabled = canModifyWorkspace;
         menuUpdateMenu.Text = usesWaterLinkTargetMode
             ? T("ui", "force_rebuild_menu", "重建菜单")
             : T("ui", "update_menu", "更新菜单");
-        menuReplaceMenuFile.Enabled = !workspaceUiBusy &&
-            !scanCapacityInvalid &&
-            menuUpdateActionMode is MenuUpdateActionMode.UpdateWaterLinkMenu or MenuUpdateActionMode.UpdateLegacyMenu;
+        menuReplaceMenuFile.Enabled = isGbaWorkspace
+            ? canModifyWorkspace && !IsGbaMulticartUnavailable()
+            : !workspaceUiBusy && !scanCapacityInvalid &&
+                GetMenuUpdateActionMode() is MenuUpdateActionMode.UpdateWaterLinkMenu or MenuUpdateActionMode.UpdateLegacyMenu;
         menuReplaceMenuFile.Text = T("ui", "replace_menu_file", "Rebuild From Menu File");
-        menuRepairMenu.Enabled = !workspaceUiBusy &&
-            !scanCapacityInvalid &&
-            missingMenuActionMode != MissingMenuActionMode.None;
+        menuRepairMenu.Enabled = isGbaWorkspace
+            ? canModifyWorkspace && !IsGbaMulticartUnavailable()
+            : !workspaceUiBusy && !scanCapacityInvalid && GetMissingMenuActionMode() != MissingMenuActionMode.None;
         menuUpdateBackground.Enabled = !workspaceUiBusy && CanUpdateMenuBackgroundCurrentScan(out _);
         menuEraseConfig.Enabled = !workspaceUiBusy &&
             hasActiveScan &&
@@ -1021,6 +977,16 @@ public partial class Form1
         menuStartBurn.Text = buttonQueueBurn.Text;
         buttonQueueAdd.Enabled=!workspaceUiBusy&&!isAnalyzingQueueImports;
         menuAddRom.Enabled=buttonQueueAdd.Enabled;
+        if (IsGbcFreeWorkspace())
+        {
+            buttonQueueAdd.Text = menuAddRom.Text = GbaCardText("add_game", "添加游戏", "Add Game");
+            buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
+            buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = canModifyWorkspace &&
+                (TryGetSelectedWorkspaceRow(out var row, out _) && row is { IsLoadingPlaceholder: false } ||
+                 CanRemoveGbcFreeMenu());
+            buttonQueueClear.Enabled = menuClearRomQueue.Enabled = canModifyWorkspace &&
+                (workspaceRows.Count > 0 || HasGbcFreeMenu());
+        }
         UpdateSelectionCommandStates();
         if(TryGetSelectedPendingImportItem(out var selectedImport,out _) && selectedImport?.MdRom is not null)
         {

@@ -2,6 +2,8 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    private const int LegacyChipErasePollDelayMs = 1000;
+
     private void EraseEntireLegacyNorOnDevice(string portName, WaterCartScanResult scan, int targetCount)
     {
         const int TargetBytes = 128 * 1024 * 1024;
@@ -9,7 +11,9 @@ public partial class Form1
         OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
         BeginMeasuredProgress(T("ui", "erase_entire_nor", "Erase Entire NOR"),
             scan.Geometry.DeviceSizeBytes, targetCount);
+        BeginMeasuredProgressPhase(targetCount, true, T("status", "erase_entire_nor_busy", "Erasing entire NOR…"));
 
+        int selectedBucket = -1;
         for (int target = 0; target < targetCount; target++)
         {
             int start = target * TargetBytes;
@@ -17,24 +21,23 @@ public partial class Form1
             AppendLog(Tf("log", "erase_entire_nor_target_start",
                 "Erase NOR target {0}: 0x{1:X8}-0x{2:X8}.", target, start, start + length - 1));
 
-            if (!TrySwitchLegacyBeggarBucketLocal(protocol, start / WaterCartScanner.BucketSizeBytes, 3000) ||
+            long eraseStart = StartLandscapeErase();
+            if (!TrySelectLegacyBeggarBucket(protocol, start / WaterCartScanner.BucketSizeBytes, ref selectedBucket) ||
                 !protocol.TryEraseLegacyRomChip() ||
-                !WaitForLegacyBeggarSectorErase(protocol, 0, 20 * 60 * 1000))
+                !WaitForLegacyBeggarSectorErase(protocol, 0, LegacyChipErasePollDelayMs))
             {
                 throw new IOException(Tf("error", "erase_entire_nor_target_failed",
                     "NOR target {0} chip erase failed or timed out: {1}", target, protocol.DescribeLastAckFailure()));
             }
 
+            FinishLandscapeErase(eraseStart, length);
             AdvanceMeasuredProgress(length, 1,
                 Tf("value", "erase_entire_nor_target_progress", "Erased target {0}/{1}", target + 1, targetCount));
             AppendLog(Tf("log", "erase_entire_nor_target_done",
                 "NOR target {0} erase completed.", target));
         }
 
-        if (!TrySwitchLegacyBeggarBucketLocal(protocol, 0, 3000))
-        {
-            throw new IOException(T("error", "erase_restore_bank_failed", "Erase completed, but restoring ROM bank 0 failed."));
-        }
+        RestoreGbaBatchBank(protocol, selectedBucket);
         CompleteMeasuredProgress(T("ui", "erase_entire_nor", "Erase Entire NOR"));
     }
 }

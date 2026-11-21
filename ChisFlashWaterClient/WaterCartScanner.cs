@@ -12,13 +12,15 @@ public static class WaterCartScanner
     public const int BucketSizeBytes = 4 * 1024 * 1024;
     private const int LegacyWaterLinkMultiNorSizeBytes = 512 * 1024 * 1024;
     private const int WaterLinkMultiNorChipSizeBytes = 128 * 1024 * 1024;
-    private const int LegacyBeggarTimeoutMs = 3000;
-    private const int GbcProbeTimeoutMs = 3000;
+    // Detection waits indefinitely, matching the legacy Beggar client: a finite
+    // idle timeout discards late-arriving bytes and desynchronizes the next reply.
+    private const int LegacyBeggarTimeoutMs = Timeout.Infinite;
+    private const int GbcProbeTimeoutMs = Timeout.Infinite;
 
     private const int MenuItemEntrySize = 0x70;
     private const int MenuEntriesPerChunk = 8;
     private const int MenuMaxEntries = 512;
-    private const int WaterProbeTimeoutMs = 1500;
+    private const int WaterProbeTimeoutMs = Timeout.Infinite;
     private const int WaterProbeLengthBytes = 192;
     private const int NorCfiDiagnosticWindowAddress = 0x10 << 1;
     private const int NorCfiDiagnosticWindowLengthBytes = 0x50;
@@ -30,7 +32,7 @@ public static class WaterCartScanner
     private const int GbcRomDirectoryHeaderSize = 64;
     private const int GbcRomEntrySize = 128;
     private const int GbcRomSramMapOffset = 110;
-    private const int GbcMaxGameSramBanks = 8;
+    private const int GbcMaxGameSramBanks = CompilationBuilder.GbcMaxGameSramBanks;
     private const int GbcSharedSramBankStart = 60;
     private const int GbcSharedSramBankCount = 4;
     private const int GbcTotalSramBankCount = GbcSharedSramBankStart + GbcSharedSramBankCount;
@@ -134,31 +136,25 @@ public static class WaterCartScanner
         Action<string>? log = null,
         bool useWaterLinkMultiNor = false,
         bool scanContent = true,
-        bool scanGameHeaders = false)
+        bool scanGameHeaders = false,
+        bool isChwq = false,
+        string? standardWaterLinkId = null)
     {
-        if (!device.TryReadLegacyNorId(out byte[] norId, 1500))
-        {
-            throw new InvalidOperationException(T("error", "read_nor_id_failed", "Failed to read NOR ID."));
-        }
+        // 盖中盖口径：NOR ID 读失败不抛异常、不判定「无卡」，留空数组继续扫。
+        if (!device.TryReadLegacyNorId(out byte[] norId, Timeout.Infinite))
+            norId = [];
 
         log?.Invoke(T(
             "log",
             "water_legacy_id_first",
             "WaterLink diagnostics: used legacy-compatible NOR ID read first."));
         log?.Invoke(BitConverter.ToString(norId).Replace("-", " "));
-        LogNorIdInference(norId, log);
-        NorGeometryInfo geometry;
-        if (LooksLikeNoCartridgeNorId(norId))
-        {
-            if(!TryReadNorGeometry(device,WaterProbeTimeoutMs,log,out geometry) || geometry.DeviceSizeBytes<=0)
-                return CreateNoCartridgeResult(norId);
-        }
-        else geometry=ReadNorGeometry(device,log:log);
-        NormalizeGeometryForWaterDirectAccess(geometry, norId, log);
-        NormalizeWaterDirectBufferWriteBytes(geometry, norId, log);
+        // CFI 读数一律原样使用，不因容量 0 / QRY 不符而返回无卡结果。
+        NorGeometryInfo geometry = ReadNorGeometry(device, WaterProbeTimeoutMs, log);
+        // 完整 NOR ID 决定型号、分类及双 die；容量与写缓冲仍使用现有 CFI 读取。
         geometry.IsS70Gl02GsDualDie = IsS70Gl02GsDualDieNorId(norId);
         WaterRuntimeStatusInfo runtimeStatus = ReadWaterRuntimeStatus(device, log);
-        bool detectedWaterLinkMultiNor = ResolveWaterLinkMultiNorMode(
+        bool detectedWaterLinkMultiNor = isChwq || standardWaterLinkId is null && ResolveWaterLinkMultiNorMode(
             geometry,
             runtimeStatus,
             useWaterLinkMultiNor,
@@ -167,7 +163,7 @@ public static class WaterCartScanner
         {
             ApplyWaterLinkMultiNorGeometry(geometry, runtimeStatus, log);
         }
-        if (scanContent && !IsSingleGameGbaNor(norId, geometry)) LogWaterDirectAddressDiagnostics(device, log);
+        if (scanContent && !IsSingleGameGbaNor(norId)) LogWaterDirectAddressDiagnostics(device, log);
         string? recognizedChipName = GetChipName(norId, geometry.DeviceSizeBytes, geometry.BufferWriteBytes);
         bool chipRecognized = !string.IsNullOrWhiteSpace(recognizedChipName);
         int detectedPhysicalChipCount = GetDetectedPhysicalNorChipCount(geometry, runtimeStatus);
@@ -180,13 +176,14 @@ public static class WaterCartScanner
         log?.Invoke(chipName);
         log?.Invoke(BuildCapacitySummary(geometry));
 
-        if ((scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId, geometry))
+        if (!isChwq && standardWaterLinkId is null && (scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId))
             return ReadSingleGameGbaResult(device, norId, geometry, chipName, chipRecognized, log);
 
         if (!scanContent)
         {
             var probe = CreateNorProbeResult(norId, geometry, chipName, chipRecognized);
             probe.RuntimeStatus = runtimeStatus;
+            probe.StandardWaterLinkId = standardWaterLinkId;
             if (scanGameHeaders && geometry.DeviceSizeBytes > 32 * 1024 * 1024)
             {
                 probe.Games = ScanNorGameHeaders(device, geometry.DeviceSizeBytes, log);
@@ -219,23 +216,23 @@ public static class WaterCartScanner
             CapacitySummary = FormatMiBSize(geometry.DeviceSizeBytes),
             SectorSummary = BuildSectorSummary(geometry),
             Geometry = geometry,
-            IsWriteProtected = geometry.DeviceSizeBytes <= 0,
-            WriteProtectionReason = geometry.DeviceSizeBytes > 0 ? string.Empty : GetCapacityUnavailableReason(),
+            IsWriteProtected = false,
+            WriteProtectionReason = string.Empty,
             Games = games,
             MenuConfig = menuConfig,
             WlMapping = wlMapping,
             MagicMetadataSync = magicMetadataSync,
             RuntimeStatus = runtimeStatus,
+            StandardWaterLinkId = standardWaterLinkId,
             Entries = entries,
         };
     }
 
-    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null, bool scanContent = true, bool scanGameHeaders = false)
+    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null, bool scanContent = true, bool scanGameHeaders = false, bool readLocalIdentity = true)
     {
+        // 盖中盖口径：NOR ID 读失败不抛异常，留空数组继续扫。
         if (!device.TryReadLegacyNorId(out byte[] norId, LegacyBeggarTimeoutMs))
-        {
-            throw new InvalidOperationException(T("error", "read_nor_id_failed", "Failed to read NOR ID."));
-        }
+            norId = [];
 
         log?.Invoke(BitConverter.ToString(norId).Replace("-", " "));
 
@@ -245,32 +242,42 @@ public static class WaterCartScanner
             "beggar_scan_path",
             "Detected the Beggar programmer. Using the legacy scan path: read NOR ID, CFI, 4MiB headers, and menu/WL metadata through plain ROM reads."));
 
-        NorGeometryInfo geometry;
-        if (!TryReadNorGeometry(device, LegacyBeggarTimeoutMs, log, out geometry))
+        // 盖中盖口径：CFI 读失败照样继续，读到的（可能是全 0）几何原样使用，
+        // 不判定无卡、不回落、不写保护。
+        NorGeometryInfo geometry = ReadNorGeometry(device, LegacyBeggarTimeoutMs, log);
+
+        bool isChm1 = false;
+        bool isChwq = false;
+        string? standardWaterLinkId = null;
+        if (readLocalIdentity)
         {
-            if(LooksLikeNoCartridgeNorId(norId))return CreateNoCartridgeResult(norId);
-            geometry = CreateFallbackLegacyBeggarGeometry(norId);
-            log?.Invoke(T(
-                "log",
-                "beggar_scan_cfi_fallback",
-                "CFI could not be decoded. Trying available NOR-ID geometry data; an unknown capacity remains unavailable."));
+            // 盖中盖口径：能力报告读失败留空数组继续，不抛异常、不写保护。
+            if (!device.TryReadLocalMagicId(out byte[] identifier))
+                identifier = [];
+            isChm1 = identifier.AsSpan().SequenceEqual(new byte[] { 0x43, 0x48, 0x4D, 0x31, 1, 3, 63, 8 });
+            isChwq = WaterDeviceProtocol.IsChwqIdentifier(identifier);
+            standardWaterLinkId = WaterDeviceProtocol.GetStandardWaterLinkId(identifier);
         }
+        if (isChm1) log?.Invoke(T("log", "chm1_detected", "Standalone 01G/02G fragment management cartridge detected."));
 
         geometry.IsS70Gl02GsDualDie = IsS70Gl02GsDualDieNorId(norId);
         string? recognizedChipName = GetChipName(norId, geometry.DeviceSizeBytes, geometry.BufferWriteBytes);
         bool chipRecognized = !string.IsNullOrWhiteSpace(recognizedChipName);
         string chipName = recognizedChipName ?? T("value", "chip_unknown", "Unknown / Needs confirmation");
-        bool writeProtected = geometry.DeviceSizeBytes <= 0;
+        // 盖中盖口径：容量读不到也不设写保护，读写照跑。
 
         log?.Invoke(chipName);
         log?.Invoke(BuildCapacitySummary(geometry));
 
-        if ((scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId, geometry))
+        if (!isChm1 && !isChwq && standardWaterLinkId is null && (scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId))
             return ReadSingleGameGbaResult(device, norId, geometry, chipName, chipRecognized, log);
 
         if (!scanContent)
         {
             var probe = CreateNorProbeResult(norId, geometry, chipName, chipRecognized);
+            probe.IsChm1 = isChm1;
+            probe.IsChwq = isChwq;
+            probe.StandardWaterLinkId = standardWaterLinkId;
             if (scanGameHeaders && geometry.DeviceSizeBytes > 32 * 1024 * 1024)
             {
                 probe.Games = ScanNorGameHeadersLegacyBeggar(device, geometry.DeviceSizeBytes, log);
@@ -314,8 +321,11 @@ public static class WaterCartScanner
             CapacitySummary = FormatMiBSize(geometry.DeviceSizeBytes),
             SectorSummary = BuildSectorSummary(geometry),
             Geometry = geometry,
-            IsWriteProtected = writeProtected,
-            WriteProtectionReason = writeProtected ? GetCapacityUnavailableReason() : string.Empty,
+            IsWriteProtected = false,
+            IsChm1 = isChm1,
+            IsChwq = isChwq,
+            StandardWaterLinkId = standardWaterLinkId,
+            WriteProtectionReason = string.Empty,
             Games = games,
             MenuConfig = menuConfig,
             WlMapping = wlMapping,
@@ -324,21 +334,20 @@ public static class WaterCartScanner
         };
     }
 
-    public static bool IsSingleGameGbaNor(byte[] id, NorGeometryInfo geometry) =>
-        geometry.DeviceSizeBytes == 32 * 1024 * 1024 &&
-        (IdMatches(id, 0x01, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
-         IdMatches(id, 0x89, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
-         IdMatches(id, 0xC2, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
-         IdMatches(id, 0x20, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22));
+    /// <summary>
+    /// 按已确认的完整 NOR ID 分类，不以 CFI 容量或缓冲大小推断单卡。
+    /// </summary>
+    public static bool IsSingleGameGbaNor(byte[] norId) =>
+        ClassifyGbaNor(norId) == GbaNorCategory.SingleGame;
 
     private static WaterCartScanResult ReadSingleGameGbaResult(WaterDeviceProtocol device, byte[] id,
         NorGeometryInfo geometry, string chipName, bool recognized, Action<string>? log)
     {
-        // 32 MiB单卡只读地址0，不发送合卡换页命令或读取合卡目录。
+        // 普通单卡只读地址 0，不发送合卡换页命令或读取合卡目录。
         var result = CreateNorProbeResult(id, geometry, chipName, recognized);
         byte[] header = new byte[200];
-        if (!device.TryReadRom(0, header, LegacyBeggarTimeoutMs))
-            throw new InvalidOperationException(T("error", "read_nor_header_failed", "Failed to read the single-game ROM header."));
+        // 盖中盖口径：读失败留着全 0 header 继续，不抛异常、不判定扫描失败。
+        _ = device.TryReadRom(0, header, LegacyBeggarTimeoutMs);
         result.IsNorProbeOnly = false;
         result.HasGbaHeaderScan = true;
         if (HasValidGbaHeader(header))
@@ -362,8 +371,8 @@ public static class WaterCartScanner
         CapacitySummary = FormatMiBSize(geometry.DeviceSizeBytes),
         SectorSummary = BuildSectorSummary(geometry),
         Geometry = geometry,
-        IsWriteProtected = geometry.DeviceSizeBytes <= 0,
-        WriteProtectionReason = geometry.DeviceSizeBytes > 0 ? string.Empty : GetCapacityUnavailableReason(),
+        IsWriteProtected = false,
+        WriteProtectionReason = string.Empty,
     };
 
     private static void PopulateOfflineGbaMenuImageState(
@@ -470,15 +479,10 @@ public static class WaterCartScanner
                 log?.Invoke(Tf("log", "beggar_max_probe_id", "GBC/MAX probe returned Flash ID: {0}", rawFlashIdHex));
             }
 
-            NorGeometryInfo? geometry = TryReadGbcNorGeometry(device, log);
+            // 盖中盖口径：ID 与 CFI 都读不到也照样给出扫描结果，不设失败门槛。
+            // 烧录时另有现场重读，这里只负责显示，不拿 NOR ID 猜容量。
+            NorGeometryInfo resolvedGeometry = ReadGbcNorGeometry(device, log);
             bool flashIdRecognized = flashIdRead && LooksLikeSupportedBeggarMaxId(flashId);
-
-            if (!flashIdRead && geometry is null)
-            {
-                return false;
-            }
-
-            NorGeometryInfo resolvedGeometry = geometry ?? CreateFallbackBeggarMaxGeometry(flashId);
             byte[] expandedNorId = flashIdRead
                 ? ExpandBeggarMaxIdToLegacyNorId(flashId)
                 : [];
@@ -501,13 +505,14 @@ public static class WaterCartScanner
                 IsMdMbcxContent = isMdContent,
                 IsChipRecognized = flashIdRecognized,
                 NorId = expandedNorId,
+                GbcFlashId = flashIdRead ? flashId.ToArray() : [],
                 RawNorIdHex = rawFlashIdHex,
                 ChipName = chipName,
                 CapacitySummary = FormatMiBSize(resolvedGeometry.DeviceSizeBytes),
                 SectorSummary = BuildSectorSummary(resolvedGeometry),
                 Geometry = resolvedGeometry,
-                IsWriteProtected = resolvedGeometry.DeviceSizeBytes <= 0,
-                WriteProtectionReason = resolvedGeometry.DeviceSizeBytes > 0 ? string.Empty : GetCapacityUnavailableReason(),
+                IsWriteProtected = false,
+                WriteProtectionReason = string.Empty,
                 Games = games,
                 Entries = entries,
             };
@@ -599,6 +604,64 @@ public static class WaterCartScanner
         };
     }
 
+    internal static WaterCartScanResult RebuildCachedGbaMenuResult(
+        WaterCartScanResult source,
+        WaterMenuConfigInfo? menuConfig = null,
+        byte[]? headImage = null,
+        byte[]? mappingSector = null,
+        bool preserveWlMapping = false)
+    {
+        IReadOnlyList<DetectedNorGameInfo> games = source.Games;
+        WaterWlMappingInfo? mapping = null;
+        if (headImage is not null)
+        {
+            games = ScanNorGameHeadersFromImage(headImage, null)
+                .Concat(source.Games.Where(game => game.StartBucket > 0)).ToList();
+            mapping = preserveWlMapping ? source.WlMapping : ReadWlMappingFromImage(headImage, null);
+            if (menuConfig is null)
+            {
+                var startBuckets = games.Where(game => !game.IsMenu && game.StartBucket > 0)
+                    .Select(game => game.StartBucket).ToHashSet();
+                menuConfig = ReadUniversalImageMenuConfigFromImage(headImage, startBuckets, null) ??
+                    (ShouldUseFixedWaterLinkMenuLayout(mapping)
+                        ? ReadFixedWaterLinkMenuConfigFromImage(headImage, startBuckets, null)
+                        : ReadMenuConfigFromImage(headImage, startBuckets, null));
+                if (mapping.IsDetected &&
+                    (mapping.Header.Flags & GbaMultiMenuBuilder.Services.Chm1Layout.LocalSaveFlag) != 0)
+                    menuConfig.Status.ExplicitSaveAreaAddress = GbaMultiMenuBuilder.Services.Chm1Layout.SaveAreaOffset;
+            }
+        }
+        if (mappingSector is not null)
+            WaterWlMappingCodec.TryParse(mappingSector, WaterWlMappingCodec.Offset, false, out mapping);
+
+        var result = RebuildCachedScanResult(source, mapping, menuConfig, games);
+        if (result.MenuConfig.IsDetected) result.IsNorProbeOnly = false;
+        ClearCachedSavePresence(result);
+        if (headImage is not null)
+        {
+            PopulateOfflineGbaMenuImageState(
+                headImage, result.MenuConfig, ShouldUseFixedWaterLinkMenuLayout(result.WlMapping), null,
+                out bool universal, out bool simplified, out var preview, out byte[] bitmap, out byte[] palette);
+            result.IsUniversalGbaMenuDetected = universal;
+            result.IsSimplifiedNsGbaMenuDetected = simplified;
+            result.GbaMenuFirstScreenPreview = preview;
+            result.MenuBackgroundBitmapData = bitmap;
+            result.MenuBackgroundPaletteData = palette;
+        }
+        return result;
+    }
+
+    internal static void ClearCachedSavePresence(WaterCartScanResult result)
+    {
+        result.SaveSlotSummary = new();
+        result.WaterLinkSaveDataByEntrySlot.Clear();
+        result.WaterLinkSaveStatusTextByEntrySlot.Clear();
+        result.LegacySaveDataByEntrySlot.Clear();
+        result.LegacySaveStatusTextByEntrySlot.Clear();
+        result.BatterylessSaveDataByEntrySlot.Clear();
+        result.BatterylessSaveStatusTextByEntrySlot.Clear();
+    }
+
     public static WaterCartScanResult RebuildCachedScanResult(
         WaterCartScanResult source,
         WaterWlMappingInfo? wlMappingOverride = null,
@@ -629,11 +692,14 @@ public static class WaterCartScanner
             IsFcMbcxContent = source.IsFcMbcxContent,
             IsMdMbcxContent = source.IsMdMbcxContent,
             IsChm1 = source.IsChm1,
+            IsChwq = source.IsChwq,
+            StandardWaterLinkId = source.StandardWaterLinkId,
             HasBeggarMaxDirectoryHeaders = source.HasBeggarMaxDirectoryHeaders,
             IsChipRecognized = source.IsChipRecognized,
             IsWriteProtected = source.IsWriteProtected,
             WriteProtectionReason = source.WriteProtectionReason,
             NorId = source.NorId.ToArray(),
+            GbcFlashId = source.GbcFlashId.ToArray(),
             RawNorIdHex = source.RawNorIdHex,
             ChipName = source.ChipName,
             CapacitySummary = source.CapacitySummary,
@@ -641,6 +707,7 @@ public static class WaterCartScanner
             Geometry = new NorGeometryInfo
             {
                 DeviceSizeBytes = source.Geometry.DeviceSizeBytes,
+                IsCfiWindowBlank = source.Geometry.IsCfiWindowBlank,
                 SectorCount = source.Geometry.SectorCount,
                 SectorSizeBytes = source.Geometry.SectorSizeBytes,
                 BufferWriteBytes = source.Geometry.BufferWriteBytes,
@@ -650,6 +717,8 @@ public static class WaterCartScanner
                 CommandSetName = source.Geometry.CommandSetName,
                 IsS70Gl02GsDualDie = source.Geometry.IsS70Gl02GsDualDie,
                 IsWaterLinkMultiNor = source.Geometry.IsWaterLinkMultiNor,
+                EraseRegions = source.Geometry.EraseRegions.ToArray(),
+                GbcBootBlockFlag = source.Geometry.GbcBootBlockFlag,
             },
             Games = games,
             MenuConfig = menuConfig,
@@ -704,11 +773,7 @@ public static class WaterCartScanner
         int timeoutMs = Timeout.Infinite,
         Action<string>? log = null)
     {
-        if (!TryReadNorGeometry(device, timeoutMs, log, out NorGeometryInfo geometry))
-        {
-            throw new InvalidOperationException(T("error", "read_cfi_failed", "Failed to read CFI data."));
-        }
-
+        _ = TryReadNorGeometry(device, timeoutMs, log, out NorGeometryInfo geometry);
         return geometry;
     }
 
@@ -718,28 +783,29 @@ public static class WaterCartScanner
         Action<string>? log,
         out NorGeometryInfo geometry)
     {
-        geometry = new NorGeometryInfo();
-        if (!TryProbeNorCfi(device, timeoutMs, log, out NorCfiProbeResult? probe) ||
-            probe is null)
-        {
-            return false;
-        }
+        // 盖中盖口径：探测永不失败，读到的（可能是全 0）几何原样返回。
+        _ = TryProbeNorCfi(device, timeoutMs, log, out NorCfiProbeResult? probe);
+        NorCfiProbeResult cfi = probe ?? new NorCfiProbeResult();
 
         geometry = new NorGeometryInfo
         {
-            DeviceSizeBytes = probe.DeviceSizeBytes,
-            SectorCount = probe.SectorCount,
-            SectorSizeBytes = probe.SectorSizeBytes,
-            LargestSectorSizeBytes = probe.LargestSectorSizeBytes,
-            BufferWriteBytes = probe.BufferWriteBytes,
-            RegionCount = probe.RegionCount,
-            PrimaryCommandSetId = probe.PrimaryCommandSetId,
-            CommandSetName = probe.CommandSetName,
+            DeviceSizeBytes = cfi.DeviceSizeBytes,
+            IsCfiWindowBlank = IsBlankNorCfiWindow(cfi.RawWindow),
+            SectorCount = cfi.SectorCount,
+            SectorSizeBytes = cfi.SectorSizeBytes,
+            LargestSectorSizeBytes = cfi.LargestSectorSizeBytes,
+            BufferWriteBytes = cfi.BufferWriteBytes,
+            RegionCount = cfi.RegionCount,
+            PrimaryCommandSetId = cfi.PrimaryCommandSetId,
+            CommandSetName = cfi.CommandSetName,
         };
 
-        LogNorCfiDiagnostics(probe, geometry, log);
+        LogNorCfiDiagnostics(cfi, geometry, log);
         return true;
     }
+
+    private static bool IsBlankNorCfiWindow(ReadOnlySpan<byte> window) =>
+        !window.IsEmpty && window[0] is (0x00 or 0xFF) && window.IndexOfAnyExcept(window[0]) < 0;
 
     public static List<DetectedNorGameInfo> ScanNorGameHeaders(WaterDeviceProtocol device, int deviceSizeBytes, Action<string>? log = null)
     {
@@ -812,13 +878,9 @@ public static class WaterCartScanner
         int timeoutMs,
         Action<string>? log)
     {
-        if (!TryProbeNorCfi(device, timeoutMs, log, out NorCfiProbeResult? result) ||
-            result is null)
-        {
-            throw new InvalidOperationException(T("error", "read_cfi_failed", "Failed to read CFI data."));
-        }
-
-        return result;
+        // 盖中盖口径：CFI 读失败不抛异常，返回这次读到的（可能是全 0）结果继续跑。
+        _ = TryProbeNorCfi(device, timeoutMs, log, out NorCfiProbeResult? result);
+        return result ?? new NorCfiProbeResult();
     }
 
     private static bool TryProbeNorCfi(
@@ -828,22 +890,15 @@ public static class WaterCartScanner
         out NorCfiProbeResult? result)
     {
         const uint enterWordAddress = 0x55u;
-        result = null;
-        if (!TryEnterNorCfi(device, enterWordAddress, timeoutMs))
-        {
-            return false;
-        }
-
+        // 0x98 / 窗口读 / 0xF0 的返回值一律忽略：读失败就留着全 0 buffer 继续解析。
+        _ = TryEnterNorCfi(device, enterWordAddress, timeoutMs);
         try
         {
             byte[] window = new byte[NorCfiReadWindowBytes];
-            if (!device.TryReadRom(0u, window, timeoutMs))
-            {
-                return false;
-            }
-
-            return TryParseNorCfiWindow(window, (int)enterWordAddress, out result) &&
-                   result is not null;
+            _ = device.TryReadRom(0u, window, timeoutMs);
+            _ = TryParseNorCfiWindow(window, (int)enterWordAddress, out result);
+            result ??= new NorCfiProbeResult();
+            return true;
         }
         finally
         {
@@ -867,67 +922,39 @@ public static class WaterCartScanner
         int enterWordAddress,
         out NorCfiProbeResult? result)
     {
-        result = null;
-
+        // 盖中盖 gba_romGetSize() 口径：不检查这次读是否成功、不校验 QRY / 容量指数 /
+        // region 数 / 扇区大小 / 命令集；读到什么就用什么，读失败就留着全 0 buffer 继续。
+        // 绝不因读数异常返回失败或阻止后续读写。
         if (window.Length < NorCfiReadWindowBytes)
         {
-            return false;
-        }
-
-        if (window[0x20] != (byte)'Q' ||
-            window[0x22] != (byte)'R' ||
-            window[0x24] != (byte)'Y')
-        {
-            return false;
+            byte[] padded = new byte[NorCfiReadWindowBytes];
+            window.CopyTo(padded, 0);
+            window = padded;
         }
 
         int deviceExponent = window[0x4E];
-        if (deviceExponent <= 0 || deviceExponent >= 31)
-        {
-            return false;
-        }
-
-        int deviceSizeBytes = 1 << deviceExponent;
+        int deviceSizeBytes = deviceExponent < 31 ? 1 << deviceExponent : 0;
         int bufferWriteExponent = ReadCfiLaneU16(window, 0x54);
         int bufferWriteBytes = bufferWriteExponent <= 1 || bufferWriteExponent >= 16
             ? 0
             : 1 << bufferWriteExponent;
 
         int regionCount = window[0x58];
-        if (regionCount <= 0)
-        {
-            return false;
-        }
-
         int sectorCount = 0;
         int smallestSectorSizeBytes = 0;
         int largestSectorSizeBytes = 0;
 
-        for (int i = 0; i < regionCount; i++)
+        for (int i = 0; i < Math.Min(regionCount, 4); i++)
         {
             int baseOffset = 0x5A + (i * 8);
-            if (baseOffset + 6 >= window.Length)
-            {
-                return false;
-            }
-
             int sectorCountInRegion = ReadCfiLaneU16(window, baseOffset) + 1;
             int sectorSizeInRegion = ReadCfiLaneU16(window, baseOffset + 4) * 256;
-            if (sectorCountInRegion <= 0 || sectorSizeInRegion <= 0)
-            {
-                return false;
-            }
 
             sectorCount += sectorCountInRegion;
             smallestSectorSizeBytes = smallestSectorSizeBytes == 0
                 ? sectorSizeInRegion
                 : Math.Min(smallestSectorSizeBytes, sectorSizeInRegion);
             largestSectorSizeBytes = Math.Max(largestSectorSizeBytes, sectorSizeInRegion);
-        }
-
-        if (sectorCount <= 0 || smallestSectorSizeBytes <= 0)
-        {
-            return false;
         }
 
         ushort primaryCommandSetId = (ushort)ReadCfiLaneU16(window, 0x26);
@@ -1128,6 +1155,15 @@ public static class WaterCartScanner
         if (isFcContent || isMdContent) return false; // Recognized NES data is not a GB directory failure.
         games = [];
         entries = [];
+        int selectedBank = -1;
+        byte[] header = new byte[0x150];
+        if (TryReadBeggarMaxRomRange(device, 0, header, ref selectedBank) &&
+            TryBuildBeggarMaxSingleRomEntry(header, deviceSizeBytes, out var single))
+        {
+            entries.Add(single);
+            games.Add(single.HeaderGame!);
+            return false;
+        }
         log?.Invoke(T(
             "log",
             "beggar_max_directory_missing_empty",
@@ -1146,13 +1182,14 @@ public static class WaterCartScanner
         entries = [];
         int visibleIndex = 0;
         int dedicatedSaveBankCursor = 0;
+        int selectedBank = -1;
 
         log?.Invoke(T("log", "beggar_max_header_scan_start", "Start scanning MAX MBC5 header slots."));
 
         foreach (BeggarMaxSlotCandidate candidate in EnumerateBeggarMaxSlotCandidates(deviceSizeBytes))
         {
             byte[] header = new byte[0x150];
-            if (!TryReadBeggarMaxRomRange(device, candidate.StartAddress, header))
+            if (!TryReadBeggarMaxRomRange(device, candidate.StartAddress, header, ref selectedBank))
             {
                 log?.Invoke(Tf(
                     "log",
@@ -1238,8 +1275,9 @@ public static class WaterCartScanner
 
         byte[] configHeader = new byte[GbcConfigHeaderSize];
         byte[] directoryHeader = new byte[GbcRomDirectoryHeaderSize];
-        if (!TryReadBeggarMaxRomRange(device, GbcConfigOffsetBytes, configHeader) ||
-            !TryReadBeggarMaxRomRange(device, GbcRomDirectoryOffsetBytes, directoryHeader))
+        int selectedBank = -1;
+        if (!TryReadBeggarMaxRomRange(device, GbcConfigOffsetBytes, configHeader, ref selectedBank) ||
+            !TryReadBeggarMaxRomRange(device, GbcRomDirectoryOffsetBytes, directoryHeader, ref selectedBank))
         {
             return false;
         }
@@ -1288,12 +1326,12 @@ public static class WaterCartScanner
         for (int index = 0; index < entryCount; index++)
         {
             byte[] entryBytes = new byte[entrySize];
-            if (!TryReadBeggarMaxRomRange(device, checked((int)entryBase + (index * entrySize)), entryBytes))
+            if (!TryReadBeggarMaxRomRange(device, checked((int)entryBase + (index * entrySize)), entryBytes, ref selectedBank))
             {
                 continue;
             }
 
-            if (!TryParseBeggarMaxDirectoryEntry(device, index, entryBytes, useChineseDirectoryNames, out BeggarMaxDirectoryEntryInfo? parsedInfo) ||
+            if (!TryParseBeggarMaxDirectoryEntry(device, index, entryBytes, useChineseDirectoryNames, ref selectedBank, out BeggarMaxDirectoryEntryInfo? parsedInfo) ||
                 parsedInfo is null)
             {
                 continue;
@@ -1346,6 +1384,7 @@ public static class WaterCartScanner
         int index,
         byte[] entryBytes,
         bool useChineseDirectoryName,
+        ref int selectedBank,
         out BeggarMaxDirectoryEntryInfo? info)
     {
         info = null;
@@ -1373,12 +1412,17 @@ public static class WaterCartScanner
 
         int absoluteAddress = checked(romOffsetBank * GameBoyRomHeaderService.RomBankSize);
         byte[] header = new byte[0x150];
-        if (!TryReadBeggarMaxRomRange(device, absoluteAddress, header) ||
+        if (!TryReadBeggarMaxRomRange(device, absoluteAddress, header, ref selectedBank) ||
             !TryParseBeggarMaxHeader(header, out BeggarMaxHeaderInfo headerInfo))
         {
             return false;
         }
 
+        // 旧菜单遇到首项 FE/FF 时走固件默认的共享区。
+        if (ramBankCount is > 0 and <= GbcSharedSramBankCount && saveMap[0] is 0xFE or 0xFF)
+        {
+            for (int i = 0; i < ramBankCount; i++) saveMap[i] = (byte)(GbcSharedSramBankStart + i);
+        }
         bool usesSharedSave = ramBankCount > 0 &&
             saveMap[0] >= GbcSharedSramBankStart &&
             saveMap[0] < GbcTotalSramBankCount;
@@ -1475,36 +1519,15 @@ public static class WaterCartScanner
             return 0;
         }
 
-        if (!usesSharedSave)
-        {
-            if (cartridgeType is 0x05 or 0x06)
-            {
-                return 0x200;
-            }
-
-            if (info.RamSizeBytes > 0)
-            {
-                return Math.Max(info.RamSizeBytes, GameBoyRomHeaderService.RamBankSize);
-            }
-
-            return Math.Max(0, ramBankCount) * GameBoyRomHeaderService.RamBankSize;
-        }
-
         if (cartridgeType is 0x05 or 0x06)
         {
             return 0x200;
         }
 
-        if (info.RamSizeBytes > 0)
-        {
-            return Math.Min(
-                Math.Max(info.RamSizeBytes, GameBoyRomHeaderService.RamBankSize),
-                0x8000);
-        }
-
-        return ramBankCount > 0
-            ? Math.Min(ramBankCount * GameBoyRomHeaderService.RamBankSize, 0x8000)
-            : 0;
+        int length = info.RamSizeBytes > 0
+            ? info.RamSizeBytes
+            : ramBankCount * GameBoyRomHeaderService.RamBankSize;
+        return usesSharedSave ? Math.Min(length, 0x8000) : length;
     }
 
     private static string BuildBeggarMaxDirectorySaveTypeText(BeggarMaxDirectoryEntryInfo info)
@@ -1539,7 +1562,7 @@ public static class WaterCartScanner
         return candidates.Where(candidate => candidate.StartAddress < deviceSizeBytes);
     }
 
-    private static bool TryReadBeggarMaxRomRange(WaterDeviceProtocol device, int absoluteAddress, byte[] buffer)
+    private static bool TryReadBeggarMaxRomRange(WaterDeviceProtocol device, int absoluteAddress, byte[] buffer, ref int selectedBank)
     {
         int offset = 0;
         while (offset < buffer.Length)
@@ -1550,9 +1573,11 @@ public static class WaterCartScanner
             int availableInBank = 0x4000 - (currentAddress & 0x3FFF);
             int readLength = Math.Min(buffer.Length - offset, availableInBank);
 
-            if (!TrySwitchBeggarMaxRomBank(device, bank))
+            if (bank != selectedBank)
             {
-                return false;
+                selectedBank = -1;
+                if (!TrySwitchBeggarMaxRomBank(device, bank)) return false;
+                selectedBank = bank;
             }
 
             byte[] chunk = new byte[readLength];
@@ -1575,6 +1600,34 @@ public static class WaterCartScanner
 
         return device.TryWriteGbc(0x3000, [high], GbcProbeTimeoutMs) &&
                device.TryWriteGbc(0x2000, [low], GbcProbeTimeoutMs);
+    }
+
+    internal static bool TryBuildBeggarMaxSingleRomEntry(byte[] header, int capacity, out WaterCartEntry entry)
+    {
+        entry = null!;
+        if (header.Length < 0x150) return false;
+        GameBoyRomMetadata metadata = GameBoyRomHeaderService.Read("cartridge.gb", header);
+        if (!metadata.HasValidNintendoLogo || metadata.DeclaredRomSizeBytes <= 0 ||
+            (capacity > 0 && metadata.DeclaredRomSizeBytes > capacity) ||
+            metadata.HeaderTitle.Equals("MULTICARTLDR", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        entry = new WaterCartEntry
+        {
+            HeaderGame = new() { Title = metadata.HeaderTitle },
+            AllocatedSizeBytesOverride = (int)metadata.DeclaredRomSizeBytes,
+            RomOffsetBankOverride = 0,
+            RomBankCountOverride = metadata.DeclaredRomBankCount,
+            SourceTextOverride = T("value", "source_gbc", "GBC"),
+            SaveLengthBytesOverride = metadata.HasBattery
+                ? metadata.CartridgeType is 0x05 or 0x06 ? 0x200 : metadata.EffectiveRamBankCount * GameBoyRomHeaderService.RamBankSize
+                : 0,
+            SaveBankMapOverride = Enumerable.Range(0, metadata.EffectiveRamBankCount).Select(bank => (byte)bank).ToArray(),
+            RamBankCountOverride = metadata.EffectiveRamBankCount,
+            MbcTypeOverride = metadata.CartridgeType,
+            HasBatteryOverride = metadata.HasBattery,
+        };
+        return true;
     }
 
     private static bool TryParseBeggarMaxHeader(byte[] header, out BeggarMaxHeaderInfo info)
@@ -1649,8 +1702,7 @@ public static class WaterCartScanner
     {
         return ramSizeCode switch
         {
-            // MAX SRAM is allocated and transferred in whole 8 KiB banks.
-            0x01 => 8 * 1024,
+            0x01 => 2 * 1024,
             0x02 => 8 * 1024,
             0x03 => 32 * 1024,
             0x04 => 128 * 1024,
@@ -1835,96 +1887,30 @@ public static class WaterCartScanner
     public static string? GetChipName(byte[] id, int deviceSize) =>
         GetChipName(id, deviceSize, 0);
 
-    public static string? GetChipName(byte[] id, int deviceSize, int bufferWriteBytes)
+    // 保留现有调用签名；容量和写缓冲不参与型号匹配。
+    public static string? GetChipName(byte[] id, int deviceSize, int bufferWriteBytes) =>
+        MatchGbaNorId(id).Name;
+
+    public static GbaNorCategory ClassifyGbaNor(byte[] id) => MatchGbaNorId(id).Category;
+
+    private readonly record struct GbaNorIdentity(string? Name, GbaNorCategory Category, bool IsDualDie = false);
+
+    // ????? 8 ?? ID ??????????? ID ???? CFI ?????
+    private static GbaNorIdentity MatchGbaNorId(byte[] id) => Convert.ToHexString(id) switch
     {
-        if (id.Length < 8)
-        {
-            return null;
-        }
-
-        if (id[0] == 0x01 &&
-            id[1] == 0x00 &&
-            id[2] == 0x7E &&
-            id[3] == 0x22 &&
-            id[5] == 0x22 &&
-            id[6] == 0x01 &&
-            id[7] == 0x22)
-        {
-            return GetSpansionGlChipName(id[4], bufferWriteBytes);
-        }
-
-        if (IdMatches(id, 0x89, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22))
-        {
-            return "JS28F256 / MT28EW256ABA";
-        }
-
-        if (id[0] == 0x89 &&
-            id[1] == 0x00 &&
-            id[2] == 0x7E &&
-            id[3] == 0x22 &&
-            id[5] == 0x22 &&
-            id[6] == 0x01 &&
-            id[7] == 0x22)
-        {
-            return id[4] switch
-            {
-                0x21 => "Intel/Micron NOR family (128Mbit)",
-                0x22 => "JS28F256 / MT28EW256ABA",
-                0x28 when deviceSize == 128 * 1024 * 1024 => "MT28EW01G-family (inferred)",
-                0x28 => "Intel/Micron NOR family (1Gbit)",
-                0x48 => "Intel/Micron NOR family (2Gbit)",
-                _ => null,
-            };
-        }
-
-        if (IdMatches(id, 0xC2, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22))
-        {
-            return "MX29GL256E/F";
-        }
-
-        if (IdMatches(id, 0x20, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22))
-        {
-            return "M29W256G";
-        }
-
-        return null;
-    }
-
-    private static string? GetSpansionGlChipName(byte densityCode, int bufferWriteBytes)
-    {
-        return densityCode switch
-        {
-            0x21 => bufferWriteBytes switch
-            {
-                32 => "S29GL128N",
-                64 => "S29GL128P",
-                512 => "S29GL128S",
-                _ => "S29GL128N/P/S",
-            },
-            0x22 => bufferWriteBytes switch
-            {
-                32 => "S29GL256N",
-                64 => "S29GL256P",
-                512 => "S29GL256S",
-                _ => "S29GL256N/P/S",
-            },
-            0x23 => bufferWriteBytes switch
-            {
-                32 => "S29GL512N",
-                64 => "S29GL512P",
-                512 => "S29GL512S",
-                _ => "S29GL512N/P/S",
-            },
-            0x28 => bufferWriteBytes switch
-            {
-                64 => "S29GL01GP",
-                512 => "S29GL01GS",
-                _ => "S29GL01GP/GS",
-            },
-            0x48 => "S70GL02GS",
-            _ => null,
-        };
-    }
+        "01007E2221220122" => new("S29GL128N/P/S", GbaNorCategory.SingleGame),
+        "89007E2221220122" => new("JS28F128M29EWL/EWH / MT28EW128ABA", GbaNorCategory.SingleGame),
+        "01007E2222220122" => new("S29GL256N/P", GbaNorCategory.SingleGame),
+        "89007E2222220122" => new("JS28F256M29EWL/EWH / MT28EW256ABA", GbaNorCategory.SingleGame),
+        "C2007E2222220122" => new("MX29GL256E/F", GbaNorCategory.SingleGame),
+        "20007E2222220122" => new("M29W256G", GbaNorCategory.SingleGame),
+        "01007E2223220122" => new("S29GL512N/P/S", GbaNorCategory.Multicart),
+        "01007E2228220122" => new("S29GL01GP/GS", GbaNorCategory.Multicart),
+        "89007E2228220122" => new("Intel/Micron 01G", GbaNorCategory.Multicart),
+        "01007E2248220122" => new("S70GL02GS", GbaNorCategory.Multicart, true),
+        "89007E2248220122" => new("MT28FW02GBBA", GbaNorCategory.Multicart, true),
+        _ => default,
+    };
 
     public static string? GetBeggarMaxChipName(byte[] id, int deviceSize)
     {
@@ -1933,12 +1919,27 @@ public static class WaterCartScanner
             return null;
         }
 
+        // 一级类按 CFI 容量分流；8M / 32M 各查自己的收录表。
+        // ID 只给型号，扇区布局一律由 CFI region 表动态生成，不按 ID 推。
+        if (deviceSize == GbcNorIdCatalog.EightMiBBytes &&
+            GbcNorIdCatalog.TryMatch(id, out string eightMiBName, out _))
+        {
+            return eightMiBName;
+        }
+
+        // 32M 档按手册全部均匀 128 KiB 扇区，擦除与其他 GBC 单卡一样走 CFI 动态表；这里只按 ID 给型号。
+        if (deviceSize == GbcNorIdCatalog.ThirtyTwoMiBBytes &&
+            GbcNorIdCatalog.TryMatch32MiB(id, out string thirtyTwoMiBName))
+        {
+            return thirtyTwoMiBName;
+        }
+
         if (id[0] == 0x01 && id[1] == 0x7E)
         {
             return id[2] switch
             {
                 0x21 => "S29GL128N/P/S",
-                0x22 => "S29GL256N/P/S",
+                0x22 => "S29GL256N/P",
                 0x23 => "S29GL512N/P/S",
                 0x28 => "S29GL01GP/GS",
                 0x48 => "S70GL02GS",
@@ -1950,7 +1951,7 @@ public static class WaterCartScanner
         {
             return id[2] switch
             {
-                0x22 => "JS28F256 / MT28EW256ABA",
+                0x22 => "JS28F256M29EWL/EWH / MT28EW256ABA",
                 0x28 when deviceSize == 128 * 1024 * 1024 => "MT28EW01G-family",
                 _ => "Intel/Micron NOR family",
             };
@@ -1973,67 +1974,10 @@ public static class WaterCartScanner
 
         if (id[0] == 0x20 && id[1] == 0x7E && id[2] == 0x22)
         {
-            return "M29W256G";
+            return "M29W256GH/GL";
         }
 
         return null;
-    }
-
-    private static void NormalizeGeometryForWaterDirectAccess(
-        NorGeometryInfo geometry,
-        byte[] norId,
-        Action<string>? log)
-    {
-        if (!TryGetKnownNorDeviceSizeBytes(norId, out int inferredDeviceSize))
-        {
-            return;
-        }
-
-        if (inferredDeviceSize <= 0 || geometry.DeviceSizeBytes >= inferredDeviceSize)
-        {
-            return;
-        }
-
-        int previousDeviceSize = geometry.DeviceSizeBytes;
-        geometry.DeviceSizeBytes = inferredDeviceSize;
-
-        if (geometry.SectorSizeBytes > 0)
-        {
-            geometry.SectorCount = DivCeil(geometry.DeviceSizeBytes, geometry.SectorSizeBytes);
-        }
-
-        log?.Invoke(Tf(
-            "log",
-            "water_geometry_capacity_corrected",
-            "WaterLink direct-address scan corrected NOR capacity from {0} to {1} using the NOR ID.",
-            FormatMiBSize(previousDeviceSize),
-            FormatMiBSize(geometry.DeviceSizeBytes)));
-    }
-
-    private static void NormalizeWaterDirectBufferWriteBytes(
-        NorGeometryInfo geometry,
-        byte[] norId,
-        Action<string>? log)
-    {
-        if (!TryGetKnownWaterDirectBufferWriteBytes(norId, out int knownBufferWriteBytes))
-        {
-            return;
-        }
-
-        if (knownBufferWriteBytes <= 0 || geometry.BufferWriteBytes == knownBufferWriteBytes)
-        {
-            return;
-        }
-
-        int previousBufferWriteBytes = geometry.BufferWriteBytes;
-        geometry.BufferWriteBytes = knownBufferWriteBytes;
-
-        log?.Invoke(Tf(
-            "log",
-            "water_geometry_buffer_corrected",
-            "WaterLink direct-address scan corrected NOR buffer write size from {0} to {1}.",
-            FormatBufferWriteSize(previousBufferWriteBytes),
-            FormatBufferWriteSize(geometry.BufferWriteBytes)));
     }
 
     private static void ApplyWaterLinkMultiNorGeometry(
@@ -2134,109 +2078,7 @@ public static class WaterCartScanner
         return count;
     }
 
-    private static bool TryGetKnownWaterDirectBufferWriteBytes(byte[] id, out int bufferWriteBytes)
-    {
-        bufferWriteBytes = 0;
-
-        if (id.Length < 8)
-        {
-            return false;
-        }
-
-        if (IdMatches(id, 0x89, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22))
-        {
-            bufferWriteBytes = 1024;
-            return true;
-        }
-
-        if (IdMatches(id, 0x01, 0x00, 0x7E, 0x22, 0x48, 0x22, 0x01, 0x22))
-        {
-            bufferWriteBytes = 512;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool TryGetKnownNorDeviceSizeBytes(byte[] id, out int deviceSizeBytes)
-    {
-        deviceSizeBytes = 0;
-
-        if (id.Length < 8)
-        {
-            return false;
-        }
-
-        if ((id[0] == 0x01 || id[0] == 0x89) &&
-            id[1] == 0x00 &&
-            id[2] == 0x7E &&
-            id[3] == 0x22 &&
-            id[5] == 0x22 &&
-            id[6] == 0x01 &&
-            id[7] == 0x22)
-        {
-            return TryGetDensityMappedDeviceSizeBytes(id[4], out deviceSizeBytes);
-        }
-
-        if (IdMatches(id, 0xC2, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22) ||
-            IdMatches(id, 0x20, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22))
-        {
-            deviceSizeBytes = 32 * 1024 * 1024;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool IsS70Gl02GsDualDieNorId(byte[] norId)
-    {
-        if (norId.Length < 8)
-        {
-            return false;
-        }
-
-        // S70GL02GS exposes a continuous 256 MiB read space, but program/erase
-        // commands must be directed to the correct 128 MiB die.
-        return norId[0] == 0x01 &&
-               norId[1] == 0x00 &&
-               norId[2] == 0x7E &&
-               norId[3] == 0x22 &&
-               norId[4] == 0x48 &&
-               norId[5] == 0x22 &&
-               norId[6] == 0x01 &&
-               norId[7] == 0x22;
-    }
-
-    private static bool IsMtNorFamily(byte[] norId)
-    {
-        if (norId.Length < 8)
-        {
-            return false;
-        }
-
-        return norId[0] == 0x89 &&
-               norId[1] == 0x00 &&
-               norId[2] == 0x7E &&
-               norId[3] == 0x22 &&
-               norId[5] == 0x22 &&
-               norId[6] == 0x01 &&
-               norId[7] == 0x22;
-    }
-
-    private static bool TryGetDensityMappedDeviceSizeBytes(byte densityCode, out int deviceSizeBytes)
-    {
-        deviceSizeBytes = densityCode switch
-        {
-            0x21 => 16 * 1024 * 1024,
-            0x22 => 32 * 1024 * 1024,
-            0x23 => 64 * 1024 * 1024,
-            0x28 => 128 * 1024 * 1024,
-            0x48 => 256 * 1024 * 1024,
-            _ => 0,
-        };
-
-        return deviceSizeBytes > 0;
-    }
+    private static bool IsS70Gl02GsDualDieNorId(byte[] norId) => MatchGbaNorId(norId).IsDualDie;
 
     public static WaterRuntimeStatusInfo ParseExtendedRuntimeStatus(byte[] extendedPayload)
     {
@@ -2326,26 +2168,6 @@ public static class WaterCartScanner
             supportsFixedLayout,
             norChipValidMask,
             norChipCount));
-    }
-
-    private static void LogNorIdInference(byte[] norId, Action<string>? log)
-    {
-        if (log is null)
-        {
-            return;
-        }
-
-        if (TryGetKnownNorDeviceSizeBytes(norId, out int inferredDeviceSize))
-        {
-            log.Invoke(Tf(
-                "log",
-                "water_diag_nor_id_capacity_hint",
-                "WaterLink diagnostics: NOR ID capacity hint = {0}",
-                FormatMiBSize(inferredDeviceSize)));
-            return;
-        }
-
-        log.Invoke(T("log", "water_diag_nor_id_capacity_unknown", "WaterLink diagnostics: NOR ID capacity hint is unavailable for this ID."));
     }
 
     private static void LogNorCfiDiagnostics(
@@ -2955,7 +2777,7 @@ public static class WaterCartScanner
         return config;
     }
 
-    public static WaterWlMappingInfo ReadWlMapping(WaterDeviceProtocol device, Action<string>? log, int timeoutMsPerChunk = 3000)
+    public static WaterWlMappingInfo ReadWlMapping(WaterDeviceProtocol device, Action<string>? log, int timeoutMsPerChunk = Timeout.Infinite)
     {
         log?.Invoke(T("log", "start_parse_wl_mapping", "Start parsing WL mapping sector."));
 
@@ -3484,50 +3306,6 @@ public static class WaterCartScanner
             FormatSlotList(syncInfo.NonSequentialRecordSlots)));
     }
 
-    private static bool IdMatches(byte[] id, params byte[] expected)
-    {
-        if (id.Length != expected.Length)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < expected.Length; i++)
-        {
-            if (id[i] != expected[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool LooksLikeNoCartridgeNorId(byte[] norId)
-    {
-        return norId.Length > 0 && norId.All(value => value == 0xFF);
-    }
-
-    private static WaterCartScanResult CreateNoCartridgeResult(byte[] norId)
-    {
-        string rawNorIdHex = BitConverter.ToString(norId).Replace("-", " ");
-        return new WaterCartScanResult
-        {
-            NoCartridgeDetected = true,
-            IsChipRecognized = false,
-            NorId = norId.ToArray(),
-            RawNorIdHex = rawNorIdHex,
-            ChipName = T("value", "chip_unknown", "Unknown / Needs confirmation"),
-        };
-    }
-
-    private static string GetCapacityUnavailableReason()
-    {
-        return T(
-            "error",
-            "scan_capacity_unavailable",
-            "A valid NOR capacity was not obtained. Read the cartridge again before writing.");
-    }
-
     private static bool TryGbcReadFlashId(WaterDeviceProtocol device, Action<string>? log, out byte[] id)
     {
         id = new byte[4];
@@ -3565,50 +3343,37 @@ public static class WaterCartScanner
         return true;
     }
 
-    private static NorGeometryInfo? TryReadGbcNorGeometry(WaterDeviceProtocol device, Action<string>? log)
+    /// <summary>
+    /// 盖中盖口径：一次 0x98 → 0x0000..0x00FF 窗口读 → 0xF0，读到什么就解析什么。
+    /// 不检查读写返回值、不校验 QRY / 容量指数 / region；读失败就留着全 0 buffer 继续，
+    /// 绝不因此判定卡不可用。只供扫描显示，烧录时另有现场重读。
+    /// </summary>
+    private static NorGeometryInfo ReadGbcNorGeometry(WaterDeviceProtocol device, Action<string>? log)
     {
-        if (!TryWriteGbcProbeStep(device, 0x00AA, [0x98], "write 0x98 -> 0x00AA", log))
-        {
-            return null;
-        }
+        TryWriteGbcProbeStep(device, 0x00AA, [0x98], "write 0x98 -> 0x00AA", log);
 
         try
         {
             byte[] cfiBuffer = new byte[NorCfiReadWindowBytes];
-            if (!TryReadGbcProbeStep(device, 0x0000, cfiBuffer, "read CFI 0x0000..0x00FF", log))
-            {
-                return null;
-            }
+            TryReadGbcProbeStep(device, 0x0000, cfiBuffer, "read CFI 0x0000..0x00FF", log);
 
-            if (cfiBuffer[0x20] != (byte)'Q' ||
-                cfiBuffer[0x22] != (byte)'R' ||
-                cfiBuffer[0x24] != (byte)'Y')
-            {
-                return null;
-            }
+            int deviceSizeBytes = (int)Math.Pow(2, cfiBuffer[0x4E]);
 
-            int deviceExponent = cfiBuffer[0x4E];
-            if (deviceExponent <= 0 || deviceExponent >= 31)
-            {
-                return null;
-            }
-
-            int deviceSizeBytes = (int)Math.Pow(2, deviceExponent);
-
-            int bufferWriteExponent = (cfiBuffer[0x56] << 8) | cfiBuffer[0x54];
-            int bufferWriteBytes = bufferWriteExponent <= 1
-                ? 0
-                : (int)Math.Pow(2, bufferWriteExponent);
+            int bufferField = (cfiBuffer[0x56] << 8) | cfiBuffer[0x54];
+            int bufferWriteBytes = bufferField == 0 ? 0 : (int)Math.Pow(2, cfiBuffer[0x54]);
 
             int sectorRegionCount = cfiBuffer[0x58];
             int sectorCount = 0;
             int sectorSizeBytes = 0;
             int largestSectorSizeBytes = 0;
+            // 逐组保留 CFI 原始明细与 bootFlag 供显示；不修正读到的值。
+            List<GbcEraseRegionInfo> eraseRegions = [];
 
-            for (int i = 0; i < Math.Min(4, sectorRegionCount); i++)
+            for (int i = 0; i < Math.Min(GbcCfiSectorMap.MaxRegions, sectorRegionCount); i++)
             {
                 int sectorCountInRegion = ((cfiBuffer[0x5C + (i * 8)] << 8) | cfiBuffer[0x5A + (i * 8)]) + 1;
                 int sectorSizeInRegion = ((cfiBuffer[0x60 + (i * 8)] << 8) | cfiBuffer[0x5E + (i * 8)]) * 256;
+                eraseRegions.Add(new GbcEraseRegionInfo(sectorCountInRegion, sectorSizeInRegion));
 
                 if (sectorCountInRegion <= 0 || sectorSizeInRegion <= 0)
                 {
@@ -3621,6 +3386,8 @@ public static class WaterCartScanner
                     : Math.Min(sectorSizeBytes, sectorSizeInRegion);
                 largestSectorSizeBytes = Math.Max(largestSectorSizeBytes, sectorSizeInRegion);
             }
+
+            byte bootBlockFlag = cfiBuffer[0x9E];
 
             if (sectorSizeBytes <= 0)
             {
@@ -3643,21 +3410,24 @@ public static class WaterCartScanner
             log?.Invoke(Tf(
                 "log",
                 "beggar_max_probe_cfi",
-                "GBC/MAX probe detected CFI QRY. Capacity={0}, BuffWr={1}.",
+                "GBC/MAX probe read CFI window. Capacity={0}, BuffWr={1}.",
                 FormatMiBSize(deviceSizeBytes),
                 bufferWriteBytes <= 0 ? "0 B" : $"{bufferWriteBytes} B"));
 
             return new NorGeometryInfo
             {
                 DeviceSizeBytes = deviceSizeBytes,
+                IsCfiWindowBlank = IsBlankNorCfiWindow(cfiBuffer),
                 SectorSizeBytes = sectorSizeBytes,
                 SectorCount = sectorCount,
                 BufferWriteBytes = bufferWriteBytes,
                 LargestSectorSizeBytes = largestSectorSizeBytes,
-                RegionCount = Math.Min(4, sectorRegionCount),
+                RegionCount = Math.Min(GbcCfiSectorMap.MaxRegions, sectorRegionCount),
                 PrimaryCommandSetId = primaryCommandSetId,
                 CommandSetName = commandSetName,
                 IsS70Gl02GsDualDie = false,
+                EraseRegions = eraseRegions.ToArray(),
+                GbcBootBlockFlag = bootBlockFlag,
             };
         }
         finally
@@ -3692,54 +3462,23 @@ public static class WaterCartScanner
         return ok;
     }
 
-    private static NorGeometryInfo CreateFallbackBeggarMaxGeometry(byte[] id)
+    /// <summary>
+    /// legacy 扫描路径（非 GBC 单卡烧录链路）：CFI 读不出来就不再用 NOR ID 猜容量，
+    /// 容量保持 0。GBC 单卡链路已不设此门槛，见 ReadGbcNorGeometry。
+    /// </summary>
+    private static NorGeometryInfo CreateFallbackLegacyBeggarGeometry()
     {
-        int deviceSizeBytes = (id.Length >= 2 && id[0] == 0xC2 && (id[1] == 0xCB || id[1] == 0xC9 || id[1] == 0x7E))
-            ? 8 * 1024 * 1024
-            : id.Length >= 3
-                ? id[2] switch
-                {
-                    0x21 => 16 * 1024 * 1024,
-                    0x22 => 32 * 1024 * 1024,
-                    0x23 => 64 * 1024 * 1024,
-                    0x28 => 128 * 1024 * 1024,
-                    0x48 => 256 * 1024 * 1024,
-                    _ => 0,
-                }
-                : 0;
-
         const int sectorSizeBytes = 128 * 1024;
+
         return new NorGeometryInfo
         {
-            DeviceSizeBytes = deviceSizeBytes,
+            DeviceSizeBytes = 0,
             SectorSizeBytes = sectorSizeBytes,
-            SectorCount = Math.Max(1, deviceSizeBytes / sectorSizeBytes),
+            SectorCount = 1,
             BufferWriteBytes = 0,
             LargestSectorSizeBytes = sectorSizeBytes,
             RegionCount = 1,
-            IsS70Gl02GsDualDie = id.Length >= 3 && id[2] == 0x48,
-        };
-    }
-
-    private static NorGeometryInfo CreateFallbackLegacyBeggarGeometry(byte[] norId)
-    {
-        int deviceSizeBytes = TryGetKnownNorDeviceSizeBytes(norId, out int inferredDeviceSize)
-            ? inferredDeviceSize
-            : 0;
-        const int sectorSizeBytes = 128 * 1024;
-
-        return new NorGeometryInfo
-        {
-            DeviceSizeBytes = deviceSizeBytes,
-            SectorSizeBytes = sectorSizeBytes,
-            SectorCount = Math.Max(1, DivCeil(deviceSizeBytes, sectorSizeBytes)),
-            BufferWriteBytes = TryGetKnownWaterDirectBufferWriteBytes(norId, out int bufferWriteBytes)
-                ? bufferWriteBytes
-                : 0,
-            LargestSectorSizeBytes = sectorSizeBytes,
-            RegionCount = 1,
             CommandSetName = "Unknown",
-            IsS70Gl02GsDualDie = IsS70Gl02GsDualDieNorId(norId),
         };
     }
 
@@ -3758,7 +3497,8 @@ public static class WaterCartScanner
         return (id[0] == 0x01 && (id[1] == 0x7E || id[1] == 0x01)) ||
                (id[0] == 0x89 && id[1] == 0x7E) ||
                (id[0] == 0xC2 && (id[1] == 0xCB || id[1] == 0xC9 || id[1] == 0x7E)) ||
-               (id[0] == 0x20 && id[1] == 0x7E);
+               (id[0] == 0x20 && id[1] == 0x7E) ||
+               (id[0] == 0x9D && id[1] == 0x7E);
     }
 
     private static byte[] ExpandBeggarMaxIdToLegacyNorId(byte[] id)

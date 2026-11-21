@@ -1,4 +1,5 @@
 using ClientText = ChisFlashWaterClient.Services.LocalizedText;
+using System.Diagnostics;
 namespace ChisFlashWaterClient;
 
 /// <summary>
@@ -8,14 +9,19 @@ namespace ChisFlashWaterClient;
 /// </summary>
 public static class LegacyGbaRomWriter
 {
-    public static void Write(
+    public static (TimeSpan Erase, TimeSpan Program) Write(
         byte[] image,
         Action<uint, ushort> writeWord,
         Func<uint, int, byte[]> readRom,
         Action<uint, byte[], ushort> programRom,
         Action<int> delay,
         Action<int, int, string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action? beforeErase = null,
+        Func<long>? startSectorErase = null,
+        Action<long, int>? finishSectorErase = null,
+        Action<int>? beginErase = null,
+        Action? beginProgram = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var (bufferBytes, deviceBytes) = ReadSize(writeWord, readRom);
@@ -23,9 +29,17 @@ public static class LegacyGbaRomWriter
         ReadSize(writeWord, readRom);
         if (image.Length > deviceBytes) throw new InvalidOperationException(ClientText.T("client", "flash_no_space", "Not enough flash space."));
 
+        TimeSpan eraseTime = TimeSpan.Zero;
+        if (beforeErase is not null)
+        {
+            long start = Stopwatch.GetTimestamp();
+            beforeErase();
+            eraseTime = Stopwatch.GetElapsedTime(start);
+        }
         byte[] first = readRom(0, 512);
         if (first.Any(value => value != 0xFF))
         {
+            long start = Stopwatch.GetTimestamp();
             int[] sectorAddresses = ReadSectors(writeWord, readRom);
             int last = -1;
             for (int index = 0; index < sectorAddresses.Length; index++)
@@ -34,11 +48,13 @@ public static class LegacyGbaRomWriter
                 last = index;
             }
             // 原版按高地址到低地址擦除文件覆盖的扇区。
+            if (last >= 0) beginErase?.Invoke(last + 1);
             for (int index = last; index >= 0; index--)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 uint address = (uint)sectorAddresses[index];
                 progress?.Invoke(index + 1, last + 1, "erase");
+                long eraseStart = startSectorErase?.Invoke() ?? 0;
                 writeWord(0x555, 0xAA);
                 writeWord(0x2AA, 0x55);
                 writeWord(0x555, 0x80);
@@ -52,9 +68,14 @@ public static class LegacyGbaRomWriter
                     status = BitConverter.ToUInt16(readRom(address, 2), 0);
                     delay(20);
                 } while (status != 0xFFFF);
+                int sectorEnd = index + 1 < sectorAddresses.Length ? sectorAddresses[index + 1] : deviceBytes;
+                finishSectorErase?.Invoke(eraseStart, sectorEnd - sectorAddresses[index]);
             }
+            eraseTime += Stopwatch.GetElapsedTime(start);
         }
 
+        beginProgram?.Invoke();
+        long programStart = Stopwatch.GetTimestamp();
         for (int offset = 0; offset < image.Length; offset += 4096)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -63,6 +84,7 @@ public static class LegacyGbaRomWriter
             programRom((uint)offset, image.AsSpan(offset, length).ToArray(), (ushort)bufferBytes);
             progress?.Invoke(offset + length, image.Length, "write");
         }
+        return (eraseTime, Stopwatch.GetElapsedTime(programStart));
     }
 
     private static (int BufferBytes, int DeviceBytes) ReadSize(
@@ -71,7 +93,9 @@ public static class LegacyGbaRomWriter
         writeWord(0x55, 0x98);
         byte[] cfi = readRom(0x27 << 1, 20);
         writeWord(0, 0xF0);
-        int capacity = (int)Math.Pow(2, BitConverter.ToUInt16(cfi, 0));
+        int capacityExponent = BitConverter.ToUInt16(cfi, 0);
+        // 大于 int 范围的容量沿用盖中盖原版的转换结果。
+        int capacity = capacityExponent < 31 ? 1 << capacityExponent : int.MinValue;
         int exponent = BitConverter.ToUInt16(cfi, 6);
         return (exponent == 0 ? 0 : (int)Math.Pow(2, exponent), capacity);
     }

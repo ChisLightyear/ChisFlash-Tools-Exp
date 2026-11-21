@@ -395,7 +395,7 @@ public sealed class FcWorkspaceControl : UserControl
         await RunAsync(async(ct,reporter)=>{
             var saves=System.Text.Json.JsonSerializer.Deserialize<List<GameLibraryDirectory.SaveImage>>(await File.ReadAllTextAsync(archive.FileName,ct))??throw new InvalidDataException("Invalid MIX save archive.");
             if(backendFactory is null){var plan=FcMbcxCodec.Plan(games.Select(game=>game.Copy()).ToArray(),FcMbcxCodec.CapacityBytes,false);var target=GameLibraryDirectory.ImportSaves(plan.Entries,saves,Enumerable.Repeat((byte)255,524288).ToArray());await File.WriteAllBytesAsync(targetPath!,target,ct);status.Text="已生成配套 SRAM；未归档区域填充 FF。请同时使用同一列表构建的 GLB2 镜像。";}
-            else {var expected=snapshot??throw new InvalidOperationException("Scan the target card first.");var backend=backendFactory();await Task.Run(()=>backend.ImportSaves(expected,saves,ct,reporter),ct);status.Text="MIX 存档已恢复并回读验证。";}
+            else {var expected=snapshot??throw new InvalidOperationException("Scan the target card first.");var backend=backendFactory();await Task.Run(()=>backend.ImportSaves(expected,saves,ct,reporter),ct);status.Text="MIX 存档已恢复。";}
         });
     }
     public async Task ExportAsync()

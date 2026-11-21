@@ -75,7 +75,7 @@ public partial class Form1
 
     private void ExternalFileDrop_DragEnter(object? sender, DragEventArgs e)
     {
-        if (isBusy)
+        if (isBusy || !WorkspaceUnlocked)
         {
             e.Effect = DragDropEffects.None;
             return;
@@ -94,6 +94,7 @@ public partial class Form1
 
     private async void ExternalFileDrop_DragDrop(object? sender, DragEventArgs e)
     {
+        if (!WorkspaceUnlocked) return;
         string[]? droppedFiles = e.Data?.GetData(DataFormats.FileDrop) as string[];
         if (droppedFiles is null || droppedFiles.Length == 0)
         {
@@ -121,7 +122,12 @@ public partial class Form1
         if (IsGbaSingleCardMode()) { await SelectSingleGbaFileAsync(); return; }
         if (IsChisFlash10Mode()) { await SelectChisFlash10FileAsync(); return; }
         if (IsGbcRawImageMode()) { await SelectGbcImageFileAsync(); return; }
-        if (IsMbc5FixedSlotMode()) { await SelectMbc5FilesAsync(); return; }
+        if (IsMbc5FixedSlotMode())
+        {
+            if (IsMbc5MaxMode()) await SelectMbc5SlotFilesAsync(FindEmptyMbc5GameSlot());
+            else await SelectMbc5FilesAsync();
+            return;
+        }
         if (isBusy)
         {
             return;
@@ -146,7 +152,6 @@ public partial class Form1
     private async Task AddPendingRomFilesAsync(IEnumerable<string> filePaths)
     {
         if (SupportsGbaCardMode() && !appendingGbaListGames) { await ImportGbaListFilesAsync(filePaths); return; }
-        if (IsSelectedGbaMenuRow()) { await ImportGbaMenuFilesAsync(filePaths); return; }
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_import_invalid", "A mapping table was found, but the directory is invalid. Games cannot be imported."));
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(filePaths); return; }
         if (IsChisFlash10Mode()) { await AddChisFlash10FilesAsync(filePaths); return; }
@@ -163,7 +168,7 @@ public partial class Form1
             return;
         }
 
-        if (IsWorkspaceModificationLocked())
+        if (!WorkspaceUnlocked && IsWorkspaceModificationLocked())
         {
             await ImportMdWithoutCardAsync(filePaths);
             return;
@@ -584,14 +589,15 @@ public partial class Form1
             headerTitle = WaterMenuConfigCodec.NormalizeTitle(metadata.HeaderTitle);
             int effectiveSaveBytes = metadata.CartridgeType is 0x05 or 0x06
                 ? 0x200
-                : metadata.EffectiveRamBankCount * GameBoyRomHeaderService.RamBankSize;
+                : GetGbcSramLength(metadata);
             saveTypeInfo = effectiveSaveBytes <= 0
                 ? new DetectedSaveTypeInfo(DetectedSaveTypeKind.None, null)
                 : new DetectedSaveTypeInfo(DetectedSaveTypeKind.Sram, effectiveSaveBytes switch
                 {
                     <= 0x200 => "SRAM 512B",
-                    <= 0x2000 => "SRAM 2K",
-                    <= 0x8000 => "SRAM 8K",
+                    <= 0x800 => "SRAM 2K",
+                    <= 0x2000 => "SRAM 8K",
+                    <= 0x8000 => "SRAM 32K",
                     <= 0x10000 => "SRAM 64K",
                     _ => "SRAM 128K",
                 });
@@ -712,6 +718,8 @@ public partial class Form1
     private IEnumerable<WaterCartEntry> GetWorkspaceBaseEntries(WaterCartScanResult scanResult)
     {
         if (HasPendingGbaWorkspaceClear() && ReferenceEquals(gbaWorkspaceClearSource, scanResult)) return [];
+        if (SupportsGbaCardMode() && !IsGbaMulticartUnavailable() && !HasGbaListMenu() && !IsGbaDirectoryDamaged())
+            return GetGbaSingleGame() is { } head ? [head] : [];
         if (IsGbaConversionDraft()) return gbaKeepCurrentGame?.Checked == true && GetGbaSingleGame() is { } single ? [single] : [];
         IEnumerable<WaterCartEntry> baseEntries = scanResult.Entries
             .Where(entry => !entry.IsMenu);
@@ -735,9 +743,15 @@ public partial class Form1
         if (IsChisFlash10Mode()) { RefreshChisFlash10Grid(); return; }
         dataGridViewRoms.ReadOnly = false;
         if (IsMbc5FixedSlotMode()) { RefreshMbc5Grid(selectedIndex); return; }
+        bool retainPosition = keepMulticartList && !analyzingShellCard && selectedIndex < 0;
+        var previousCell = retainPosition ? dataGridViewRoms.CurrentCell : null;
+        int previousRow = previousCell?.RowIndex ?? -1;
+        int previousColumn = previousCell?.ColumnIndex ?? 0;
+        int previousTop = retainPosition ? dataGridViewRoms.FirstDisplayedScrollingRowIndex : -1;
         RestoreMbc5GridColumns();
         dataGridViewRoms.Rows.Clear();
-        if (SupportsGbaCardMode()) AddGbaMenuGridRow();
+        if (SupportsGbaCardMode() && HasGbaListMenu()) AddGbaMenuGridRow();
+        if (HasGbcFreeMenu()) AddGbcFreeMenuRow();
         if (dataGridViewRoms.Columns["GbcDedicatedSave"] is DataGridViewColumn dedicatedSaveColumn)
         {
             dedicatedSaveColumn.Visible = IsGbcWorkspaceMode();
@@ -822,22 +836,26 @@ public partial class Form1
             }
         }
 
-        if (SupportsGbaCardMode() && !IsGbaDirectoryDamaged()) AddGbaEmptyGameRow(workspaceRows.Count + 1);
 
         UpdateWorkspaceGroupTitle();
 
         selectedIndex = GridIndexFromWorkspace(selectedIndex);
-        if (selectedIndex < 0 && SupportsGbaCardMode() && dataGridViewRoms.Rows.Count > 1) selectedIndex = 1;
+        if (previousRow >= 0) selectedIndex = Math.Min(previousRow, dataGridViewRoms.Rows.Count - 1);
+        if (selectedIndex < 0 && SupportsGbaCardMode() && dataGridViewRoms.Rows.Count > 0)
+            selectedIndex = HasGbaListMenu() && dataGridViewRoms.Rows.Count > 1 ? 1 : 0;
         if (selectedIndex >= 0 && selectedIndex < dataGridViewRoms.Rows.Count)
         {
             dataGridViewRoms.ClearSelection();
             dataGridViewRoms.Rows[selectedIndex].Selected = true;
             if (dataGridViewRoms.Columns.Count > 0)
             {
-                dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[selectedIndex].Cells[0];
+                int column = dataGridViewRoms.Columns[previousColumn].Visible ? previousColumn : 0;
+                dataGridViewRoms.CurrentCell = dataGridViewRoms.Rows[selectedIndex].Cells[column];
             }
         }
 
+        if (previousTop >= 0 && previousTop < dataGridViewRoms.Rows.Count)
+            dataGridViewRoms.FirstDisplayedScrollingRowIndex = previousTop;
         dataGridViewRoms.Enabled = !isBusy;
         UpdateActionButtons(isBusy);
         RefreshGbaCardModeUi();
@@ -845,7 +863,7 @@ public partial class Form1
 
     private string FormatWorkspaceOrderText(WorkspaceListRow row, int rowIndex)
     {
-        if (SupportsGbaCardMode()) return ClientText.Tf("client", "game_number", "Game {0}", rowIndex + 1);
+        if (SupportsGbaCardMode() || IsGbcFreeWorkspace()) return ClientText.Tf("client", "game_number", "Game {0}", rowIndex + 1);
         string orderText = (rowIndex + 1).ToString("000", CultureInfo.CurrentCulture);
         return row.CartEntry is not null && IsCurrentChipSaveEntry(row.CartEntry)
             ? orderText + "★"
@@ -983,6 +1001,8 @@ public partial class Form1
         }
 
         if (HasPendingGbaWorkspaceClear()) return true;
+        if (IsGbcFreeWorkspace() &&
+            (gbcFreeMenuDraft.HasValue || gbcFreeMenuHidden && currentScanResult.HasBeggarMaxDirectoryHeaders)) return true;
 
         if (HasBurnProfileMetadataChanges())
         {
@@ -1063,7 +1083,9 @@ public partial class Form1
                 bytes += source is not null && (source.FoundInMenuConfig || source.FoundInWlMapping)
                     ? (long)source.LogicalBucketCount * WaterCartScanner.BucketSizeBytes : Math.Max(0x400000, GetCurrentSingleGameLength());
             }
-            if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) { errorMessage = ClientText.T("client", "multicart_exceeds_nor", "The multicart list exceeds the detected NOR capacity."); return false; }
+            // 盖中盖口径：容量读数为 0 时不用它当上限，避免读数失败卡住合卡烧录；
+            // 读到正数容量时才做真实的空间边界检查。
+            if (currentScanResult!.Geometry.DeviceSizeBytes > 0 && bytes > currentScanResult.Geometry.DeviceSizeBytes) { errorMessage = ClientText.T("client", "multicart_exceeds_nor", "The multicart list exceeds the detected NOR capacity."); return false; }
             return true;
         }
         if(HasUnreadyPlatformImports(workspaceSnapshot)){errorMessage=ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning.");return false;}
@@ -1083,6 +1105,16 @@ public partial class Form1
 
         if (currentScanResult.IsBeggarMaxGbcMode)
         {
+            if (IsGbcFreeWorkspace() && !HasGbcFreeMenu() &&
+                workspaceSnapshot.Count == 1 && workspaceSnapshot[0].PendingItem is { } single)
+            {
+                int capacity = currentScanResult.Geometry.DeviceSizeBytes;
+                if (capacity <= 0 || Math.Max(single.FileSizeBytes, single.GameBoyEffectiveRomSizeBytes) <= capacity)
+                    return true;
+                errorMessage = T("error", "gbc_image_too_large", "The ROM exceeds the detected NOR capacity.");
+                return false;
+            }
+
             try
             {
                 ValidateBeggarMaxWorkspaceSnapshot(
@@ -1161,6 +1193,11 @@ public partial class Form1
 
     private void RemoveSelectedQueuedRom()
     {
+        if (IsGbcFreeWorkspace())
+        {
+            RemoveGbcFreeSelection();
+            return;
+        }
         if (SupportsGbaCardMode()) { RemoveGbaListSelection(); return; }
         if (IsGbaSingleCardMode()) { ClearSingleGbaPending(); return; }
         if (IsChisFlash10Mode()) { ClearChisFlash10Image(); return; }
@@ -1197,6 +1234,11 @@ public partial class Form1
 
     private void ClearQueuedRoms()
     {
+        if (IsGbcFreeWorkspace())
+        {
+            if (!isBusy && !isAnalyzingQueueImports) ClearGbcFreeWorkspace();
+            return;
+        }
         if (SupportsGbaCardMode()) { ClearGbaList(); return; }
         if (IsGbaSingleCardMode()) { ClearSingleGbaPending(); return; }
         if (IsChisFlash10Mode())
@@ -1301,6 +1343,24 @@ public partial class Form1
         }
 
         bool metadataOnly = pendingRows.Count == 0;
+        bool eraseGbcMenu = ShouldEraseGbcFreeMenu(workspaceSnapshot);
+        bool burnGbcSingle = false;
+        if (IsGbcFreeWorkspace() && !HasGbcFreeMenu() && !eraseGbcMenu)
+        {
+            if (workspaceSnapshot.Count <= 1)
+            {
+                if (pendingRows.Count == 0) return;
+                burnGbcSingle = true;
+            }
+            else
+            {
+                SelectGbcFreeMenu();
+                if (!HasGbcFreeMenu()) return;
+            }
+        }
+
+        bool emptyGbcDirectory = IsGbcFreeWorkspace() && HasGbcFreeMenu() && workspaceSnapshot.Count == 0;
+        EnsureCfiWindowAllowsBurn(currentScanResult!.Geometry);
         bool updatesGbaMenu = HasGbaMenuSelectionChanges(currentScanResult);
         ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
         bool applyWaitcntPatch = workspaceSnapshot.Any(row => row.WaitcntPatchForBurn ?? row.PendingItem?.ApplyWaitcntPatch ?? false) && !IsGbcWorkspaceMode();
@@ -1371,14 +1431,46 @@ public partial class Form1
             statusFailedText = T("status", "import_rom_failed", "ROM import failed");
         }
 
+        if (eraseGbcMenu)
+        {
+            message = ShellText("要擦除 MAX/MBCX 菜单和配置区吗？本次只擦除头部 1 MiB，游戏区和存档保留。",
+                "Erase the MAX/MBCX menu and configuration? Only the first 1 MiB will be erased. Game ROMs and saves are preserved.");
+            statusBusyText = T("status", "erase_config_busy", "Erasing head area...");
+            statusDoneText = T("status", "erase_config_done", "Head area erased");
+            statusFailedText = T("status", "erase_config_failed", "Erase head area failed");
+        }
+        else if (burnGbcSingle)
+        {
+            message = string.Format(
+                ShellText("从地址 0 烧录单个游戏 {0}？确认后会擦除游戏占用的扇区和待清除的旧菜单区，存档保留。",
+                    "Write the single game {0} at address 0? This erases its target sectors and any menu area marked for clearing. Saves are preserved."),
+                pendingRows[0].FileName);
+        }
+        else if (emptyGbcDirectory)
+        {
+            message = ShellText("要写入 MAX/MBCX 空菜单目录吗？本次只更新菜单和配置区，旧游戏将从菜单中移除。",
+                "Write an empty MAX/MBCX menu directory? This updates the menu and configuration. Old games will disappear from the menu.");
+        }
+        else if (IsGbcFreeWorkspace() &&
+            workspaceSnapshot.Any(row => row.PendingItem is null && row.CartEntry is { RomOffsetBank: 0 }))
+        {
+            message = ShellText("要将当前工作区烧录为 MAX/MBCX 合卡吗？地址 0 的单卡游戏会先读出，再写到合卡游戏区，最后写入菜单和目录。",
+                "Write this workspace as a MAX/MBCX multicart? The single game at address 0 will be read and moved to the game area before writing the menu and directory.");
+        }
+        else if (metadataOnly && IsGbcFreeWorkspace())
+        {
+            message = ShellText("要将当前 MAX/MBCX 菜单和游戏目录写入卡带吗？游戏 ROM 保留在原位置。",
+                "Write the current MAX/MBCX menu and game directory to the cartridge? Game ROMs remain in their existing locations.");
+        }
+
         if (HasPendingGbaWorkspaceClear())
         {
             message = GbaWorkspaceClearConfirmation();
-            statusBusyText = GbaCardText("clear_game_area", "正在清空卡内游戏", "Erasing on-card games");
-            statusDoneText = GbaCardText("clear_done", "卡内游戏已清空，菜单和配置已保留。", "On-card games cleared; menu and settings preserved.");
+            statusBusyText = GbaClearActionText();
+            statusDoneText = GbaClearActionText() + ShellText("完成", " complete");
         }
 
-        if (currentScanResult.IsBeggarMaxGbcMode &&
+        if (!eraseGbcMenu && !burnGbcSingle && currentScanResult.IsBeggarMaxGbcMode &&
             GetSelectedGbcMenuLanguageMode() == GbcMenuLanguageMode.English)
         {
             DialogResult updateMenuConfirm = MessageBox.Show(
@@ -1396,6 +1488,8 @@ public partial class Form1
                 return;
             }
         }
+
+        if (!eraseGbcMenu && !burnGbcSingle && IsGbcFreeWorkspace()) message += MaxSaveMigrationNotice(workspaceSnapshot);
 
         DialogResult confirm = MessageBox.Show(
             this,
@@ -1416,7 +1510,11 @@ public partial class Form1
         isBurnCancellationRequested = false;
 
         SetBusy(true, statusBusyText);
-        if (HasPendingGbaWorkspaceClear())
+        if (eraseGbcMenu)
+        {
+            AppendLog(T("log", "erase_config_start_gbc", "Start erasing MBCX head 1 MiB: 0x000000-0x0FFFFF"));
+        }
+        else if (HasPendingGbaWorkspaceClear())
         {
             AppendLog(GbaWorkspaceClearConfirmation());
         }
@@ -1472,7 +1570,10 @@ public partial class Form1
                         gbcBackgroundPathSnapshot,
                         gbcMenuLanguageSnapshot,
                         gbaMenuSelectionSnapshot,
-                        burnCancellation.Token);
+                        burnCancellation.Token,
+                        allowEmptyGbcDirectory: emptyGbcDirectory,
+                        eraseGbcMenu: eraseGbcMenu,
+                        singleGbcRom: burnGbcSingle ? pendingRows[0] : null);
                     tcs.TrySetResult(scanResult);
                 }
                 catch (OperationCanceledException)
@@ -1527,7 +1628,10 @@ public partial class Form1
         string? gbcBackgroundPathSnapshot = null,
         GbcMenuLanguageMode gbcMenuLanguageSnapshot = GbcMenuLanguageMode.Chinese,
         GbaMenuSelection gbaMenuSelection = GbaMenuSelection.Simplified,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowEmptyGbcDirectory = false,
+        bool eraseGbcMenu = false,
+        PendingRomImportItem? singleGbcRom = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
@@ -1536,6 +1640,15 @@ public partial class Form1
 
         if (initialScan.IsBeggarMaxGbcMode)
         {
+            if (singleGbcRom is not null)
+                return BurnBeggarMaxSingleRomOnDevice(protocol, initialScan, singleGbcRom, cancellationToken);
+
+            if (eraseGbcMenu)
+            {
+                EraseBeggarMaxHeadAreaOnDevice(protocol, initialScan, cancellationToken);
+                AppendLog(T("log", "erase_config_done_gbc", "MBCX head 1 MiB erase completed successfully."));
+                return BuildScanAfterNorErase(initialScan, entireNor: false);
+            }
             return ImportBeggarMaxRomFilesOnDevice(
                 protocol,
                 initialScan,
@@ -1545,7 +1658,7 @@ public partial class Form1
                 gbcBackgroundPathSnapshot,
                 gbcMenuLanguageSnapshot,
                 clearConfigArea: false,
-                allowEmptyWorkspace: false,
+                allowEmptyWorkspace: allowEmptyGbcDirectory,
                 cancellationToken: cancellationToken);
         }
 
@@ -1888,12 +2001,7 @@ public partial class Form1
                              ? 1
                              : 0))
         {
-            IReadOnlyList<WaterNorWriteSegment> writeSegments = import.WriteSegments;
-            for (int segmentIndex = 0; segmentIndex < writeSegments.Count; segmentIndex++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ProgramNorSegment(protocol, programmerKind, scanResult.Geometry, writeSegments[segmentIndex], segmentIndex + 1, writeSegments.Count, cancellationToken);
-            }
+            ProgramNorSegments(protocol, programmerKind, scanResult.Geometry, import.WriteSegments, cancellationToken);
         }
 
         if (headAreaRewritePlan is not null)
@@ -2564,6 +2672,29 @@ public partial class Form1
         };
     }
 
+    private void ProgramNorSegments(
+        WaterDeviceProtocol protocol,
+        ProgrammerKind programmerKind,
+        NorGeometryInfo geometry,
+        IReadOnlyList<WaterNorWriteSegment> segments,
+        CancellationToken cancellationToken = default)
+    {
+        int selectedBucket = -1;
+        try
+        {
+            for (int index = 0; index < segments.Count; index++)
+                ProgramNorSegment(protocol, programmerKind, geometry, segments[index], index + 1, segments.Count,
+                    ref selectedBucket, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            RestoreGbaBatchBank(protocol, selectedBucket, reportFailure: false);
+            throw;
+        }
+
+        RestoreGbaBatchBank(protocol, selectedBucket);
+    }
+
     private void ProgramNorSegment(
         WaterDeviceProtocol protocol,
         ProgrammerKind programmerKind,
@@ -2571,7 +2702,8 @@ public partial class Form1
         WaterNorWriteSegment segment,
         int segmentIndex,
         int segmentCount,
-        CancellationToken cancellationToken = default)
+        ref int selectedBucket,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         int sectorSize = geometry.SectorSizeBytes > 0
@@ -2604,6 +2736,7 @@ public partial class Form1
             segment.StartAddress + (uint)segment.Data.Length - 1,
             sectorCount));
 
+        BeginMeasuredProgressPhase(sectorCount, true, BuildProgressDetailText(segment.Label, "progress_phase_erase", "Erase"));
         if (segment.EraseOnly)
         {
 
@@ -2622,7 +2755,8 @@ public partial class Form1
                 }
 
                 uint sectorAddress = segment.StartAddress + (uint)(sectorIndex * sectorSize);
-                if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress))
+                long eraseStart = StartLandscapeErase();
+                if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress, ref selectedBucket))
                 {
                     throw new InvalidOperationException(
                         Tf(
@@ -2639,6 +2773,7 @@ public partial class Form1
                             sectorSize));
                 }
 
+                FinishLandscapeErase(eraseStart, sectorSize);
                 AdvanceMeasuredProgress(
                     sectorSize,
                     1,
@@ -2671,7 +2806,8 @@ public partial class Form1
             }
 
             uint sectorAddress = segment.StartAddress + (uint)(sectorIndex * sectorSize);
-            if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress))
+            long eraseStart = StartLandscapeErase();
+            if (!TryEraseRomSectorForProgrammer(protocol, programmerKind, sectorAddress, ref selectedBucket))
             {
                 throw new InvalidOperationException(
                     Tf(
@@ -2688,6 +2824,7 @@ public partial class Form1
                         sectorSize));
             }
 
+            FinishLandscapeErase(eraseStart, sectorSize);
             AdvanceMeasuredProgress(
                 sectorSize,
                 1,
@@ -2695,6 +2832,7 @@ public partial class Form1
             cancellationToken.ThrowIfCancellationRequested();
         }
 
+        BeginMeasuredProgressPhase(sectorCount, false, BuildProgressDetailText(segment.Label, "progress_phase_write", "Write"));
         for (int sectorIndex = 0; sectorIndex < sectorCount; sectorIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2704,29 +2842,8 @@ public partial class Form1
             byte[] sectorData = segment.Data.AsSpan(sectorOffset, sectorSize).ToArray();
             if (!IsAllBytes(sectorData, 0xFF))
             {
-                for (int chunkOffset = 0; chunkOffset < sectorSize; chunkOffset += NorProgramChunkSizeBytes)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    int writeLength = Math.Min(NorProgramChunkSizeBytes, sectorSize - chunkOffset);
-                    byte[] chunk = sectorData.AsSpan(chunkOffset, writeLength).ToArray();
-
-                    if (!TryProgramRomForProgrammer(protocol, programmerKind, sectorAddress + (uint)chunkOffset, chunk, bufferWriteBytes, 60000))
-                    {
-                        throw new InvalidOperationException(
-                            Tf(
-                                "error",
-                                "segment_program_failed",
-                                "Failed to program {0} at offset 0x{1:X}.",
-                                segment.Label,
-                                sectorOffset + chunkOffset) +
-                            BuildProgrammerFailureDetail(
-                                protocol,
-                                sectorAddress + (uint)chunkOffset,
-                                sectorSize,
-                                sectorOffset + chunkOffset,
-                                writeLength));
-                    }
-                }
+                ProgramNorSectorChunks(protocol, programmerKind, sectorAddress, sectorData, bufferWriteBytes,
+                    segment.Label, sectorOffset, emitLogs: false, cancellationToken, ref selectedBucket);
 
                 cancellationToken.ThrowIfCancellationRequested();
             }
@@ -2961,8 +3078,8 @@ public partial class Form1
         {
             Rectangle rowRect = dataGridViewRoms.GetRowDisplayRectangle(hit.RowIndex, false);
             return clientPoint.Y > rowRect.Top + rowRect.Height / 2
-                ? Math.Clamp(hit.RowIndex + 1 - (SupportsGbaCardMode() ? 1 : 0), 0, workspaceRows.Count)
-                : Math.Clamp(hit.RowIndex - (SupportsGbaCardMode() ? 1 : 0), 0, workspaceRows.Count);
+                ? Math.Clamp(hit.RowIndex + 1 - GridIndexFromWorkspace(0), 0, workspaceRows.Count)
+                : Math.Clamp(hit.RowIndex - GridIndexFromWorkspace(0), 0, workspaceRows.Count);
         }
 
         Rectangle firstRowRect = dataGridViewRoms.GetRowDisplayRectangle(0, false);
@@ -3007,6 +3124,11 @@ public partial class Form1
     private void DataGridViewRoms_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
         if (e.ColumnIndex == dataGridViewRoms.Columns["WaitcntPatch"]?.Index) return;
+        if (e.RowIndex >= 0 && ReferenceEquals(dataGridViewRoms.Rows[e.RowIndex].Tag, GbcFreeMenuRowTag))
+        {
+            SelectGbcFreeMenu();
+            return;
+        }
         if (SupportsGbaCardMode())
         {
             if (e.RowIndex >= 0)
@@ -3015,14 +3137,19 @@ public partial class Form1
                 if (ReferenceEquals(row.Tag, GbaMenuRowTag))
                 {
                     dataGridViewRoms.CurrentCell = row.Cells["Title"];
-                    _ = RunUiActionSafelyAsync(SelectGbaListSlotAsync);
+                    _ = RunUiActionSafelyAsync(SelectGbaMenuAsync);
                 }
             }
 
             return;
         }
         if (IsGbaSingleCardMode()) { if (e.RowIndex >= 0) _ = RunUiActionSafelyAsync(SelectSingleGbaFileAsync); return; }
-        if (IsMbc5FixedSlotMode()) { if (e.RowIndex >= 0 && ActiveMbc5Layout.GetSlot(e.RowIndex).Enabled) _ = RunUiActionSafelyAsync(SelectMbc5FilesAsync); return; }
+        if (IsMbc5FixedSlotMode())
+        {
+            if (e.RowIndex >= 0 && ActiveMbc5Layout.GetSlot(e.RowIndex).Enabled)
+                _ = RunUiActionSafelyAsync(() => SelectMbc5SlotFilesAsync(e.RowIndex));
+            return;
+        }
         if (isBusy || isAnalyzingQueueImports || IsWorkspaceModificationLocked() || e.RowIndex < 0)
         {
             return;
@@ -3039,8 +3166,13 @@ public partial class Form1
 
     private void DataGridViewRoms_CellClick(object? sender, DataGridViewCellEventArgs e)
     {
-        if (e.ColumnIndex == dataGridViewRoms.Columns["WaitcntPatch"]?.Index) return;
-        if (!SupportsGbaCardMode() || e.RowIndex < 0)
+        if (e.ColumnIndex == dataGridViewRoms.Columns["WaitcntPatch"]?.Index || e.RowIndex < 0) return;
+        if (IsMbc5MaxMode() && e.RowIndex == FindEmptyMbc5GameSlot() && e.ColumnIndex == dataGridViewRoms.Columns["Title"]?.Index)
+        {
+            _ = RunUiActionSafelyAsync(() => SelectMbc5SlotFilesAsync(e.RowIndex));
+            return;
+        }
+        if (!SupportsGbaCardMode())
         {
             return;
         }

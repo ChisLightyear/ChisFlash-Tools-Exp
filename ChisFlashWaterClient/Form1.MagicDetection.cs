@@ -2,6 +2,10 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    private string StandardWaterLinkName(string id) => id == "CHW1"
+        ? T("value", "waterlink_chw1", "CHW1 · Original WaterLink")
+        : T("value", "waterlink_chw2", "CHW2 · New WaterLink");
+
     private async Task DetectMagicSupportAsync()
     {
         if (!EnsureSelectedPortHasActiveScan(out string reason))
@@ -15,24 +19,34 @@ public partial class Form1
         SetBusy(true, T("status", "detect_magic_busy", "Reading Magic capability..."));
         try
         {
+            string? waterLinkId = null;
             bool declaredSupport = await Task.Run(() =>
             {
                 using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, kind);
-                return ReadDeclaredMagicSupport(protocol, kind);
+                return ReadDeclaredMagicSupport(protocol, kind, out waterLinkId);
             });
 
-            string result = declaredSupport
+            bool isChwq = waterLinkId == "CHWQ";
+            string? standardId = isChwq ? null : waterLinkId;
+            string result = standardId is not null ? StandardWaterLinkName(standardId) : isChwq
+                ? T("value", "magic_support_chwq", "CHWQ: Chimera cartridge identified through its read-only identity sequence.")
+                : declaredSupport
                 ? kind == ProgrammerKind.BeggarLegacy
                     ? T("value", "magic_support_01g", "Detected a standalone 01G/02G card with Legacy and fragmented mapping, 128 KiB SRAM, and battery/FRAM or batteryless save modes.")
                     : T("value", "magic_support_declared", "Device reports WaterLink fixed-layout support. Only the capability flag was read; mapper switching was not tested.")
                 : T("value", "magic_support_unknown", "Unable to confirm: this device does not provide a recognized read-only capability flag. ROM menu data alone does not prove hardware support.");
-            if (kind == ProgrammerKind.BeggarLegacy && currentScanResult is not null)
+            if (currentScanResult is not null)
             {
-                currentScanResult.IsChm1 = declaredSupport;
-                RefreshBurnProfileModeOptions(declaredSupport
-                    ? GetDetectedBurnProfileMode(currentScanResult, kind, UsesChm1Mode(GetSelectedBurnProfileMode()) ? GetSelectedBurnProfileMode() : BurnProfileMode.Chm1)
-                    : GetDefaultBurnProfileMode(kind));
+                currentScanResult.IsChwq = isChwq;
+                currentScanResult.StandardWaterLinkId = standardId;
+                if (kind == ProgrammerKind.BeggarLegacy) currentScanResult.IsChm1 = declaredSupport && waterLinkId is null;
+                if (waterLinkId is not null || kind == ProgrammerKind.BeggarLegacy)
+                {
+                    RefreshBurnProfileModeOptions(standardId is not null ? BurnProfileMode.WaterLinkSram : isChwq ? BurnProfileMode.WaterLinkMultiNor : declaredSupport
+                        ? GetDetectedBurnProfileMode(currentScanResult, kind, UsesChm1Mode(GetSelectedBurnProfileMode()) ? GetSelectedBurnProfileMode() : BurnProfileMode.Chm1)
+                        : GetDefaultBurnProfileMode(kind));
+                }
             }
             AppendLog(result);
             SetBusy(false, T("status", "detect_magic_done", "Capability read complete"));
@@ -46,15 +60,19 @@ public partial class Form1
         }
     }
 
-    private bool ReadDeclaredMagicSupport(WaterDeviceProtocol protocol, ProgrammerKind kind)
+    private bool ReadDeclaredMagicSupport(WaterDeviceProtocol protocol, ProgrammerKind kind, out string? waterLinkId)
     {
-        if (kind == ProgrammerKind.BeggarLegacy)
+        waterLinkId = null;
+        if (kind is ProgrammerKind.BeggarLegacy or ProgrammerKind.WaterLink)
         {
             if (!protocol.TryReadLocalMagicId(out byte[] identifier))
             {
                 throw new IOException(T("error", "magic_capability_read_failed", "Unable to read the device capability report."));
             }
-            return identifier.AsSpan().SequenceEqual(new byte[] { 0x43, 0x48, 0x4D, 0x31, 1, 3, 63, 8 });
+            waterLinkId = WaterDeviceProtocol.IsChwqIdentifier(identifier) ? "CHWQ" : WaterDeviceProtocol.GetStandardWaterLinkId(identifier);
+            if (waterLinkId is not null) return true;
+            if (kind == ProgrammerKind.BeggarLegacy)
+                return identifier.AsSpan().SequenceEqual(new byte[] { 0x43, 0x48, 0x4D, 0x31, 1, 3, 63, 8 });
         }
 
         if (kind != ProgrammerKind.WaterLink) return false;

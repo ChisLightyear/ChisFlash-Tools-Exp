@@ -16,7 +16,6 @@ public partial class Form1
     private ToolStripMenuItem menuFcRebuild = null!;
     private ToolStripMenuItem menuFcOpen = null!;
     private ToolStripMenuItem menuFcExport = null!;
-    private ToolStripMenuItem menuFcScan = null!;
     private bool IsFcWorkspaceActive => fcWorkspaceActive && fcWorkspace is { IsDisposed: false };
     private bool CanUseFcDevice => fcBackendOverride is not null ||
         !string.IsNullOrWhiteSpace(GetSelectedPortName());
@@ -33,9 +32,6 @@ public partial class Form1
         }
         Task Local(Action action) { action(); return Task.CompletedTask; }
         menuFcTools = new ToolStripMenuItem("MIX · NES / MD / SNES") { Visible = false };
-        menuFcScan = new ToolStripMenuItem(T("ui", "analyze_configuration", "分析配置"));
-        menuFcScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedConfigurationAsync);
-        menuCartridge.DropDownItems.Insert(0, menuFcScan);
         menuFcUp = Add("up", "Up", () => Local(() => fcWorkspace!.MoveRow(-1)));
         menuFcDown = Add("down", "Down", () => Local(() => fcWorkspace!.MoveRow(1)));
         menuFcPreview = Add("title_preview", "12px title preview", () => Local(() => fcWorkspace!.PreviewTitle()));
@@ -60,7 +56,7 @@ public partial class Form1
         burnProfileModeSelectionInitialized = false;
         if (!burnProfileModeOptions.Any(option => option.Mode == BurnProfileMode.FcMbcx))
         {
-            burnProfileModeOptions.Add(new BurnProfileModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), BurnProfileMode.FcMbcx));
+            burnProfileModeOptions.Add(new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.FcMbcx), BurnProfileMode.FcMbcx));
             BindBurnProfileOptions();
         }
         comboBoxBurnProfileMode.SelectedItem = burnProfileModeOptions.First(option => option.Mode == BurnProfileMode.FcMbcx);
@@ -199,8 +195,6 @@ public partial class Form1
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = selected;
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && fcWorkspace!.HasGames;
         buttonScan.Enabled = menuScan.Enabled = idle && CanUseFcDevice;
-        menuFcScan.Enabled = idle;
-        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
         buttonRefreshPorts.Enabled = menuRefreshPorts.Enabled = idle;
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = idle;
         comboBoxBurnProfileMode.Enabled = idle && burnProfileModeOptions.Count > 0;

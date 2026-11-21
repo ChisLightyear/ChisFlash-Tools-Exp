@@ -53,12 +53,15 @@ public partial class Form1
                 int textWidth = entry.Selector.Items.Cast<object>()
                     .Select(item => TextRenderer.MeasureText(entry.Selector.GetItemText(item), entry.Selector.Font, Size.Empty, TextFormatFlags.SingleLine).Width)
                     .DefaultIfEmpty(0).Max();
-                int selectedWidth = TextRenderer.MeasureText(entry.Selector.Text, entry.Selector.Font, Size.Empty, TextFormatFlags.SingleLine).Width;
+                int selectedWidth = TextRenderer.MeasureText(entry.Selector.GetItemText(entry.Selector.SelectedItem),
+                    entry.Selector.Font, Size.Empty, TextFormatFlags.SingleLine).Width;
                 int selectorWidth = Math.Max(LogicalToDeviceUnits(entry.Width),
                     selectedWidth + LogicalToDeviceUnits(24) + SystemInformation.VerticalScrollBarWidth);
                 entry.Selector.MinimumSize = new Size(selectorWidth, 0);
                 entry.Selector.Width = selectorWidth;
-                entry.Selector.DropDownWidth = Math.Max(entry.Selector.Width, textWidth + LogicalToDeviceUnits(24));
+                int popupPadding = LogicalToDeviceUnits(24);
+                if (entry.Selector == comboBoxBurnProfileMode) popupPadding += SystemInformation.VerticalScrollBarWidth;
+                entry.Selector.DropDownWidth = Math.Max(entry.Selector.Width, textWidth + popupPadding);
                 entry.Selector.Parent?.PerformLayout(entry.Selector, nameof(Control.PreferredSize));
                 entry.Selector.Parent?.Parent?.PerformLayout();
             }

@@ -9,16 +9,14 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private const int BeggarMaxReadChunkBytes = 4096;
-    private const int BeggarMaxWriteTimeoutMs = 60000;
+    private const int BeggarMaxWriteTimeoutMs = Timeout.Infinite;
     private const int BeggarMaxSectorErasePollDelayMs = 20;
     private const int BeggarMaxFixedMapReservedBytes = 1 * 1024 * 1024;
-    private const int BeggarMaxConfigOffsetBytes = 0x020000;
-    private const int BeggarMaxRomDirectoryOffsetBytes = 0x040000;
     private const int BeggarMaxPayloadStartBank = BeggarMaxFixedMapReservedBytes / GameBoyRomHeaderService.RomBankSize;
     private const int BeggarMaxIndependentSaveBankCapacity = 60;
     private const int BeggarMaxSharedSaveBankStart = 60;
     private const int BeggarMaxSharedSaveBankCount = 4;
-    private const int BeggarMaxGameSramBankLimit = 8;
+    private const int BeggarMaxGameSramBankLimit = CompilationBuilder.GbcMaxGameSramBanks;
 
     private sealed class BeggarMaxWorkspaceRowPlan
     {
@@ -32,6 +30,7 @@ public partial class Form1
         public required int AllocatedBytes { get; set; }
         public required int AllocatedRomBanks { get; set; }
         public required int RamBankCount { get; init; }
+        public required int SaveLength { get; init; }
         public required byte MbcType { get; init; }
         public required bool HasBattery { get; init; }
         public required bool UsesDedicatedSave { get; init; }
@@ -45,11 +44,9 @@ public partial class Form1
 
     private sealed class BeggarMaxBurnPlan
     {
-        public required CartridgeDefinition Cartridge { get; init; }
-        public required BuildRequest BuildRequest { get; init; }
         public required List<BeggarMaxWorkspaceRowPlan> RowPlans { get; init; }
         public required byte[] FixedMapRegion { get; init; }
-        public required int UsedRomBytes { get; init; }
+        public byte[]? OriginalFixedMapRegion { get; init; }
     }
 
     private void ValidateBeggarMaxWorkspaceSnapshot(
@@ -84,6 +81,7 @@ public partial class Form1
 
         foreach (BeggarMaxWorkspaceRowPlan plan in plans)
         {
+            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave);
             if (plan.UsesDedicatedSave)
             {
                 dedicatedBankCursor += plan.RamBankCount;
@@ -120,6 +118,50 @@ public partial class Form1
         }
     }
 
+    private WaterCartScanResult BurnBeggarMaxSingleRomOnDevice(
+        WaterDeviceProtocol protocol, WaterCartScanResult scan, PendingRomImportItem item, CancellationToken cancellationToken)
+    {
+        byte[] rom = File.ReadAllBytes(item.FilePath);
+        int capacity = scan.Geometry.DeviceSizeBytes;
+        if (!WaterCartScanner.TryBuildBeggarMaxSingleRomEntry(rom, capacity, out var entry) ||
+            entry.AllocatedSizeBytesOverride > rom.Length || (capacity > 0 && rom.Length > capacity))
+            throw new InvalidDataException(ShellText("游戏头无效、文件不完整或超过卡带容量。",
+                "The game header is invalid, the ROM is incomplete, or it exceeds cartridge capacity."));
+
+        int sectorSize = scan.Geometry.SectorSizeBytes > 0 ? scan.Geometry.SectorSizeBytes : 0x20000;
+        int writeEnd = checked((rom.Length + sectorSize - 1) / sectorSize * sectorSize);
+        int eraseEnd = scan.HasBeggarMaxDirectoryHeaders ? Math.Max(BeggarMaxFixedMapReservedBytes, writeEnd) : writeEnd;
+        string title = T("ui", "queue_burn", "Start Burn");
+        string eraseDetail = BuildProgressDetailText(item.FileName, "progress_phase_erase", "Erase");
+        string writeDetail = BuildProgressDetailText(item.FileName, "progress_phase_write", "Write");
+        int selectedBank = -1;
+        BeginMeasuredProgress(title, (long)eraseEnd + writeEnd, (eraseEnd + writeEnd) / sectorSize);
+        for (int offset = 0; offset < eraseEnd; offset += sectorSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int completedSectors = offset / sectorSize;
+            BeginMeasuredProgressPhase(eraseEnd / sectorSize, true, eraseDetail, completedUnits: completedSectors);
+            if (offset < rom.Length)
+            {
+                byte[] sector = Enumerable.Repeat((byte)0xFF, sectorSize).ToArray();
+                rom.AsSpan(offset, Math.Min(sectorSize, rom.Length - offset)).CopyTo(sector);
+                RewriteBeggarMaxSectorWithBank(protocol, offset, sector, scan.Geometry, item.FileName, ref selectedBank, cancellationToken,
+                    beforeProgram: () => BeginMeasuredProgressPhase(writeEnd / sectorSize, false, writeDetail, completedUnits: completedSectors));
+            }
+            else
+            {
+                EraseBeggarMaxRange(protocol, offset, offset + sectorSize - 1, sectorSize, ref selectedBank, cancellationToken);
+                AdvanceMeasuredProgress(sectorSize, 1, BuildProgressDetailText(item.FileName, "progress_phase_erase", "Erase"));
+            }
+        }
+        CompleteMeasuredProgress(title);
+
+        var result = BuildScanAfterNorErase(scan, entireNor: false);
+        result.Games.Add(entry.HeaderGame!);
+        result.Entries.Add(entry);
+        return result;
+    }
+
     private WaterCartScanResult ImportBeggarMaxRomFilesOnDevice(
         WaterDeviceProtocol protocol,
         WaterCartScanResult initialScan,
@@ -133,6 +175,7 @@ public partial class Form1
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureCfiWindowAllowsBurn(initialScan.Geometry);
         if (!clearConfigArea && !allowEmptyWorkspace)
         {
             ValidateBeggarMaxWorkspaceSnapshot(workspaceSnapshot, burnProfileMode, gbcMenuLanguage);
@@ -169,6 +212,7 @@ public partial class Form1
             rebuilt.Entries.Clear();
         }
         rebuilt.NorId = initialScan.NorId.ToArray();
+        rebuilt.GbcFlashId = initialScan.GbcFlashId.ToArray();
         rebuilt.RawNorIdHex = initialScan.RawNorIdHex;
         rebuilt.ChipName = initialScan.ChipName;
         rebuilt.CapacitySummary = initialScan.CapacitySummary;
@@ -286,11 +330,12 @@ public partial class Form1
 
         CompilationBuilder builder = new();
         byte[] fixedMapRegion;
+        byte[]? originalFixedMapRegion = null;
         if (initialScan.HasBeggarMaxDirectoryHeaders && !clearConfigArea)
         {
-            byte[] existingFixedMapRegion = ReadBeggarMaxFixedMapRegionFromDevice(protocol, initialScan, cancellationToken);
+            originalFixedMapRegion = ReadBeggarMaxFixedMapRegionFromDevice(protocol, initialScan, cancellationToken);
             fixedMapRegion = builder.UpdateExistingGbcFixedMapRegion(
-                existingFixedMapRegion,
+                originalFixedMapRegion,
                 request,
                 preparedEntries,
                 usedRomBytes,
@@ -303,11 +348,9 @@ public partial class Form1
 
         return new BeggarMaxBurnPlan
         {
-            Cartridge = cartridge,
-            BuildRequest = request,
             RowPlans = rowPlans,
             FixedMapRegion = fixedMapRegion,
-            UsedRomBytes = usedRomBytes,
+            OriginalFixedMapRegion = originalFixedMapRegion,
         };
     }
 
@@ -345,6 +388,7 @@ public partial class Form1
                     FileLength = Math.Max(1L, pending.FileSizeBytes),
                     AllocatedBytes = allocatedBytes,
                     AllocatedRomBanks = allocatedBytes / GameBoyRomHeaderService.RomBankSize,
+                    SaveLength = !metadata.HasBattery ? 0 : metadata.CartridgeType == 0x06 ? 512 : GetGbcSramLength(metadata),
                     RamBankCount = metadata.EffectiveRamBankCount,
                     MbcType = metadata.CartridgeType,
                     HasBattery = metadata.HasBattery,
@@ -377,14 +421,15 @@ public partial class Form1
                 DisplayTitle = displayTitle,
                 HeaderTitle = string.IsNullOrWhiteSpace(entry.HeaderTitle) ? entry.Title : entry.HeaderTitle,
                 RomPath = string.Empty,
-                FileLength = 0,
+                FileLength = entry.RomOffsetBank == 0 ? entry.RomBankCount * (long)GameBoyRomHeaderService.RomBankSize : 0,
                 AllocatedBytes = Math.Max(GameBoyRomHeaderService.RomBankSize * 2, entry.RomBankCount * GameBoyRomHeaderService.RomBankSize),
                 AllocatedRomBanks = Math.Max(2, entry.RomBankCount),
+                SaveLength = entry.SaveLengthBytes,
                 RamBankCount = entry.RamBankCount,
                 MbcType = entry.MbcType,
                 HasBattery = entry.HasBattery,
                 UsesDedicatedSave = ResolveWorkspaceRowUsesDedicatedSave(row),
-                IsChanged = false,
+                IsChanged = entry.RomOffsetBank == 0,
                 ReuseExistingSaveLayout = true,
             });
         }
@@ -410,7 +455,7 @@ public partial class Form1
                 continue;
             }
 
-            if (plan.ExistingEntry is not null &&
+            if (plan.ExistingEntry is { RomOffsetBank: >= BeggarMaxPayloadStartBank } &&
                 plan.ExistingEntry.RomBankCount >= plan.AllocatedRomBanks)
             {
                 plan.FinalRomOffsetBank = plan.ExistingEntry.RomOffsetBank;
@@ -451,7 +496,7 @@ public partial class Form1
 
         foreach (BeggarMaxWorkspaceRowPlan plan in rowPlans)
         {
-            if (plan.ExistingEntry is null)
+            if (plan.ExistingEntry is null || plan.ExistingEntry.RomOffsetBank == 0)
             {
                 continue;
             }
@@ -503,103 +548,70 @@ public partial class Form1
 
     private void AllocateBeggarMaxSaveBanks(List<BeggarMaxWorkspaceRowPlan> rowPlans)
     {
-        bool[] usedBanks = new bool[BeggarMaxIndependentSaveBankCapacity];
-        foreach (BeggarMaxWorkspaceRowPlan plan in rowPlans.Where(plan => !plan.IsChanged && plan.ExistingEntry is not null))
-        {
-            if (plan.RamBankCount <= 0)
-            {
-                plan.FinalSaveBankMap = Enumerable.Repeat((byte)0xFF, BeggarMaxGameSramBankLimit).ToArray();
-                plan.FinalUsesSharedSave = false;
-                continue;
-            }
+        bool[] used = new bool[BeggarMaxIndependentSaveBankCapacity];
+        var dedicated = rowPlans.Where(plan => plan.UsesDedicatedSave && plan.RamBankCount > 0).ToList();
+        int required = dedicated.Sum(plan => plan.RamBankCount);
+        if (required > used.Length)
+            throw new InvalidDataException(Tf("error", "gbc_sram_capacity_exceeded",
+                "Battery-backed SRAM allocation exceeds the MAX/MBCX independent save capacity ({0} banks).", used.Length));
 
-            if (!plan.UsesDedicatedSave)
+        foreach (var plan in rowPlans)
+        {
+            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave);
+            if (!plan.UsesDedicatedSave && plan.RamBankCount > 0)
             {
                 plan.FinalSaveBankMap = BuildBeggarMaxSharedSaveMap(plan.RamBankCount);
                 plan.FinalUsesSharedSave = true;
-                continue;
             }
-
-            byte[] preservedMap = NormalizeBeggarMaxSaveMap(plan.ExistingEntry!.SaveBankMap, plan.RamBankCount);
-            if (!ValidateBeggarMaxDedicatedSaveMap(preservedMap, plan.RamBankCount, usedBanks, out string validationError))
-            {
-                throw new InvalidOperationException(Tf(
-                    "error",
-                    "gbc_sram_existing_map_invalid",
-                    "Existing SRAM map for \"{0}\" is invalid and cannot be preserved: {1}",
-                    plan.DisplayTitle,
-                    validationError));
-            }
-
-            plan.FinalSaveBankMap = preservedMap;
-            plan.FinalUsesSharedSave = false;
-            MarkBeggarMaxDedicatedSaveMapUsed(preservedMap, plan.RamBankCount, usedBanks);
         }
 
-        foreach (BeggarMaxWorkspaceRowPlan plan in rowPlans.Where(plan => plan.IsChanged || plan.ExistingEntry is null))
+        bool[] originalUsed = new bool[BeggarMaxIndependentSaveBankCapacity];
+        foreach (var plan in rowPlans.Where(plan => plan.ReuseExistingSaveLayout))
         {
-            if (plan.RamBankCount <= 0)
-            {
-                plan.FinalSaveBankMap = Enumerable.Repeat((byte)0xFF, BeggarMaxGameSramBankLimit).ToArray();
-                plan.FinalUsesSharedSave = false;
-                continue;
-            }
-
-            if (plan.UsesDedicatedSave &&
-                plan.ReuseExistingSaveLayout &&
-                plan.ExistingEntry is not null &&
-                plan.ExistingEntry.SaveBankMap.Count >= plan.RamBankCount)
-            {
-                byte[] preservedMap = NormalizeBeggarMaxSaveMap(plan.ExistingEntry.SaveBankMap, plan.RamBankCount);
-                if (ValidateBeggarMaxDedicatedSaveMap(preservedMap, plan.RamBankCount, usedBanks, out _))
-                {
-                    plan.FinalSaveBankMap = preservedMap;
-                    plan.FinalUsesSharedSave = false;
-                    MarkBeggarMaxDedicatedSaveMapUsed(preservedMap, plan.RamBankCount, usedBanks);
-                    continue;
-                }
-            }
-
-            if (!plan.UsesDedicatedSave)
-            {
-                plan.FinalSaveBankMap = BuildBeggarMaxSharedSaveMap(plan.RamBankCount);
-                plan.FinalUsesSharedSave = true;
-                continue;
-            }
-
-            byte[] dedicatedMap = Enumerable.Repeat((byte)0xFF, BeggarMaxGameSramBankLimit).ToArray();
-            List<int> freeBanks = Enumerable.Range(0, BeggarMaxIndependentSaveBankCapacity)
-                .Where(index => !usedBanks[index])
-                .Take(plan.RamBankCount)
-                .ToList();
-            if (freeBanks.Count != plan.RamBankCount)
-            {
-                throw new InvalidOperationException(Tf(
-                    "error",
-                    "gbc_sram_capacity_exceeded",
-                    "Battery-backed SRAM allocation exceeds the MAX/MBCX independent save capacity ({0} banks).",
-                    BeggarMaxIndependentSaveBankCapacity));
-            }
-
-            for (int i = 0; i < freeBanks.Count; i++)
-            {
-                dedicatedMap[i] = (byte)freeBanks[i];
-                usedBanks[freeBanks[i]] = true;
-            }
-
-            plan.FinalSaveBankMap = dedicatedMap;
-            plan.FinalUsesSharedSave = false;
+            if (plan.ExistingEntry is not { HasBattery: true, UsesSharedSave: false, RamBankCount: > 0 } entry) continue;
+            if (!ValidateBeggarMaxDedicatedSaveMap(entry.SaveBankMap, entry.RamBankCount, originalUsed, out string error))
+                throw new InvalidDataException($"{plan.DisplayTitle}: {error}");
+            foreach (byte bank in entry.SaveBankMap.Take(entry.RamBankCount)) originalUsed[bank] = true;
         }
-    }
 
-    private static byte[] NormalizeBeggarMaxSaveMap(IReadOnlyList<byte> source, int ramBankCount)
-    {
-        byte[] result = Enumerable.Repeat((byte)0xFF, BeggarMaxGameSramBankLimit).ToArray();
-        for (int i = 0; i < result.Length && i < source.Count && i < Math.Max(1, ramBankCount); i++)
+        // 原位保留连续独占区，尚未分配的游戏优先使用连续空洞。
+        foreach (var plan in dedicated)
         {
-            result[i] = source[i];
+            if (!plan.ReuseExistingSaveLayout || plan.ExistingEntry is not { UsesSharedSave: false } entry) continue;
+            var banks = entry.SaveBankMap.Take(plan.RamBankCount).ToArray();
+            if (!banks.Select((bank, index) => bank - index).All(start => start == banks[0])) continue;
+            AssignRange(plan, banks[0]);
         }
-        return result;
+
+        foreach (var plan in dedicated.Where(plan => plan.FinalSaveBankMap[0] == 0xFF))
+        {
+            int first = 0;
+            while (first + plan.RamBankCount <= used.Length &&
+                used.AsSpan(first, plan.RamBankCount).Contains(true)) first++;
+            if (first + plan.RamBankCount <= used.Length)
+            {
+                AssignRange(plan, first);
+                continue;
+            }
+
+            // 总容量已检查，连续空间不足才重新排列独占区。
+            int cursor = 0;
+            foreach (var game in dedicated)
+            {
+                AssignRange(game, cursor);
+                cursor += game.RamBankCount;
+            }
+            break;
+        }
+
+        void AssignRange(BeggarMaxWorkspaceRowPlan plan, int first)
+        {
+            for (int i = 0; i < plan.RamBankCount; i++)
+            {
+                used[first + i] = true;
+                plan.FinalSaveBankMap[i] = (byte)(first + i);
+            }
+        }
     }
 
     private static bool ValidateBeggarMaxDedicatedSaveMap(
@@ -641,18 +653,6 @@ public partial class Form1
         return true;
     }
 
-    private static void MarkBeggarMaxDedicatedSaveMapUsed(IReadOnlyList<byte> map, int ramBankCount, bool[] usedBanks)
-    {
-        for (int i = 0; i < ramBankCount && i < map.Count; i++)
-        {
-            byte bank = map[i];
-            if (bank < usedBanks.Length)
-            {
-                usedBanks[bank] = true;
-            }
-        }
-    }
-
     private static byte[] BuildBeggarMaxSharedSaveMap(int ramBankCount)
     {
         byte[] result = Enumerable.Repeat((byte)0xFF, BeggarMaxGameSramBankLimit).ToArray();
@@ -685,8 +685,7 @@ public partial class Form1
         result.SaveSlotSummary = new();
         result.Entries = burnPlan.RowPlans.Select((plan, index) =>
         {
-            int saveLength = !plan.HasBattery ? 0 : plan.MbcType is 0x05 or 0x06 ? 0x200 :
-                plan.FinalUsesSharedSave ? Math.Min(plan.RamBankCount * 0x2000, 0x8000) : plan.RamBankCount * 0x2000;
+            int saveLength = plan.SaveLength;
             string saveText = saveLength == 0 ? T("value", "save_type_none", "NONE") :
                 plan.MbcType is 0x05 or 0x06 ? "MBC2" : $"RAM {FormatKiBSize(saveLength)}" + (plan.FinalUsesSharedSave ? " (Shared)" : "");
             return new WaterCartEntry
@@ -712,12 +711,6 @@ public partial class Form1
     {
         cancellationToken.ThrowIfCancellationRequested();
         UpdateIndeterminateProgress(
-            T("value", "gbc_progress_reading_existing", "Reading existing GBC/MAX flash content..."));
-        byte[]? preDeleteFixedMapRegion = BuildBeggarMaxPreWriteFixedMapRegion(protocol, scanResult, burnPlan, cancellationToken);
-        Dictionary<int, byte[]> preDeleteFixedMapSectors = preDeleteFixedMapRegion is not null
-            ? BuildBeggarMaxFixedMapSectorRewriteMap(protocol, scanResult, preDeleteFixedMapRegion, cancellationToken: cancellationToken)
-            : [];
-        UpdateIndeterminateProgress(
             T("value", "gbc_progress_preparing_payload", "Preparing GBC/MAX ROM sectors..."));
         Dictionary<int, byte[]> payloadSectors = BuildBeggarMaxPayloadSectorRewriteMap(protocol, scanResult, burnPlan, cancellationToken);
         UpdateIndeterminateProgress(
@@ -726,14 +719,13 @@ public partial class Form1
             protocol,
             scanResult,
             burnPlan.FixedMapRegion,
-            forceAll: forceFullFixedMapRewrite || preDeleteFixedMapSectors.Count > 0,
+            existingFixedMapRegion: burnPlan.OriginalFixedMapRegion,
+            forceAll: forceFullFixedMapRewrite,
             cancellationToken: cancellationToken);
         long totalBytes =
-            preDeleteFixedMapSectors.Values.Sum(sector => CountRewriteSectorProgressWorkBytes(sector, scanResult.Geometry)) +
             payloadSectors.Values.Sum(sector => CountRewriteSectorProgressWorkBytes(sector, scanResult.Geometry)) +
             finalFixedMapSectors.Values.Sum(sector => CountRewriteSectorProgressWorkBytes(sector, scanResult.Geometry));
         int totalUnits =
-            preDeleteFixedMapSectors.Values.Sum(CountRewriteSectorProgressUnits) +
             payloadSectors.Values.Sum(CountRewriteSectorProgressUnits) +
             finalFixedMapSectors.Values.Sum(CountRewriteSectorProgressUnits);
 
@@ -746,35 +738,30 @@ public partial class Form1
                 plan.DisplayTitle));
         }
 
+        var relocatedSaves = BackupRelocatedMaxSaves(protocol, burnPlan, cancellationToken, out string? backupFolder);
+        bool migrationStarted = false;
         BeginMeasuredProgress(T("ui", "queue_burn", "Start Burn"), totalBytes, totalUnits);
+        int selectedBank = -1;
         try
         {
-            if (preDeleteFixedMapSectors.Count > 0)
-            {
-                AppendLog(T(
-                    "log",
-                    "predelete_rom_mappings",
-                    "Pre-delete queued ROM mappings before erase/write. If the burn is interrupted, the menu will not point at partially written ROM data."));
-                foreach ((int sectorAddress, byte[] sectorData) in preDeleteFixedMapSectors.OrderBy(pair => pair.Key))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    RewriteBeggarMaxSector(protocol, sectorAddress, sectorData, scanResult.Geometry, "MAX/MBCX pre-delete map", cancellationToken);
-                }
-            }
-
             if (payloadSectors.Count > 0)
             {
+                BeginMeasuredProgressPhase(payloadSectors.Count, true, BuildProgressDetailText("MAX/MBCX ROM", "progress_phase_erase", "Erase"));
                 EraseBeggarMaxSectorBatch(
                     protocol,
                     payloadSectors,
                     scanResult.Geometry,
                     "MAX/MBCX ROM",
+                    ref selectedBank,
                     cancellationToken);
 
                 AppendLog(T(
                     "log",
                     "beggar_max_rom_erase_complete",
                     "All continuous MAX/MBCX ROM ranges have been erased. Start programming ROM data."));
+                int payloadWriteCount = payloadSectors.Values.Count(sector => !IsAllBytes(sector, 0xFF));
+                if (payloadWriteCount > 0)
+                    BeginMeasuredProgressPhase(payloadWriteCount, false, BuildProgressDetailText("MAX/MBCX ROM", "progress_phase_write", "Write"));
                 foreach ((int sectorAddress, byte[] sectorData) in payloadSectors.OrderBy(pair => pair.Key))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -784,20 +771,39 @@ public partial class Form1
                         sectorData,
                         scanResult.Geometry,
                         "MAX/MBCX ROM",
+                        ref selectedBank,
                         cancellationToken);
                 }
             }
 
-            if (forceFullFixedMapRewrite)
+            if (relocatedSaves.Count > 0)
             {
+                // 搬移开始后，先提交与存档配套的目录再结束，避免用户取消后用旧表重读。
+                cancellationToken.ThrowIfCancellationRequested();
+                migrationStarted = true;
+                cancellationToken = CancellationToken.None;
+                RestoreRelocatedMaxSaves(protocol, relocatedSaves);
+            }
+            int mapWriteCount = finalFixedMapSectors.Values.Count(sector => !IsAllBytes(sector, 0xFF));
+            string mapLabel = forceFullFixedMapRewrite ? "MAX/MBCX fresh menu" : "MAX/MBCX final map";
+            string eraseMapDetail = BuildProgressDetailText(mapLabel, "progress_phase_erase", "Erase");
+            string writeMapDetail = BuildProgressDetailText(mapLabel, "progress_phase_write", "Write");
+            if (forceFullFixedMapRewrite && finalFixedMapSectors.Count > 0)
+            {
+                BeginMeasuredProgressPhase(finalFixedMapSectors.Count, true, eraseMapDetail);
                 EraseBeggarMaxSectorBatch(
                     protocol,
                     finalFixedMapSectors,
                     scanResult.Geometry,
-                    "MAX/MBCX fresh menu",
+                    mapLabel,
+                    ref selectedBank,
                     cancellationToken);
+                if (mapWriteCount > 0)
+                    BeginMeasuredProgressPhase(mapWriteCount, false, writeMapDetail);
             }
 
+            int mapErased = 0;
+            int mapWritten = 0;
             foreach ((int sectorAddress, byte[] sectorData) in finalFixedMapSectors.OrderBy(pair => pair.Key))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -808,16 +814,27 @@ public partial class Form1
                         sectorAddress,
                         sectorData,
                         scanResult.Geometry,
-                        "MAX/MBCX fresh menu",
+                        mapLabel,
+                        ref selectedBank,
                         cancellationToken);
                 }
                 else
                 {
-                    RewriteBeggarMaxSector(protocol, sectorAddress, sectorData, scanResult.Geometry, "MAX/MBCX final map", cancellationToken);
+                    BeginMeasuredProgressPhase(finalFixedMapSectors.Count, true, eraseMapDetail, completedUnits: mapErased++);
+                    RewriteBeggarMaxSectorWithBank(protocol, sectorAddress, sectorData, scanResult.Geometry,
+                        mapLabel, ref selectedBank, cancellationToken,
+                        beforeProgram: () => BeginMeasuredProgressPhase(mapWriteCount, false, writeMapDetail, completedUnits: mapWritten++));
                 }
             }
 
             CompleteMeasuredProgress(T("ui", "queue_burn", "Start Burn"));
+        }
+        catch (Exception ex) when (migrationStarted)
+        {
+            AbortMeasuredProgress();
+            throw new IOException(ShellText("存档迁移中断。请重新分析卡带，并用这次迁移前的备份恢复受影响的游戏：",
+                "Save migration was interrupted. Rescan, then recover affected games from the original backups: ") +
+                backupFolder + Environment.NewLine + ex.Message, ex);
         }
         catch
         {
@@ -826,46 +843,67 @@ public partial class Form1
         }
     }
 
-    private byte[]? BuildBeggarMaxPreWriteFixedMapRegion(
-        WaterDeviceProtocol protocol,
-        WaterCartScanResult scanResult,
-        BeggarMaxBurnPlan burnPlan,
-        CancellationToken cancellationToken = default)
+    private sealed record MaxSaveMove(WaterCartEntry Source, byte[] Destination, byte[] Data);
+
+    private List<MaxSaveMove> BackupRelocatedMaxSaves(WaterDeviceProtocol protocol,
+        BeggarMaxBurnPlan burnPlan, CancellationToken cancellationToken, out string? backupFolder)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!scanResult.HasBeggarMaxDirectoryHeaders || burnPlan.RowPlans.All(plan => !plan.IsChanged))
+        backupFolder = null;
+        List<MaxSaveMove> moves = [];
+        foreach (var plan in burnPlan.RowPlans)
         {
-            return null;
+            if (!plan.ReuseExistingSaveLayout || plan.ExistingEntry is not { HasBattery: true } source ||
+                source.SaveLengthBytes <= 0) continue;
+            var oldBanks = ResolveBeggarMaxPhysicalBanks(source, source.SaveLengthBytes);
+            if (oldBanks.Length == 0)
+                throw new InvalidDataException($"{plan.DisplayTitle}: SRAM bank map");
+            byte[] destination = plan.FinalSaveBankMap[..oldBanks.Length];
+            if (oldBanks.SequenceEqual(destination.Select(bank => (int)bank))) continue;
+            if (plan.FinalUsesSharedSave && burnPlan.RowPlans.Any(other => other != plan &&
+                other.FinalUsesSharedSave && other.HasBattery && other.ReuseExistingSaveLayout))
+                throw new InvalidOperationException(ShellText("多份保留的存档共用同一目标位置，无法分别迁移。请给要保留的游戏选择独占存档。",
+                    "Several retained saves would share the same destination. Select dedicated saves to preserve each game."));
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] data = ReadBeggarMaxSave(protocol, source, source.SaveLengthBytes);
+            moves.Add(new MaxSaveMove(source, destination, data));
         }
+        if (moves.Count == 0) return moves;
 
-        byte[] existingFixedMapRegion = ReadBeggarMaxFixedMapRegionFromDevice(protocol, scanResult, cancellationToken);
-        List<BeggarMaxWorkspaceRowPlan> retainedPlans = burnPlan.RowPlans
-            .Where(plan => !plan.IsChanged && plan.ExistingEntry is not null)
-            .ToList();
-        if (retainedPlans.Count == 0)
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ChisFlashWaterClient", "MAX-Save-Backups", $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        foreach (var move in moves)
         {
-            byte[] fixedMapRegion = existingFixedMapRegion.ToArray();
-            fixedMapRegion.AsSpan(BeggarMaxConfigOffsetBytes, BeggarMaxFixedMapReservedBytes - BeggarMaxConfigOffsetBytes).Fill(0xFF);
-            byte[] configHeader = CompilationBuilder.BuildGbcConfigHeader(burnPlan.BuildRequest, 0);
-            byte[] directoryHeader = CompilationBuilder.BuildGbcDirectoryHeader(0);
-            Buffer.BlockCopy(configHeader, 0, fixedMapRegion, BeggarMaxConfigOffsetBytes, configHeader.Length);
-            Buffer.BlockCopy(directoryHeader, 0, fixedMapRegion, BeggarMaxRomDirectoryOffsetBytes, directoryHeader.Length);
-            return fixedMapRegion;
+            string name = $"{move.Source.EntrySlot + 1:D3}-{SanitizeSaveFileName(move.Source.Title)}.sav";
+            File.WriteAllBytes(Path.Combine(folder, name), move.Data);
         }
+        if (burnPlan.OriginalFixedMapRegion is { } original)
+            File.WriteAllBytes(Path.Combine(folder, "original-menu.bin"), original);
+        File.WriteAllText(Path.Combine(folder, "mapping.json"), System.Text.Json.JsonSerializer.Serialize(
+            moves.Select(move => new { move.Source.EntrySlot, move.Source.Title, move.Source.RomOffsetBank,
+                OldBanks = move.Source.SaveBankMap.Take(move.Destination.Length).Select(b => (int)b),
+                NewBanks = move.Destination.Select(b => (int)b) })));
+        backupFolder = folder;
+        AppendLog(ShellText("MAX 存档迁移备份已保存到 ", "MAX save migration backup: ") + folder);
+        return moves;
+    }
 
-        CompilationBuilder builder = new();
-        return builder.UpdateExistingGbcFixedMapRegion(
-            existingFixedMapRegion,
-            burnPlan.BuildRequest,
-            BuildBeggarMaxPreparedEntries(retainedPlans),
-            burnPlan.UsedRomBytes,
-            preserveMenuRuntime: true);
+    private void RestoreRelocatedMaxSaves(WaterDeviceProtocol protocol, List<MaxSaveMove> moves)
+    {
+        // 所有源存档已备份，此处按新地址写入，可以处理互换和重叠。
+        foreach (var move in moves)
+        {
+            uint start = (uint)(move.Destination[0] * GameBoyRomHeaderService.RamBankSize);
+            try { TransferGbcPhysicalSave(protocol, start, move.Data.Length, move.Data); }
+            finally { TrySetBeggarMaxRamEnabled(protocol, false); }
+        }
     }
 
     private Dictionary<int, byte[]> BuildBeggarMaxFixedMapSectorRewriteMap(
         WaterDeviceProtocol protocol,
         WaterCartScanResult scanResult,
         byte[] fixedMapRegion,
+        byte[]? existingFixedMapRegion,
         bool forceAll = false,
         CancellationToken cancellationToken = default)
     {
@@ -873,6 +911,7 @@ public partial class Form1
             ? scanResult.Geometry.SectorSizeBytes
             : 0x20000;
         Dictionary<int, byte[]> sectorMap = [];
+        int selectedBank = -1;
 
         for (int offset = 0; offset < fixedMapRegion.Length; offset += sectorSize)
         {
@@ -891,7 +930,9 @@ public partial class Form1
                 continue;
             }
 
-            byte[] existingSectorData = ReadBeggarMaxSectorImage(protocol, offset, sectorSize, cancellationToken);
+            ReadOnlySpan<byte> existingSectorData = existingFixedMapRegion is not null && offset + sectorSize <= existingFixedMapRegion.Length
+                ? existingFixedMapRegion.AsSpan(offset, sectorSize)
+                : ReadBeggarMaxSectorImage(protocol, offset, sectorSize, ref selectedBank, cancellationToken);
             if (!existingSectorData.SequenceEqual(sectorData))
             {
                 sectorMap[offset] = sectorData;
@@ -911,11 +952,15 @@ public partial class Form1
             ? scanResult.Geometry.SectorSizeBytes
             : 0x20000;
         Dictionary<int, byte[]> sectorMap = [];
+        Dictionary<int, List<(int Start, int End)>> sectorCoverage = [];
+        int sourceBank = -1;
 
         foreach (BeggarMaxWorkspaceRowPlan plan in burnPlan.RowPlans.Where(plan => plan.IsChanged))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] payload = BuildBeggarMaxRomPayload(plan, cancellationToken);
+            byte[] payload = plan.RomPath.Length == 0 && plan.ExistingEntry is { RomOffsetBank: 0 }
+                ? ReadBeggarMaxSectorImage(protocol, 0, plan.AllocatedBytes, ref sourceBank, cancellationToken)
+                : BuildBeggarMaxRomPayload(plan, cancellationToken);
             int payloadOffset = 0;
             int absoluteBaseAddress = plan.FinalRomOffsetBank * GameBoyRomHeaderService.RomBankSize;
             while (payloadOffset < payload.Length)
@@ -928,53 +973,43 @@ public partial class Form1
 
                 if (!sectorMap.TryGetValue(sectorAddress, out byte[]? sectorData))
                 {
-                    sectorData = ReadBeggarMaxSectorImage(protocol, sectorAddress, sectorSize, cancellationToken);
-                    sectorMap[sectorAddress] = sectorData;
+                    sectorData = new byte[sectorSize];
+                    sectorMap.Add(sectorAddress, sectorData);
+                    sectorCoverage.Add(sectorAddress, []);
                 }
-
                 Buffer.BlockCopy(payload, payloadOffset, sectorData, sectorOffset, copyLength);
+                sectorCoverage[sectorAddress].Add((sectorOffset, sectorOffset + copyLength));
                 payloadOffset += copyLength;
             }
         }
 
-        if (sectorMap.Count > 1)
+        int selectedBank = -1;
+        foreach (var (sectorAddress, ranges) in sectorCoverage.OrderBy(pair => pair.Key))
         {
-            int firstSectorAddress = sectorMap.Keys.Min();
-            int lastSectorAddress = sectorMap.Keys.Max();
-            for (int sectorAddress = firstSectorAddress; sectorAddress <= lastSectorAddress; sectorAddress += sectorSize)
+            cancellationToken.ThrowIfCancellationRequested();
+            ranges.Sort();
+            byte[] sectorData = sectorMap[sectorAddress];
+            byte[]? original = null;
+            int coveredEnd = 0;
+            // 只为未覆盖部分读卡。首尾以外也可能有待保留的空隙。
+            foreach (var (start, end) in ranges)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!sectorMap.ContainsKey(sectorAddress))
+                if (start > coveredEnd)
                 {
-                    sectorMap[sectorAddress] = ReadBeggarMaxSectorImage(
-                        protocol,
-                        sectorAddress,
-                        sectorSize,
-                        cancellationToken);
+                    original ??= ReadBeggarMaxSectorImage(protocol, sectorAddress, sectorSize, ref selectedBank, cancellationToken);
+                    original.AsSpan(coveredEnd, start - coveredEnd).CopyTo(sectorData.AsSpan(coveredEnd));
                 }
+                coveredEnd = Math.Max(coveredEnd, end);
+            }
+            if (coveredEnd < sectorSize)
+            {
+                original ??= ReadBeggarMaxSectorImage(protocol, sectorAddress, sectorSize, ref selectedBank, cancellationToken);
+                original.AsSpan(coveredEnd).CopyTo(sectorData.AsSpan(coveredEnd));
             }
         }
 
         return sectorMap;
     }
-
-    private static List<CompilationBuilder.GbcPreparedEntry> BuildBeggarMaxPreparedEntries(IReadOnlyList<BeggarMaxWorkspaceRowPlan> rowPlans) =>
-        rowPlans
-            .Select((plan, index) => CompilationBuilder.CreateGbcPreparedEntry(
-                index,
-                index,
-                plan.DisplayTitle,
-                plan.HeaderTitle,
-                plan.RomPath,
-                plan.FileLength,
-                plan.AllocatedBytes,
-                plan.AllocatedRomBanks,
-                plan.RamBankCount,
-                plan.MbcType,
-                plan.HasBattery,
-                plan.FinalRomOffsetBank,
-                plan.FinalSaveBankMap))
-            .ToList();
 
     private static byte[] BuildBeggarMaxRomPayload(
         BeggarMaxWorkspaceRowPlan plan,
@@ -997,12 +1032,13 @@ public partial class Form1
             ? scanResult.Geometry.SectorSizeBytes
             : 0x20000;
         byte[] fixedMap = new byte[BeggarMaxFixedMapReservedBytes];
+        int selectedBank = -1;
 
         for (int offset = 0; offset < fixedMap.Length; offset += sectorSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
             int readLength = Math.Min(sectorSize, fixedMap.Length - offset);
-            byte[] sectorImage = ReadBeggarMaxSectorImage(protocol, offset, sectorSize, cancellationToken);
+            byte[] sectorImage = ReadBeggarMaxSectorImage(protocol, offset, sectorSize, ref selectedBank, cancellationToken);
             Buffer.BlockCopy(sectorImage, 0, fixedMap, offset, readLength);
         }
 
@@ -1013,6 +1049,7 @@ public partial class Form1
         WaterDeviceProtocol protocol,
         int sectorAddress,
         int sectorSize,
+        ref int selectedBank,
         CancellationToken cancellationToken = default)
     {
         byte[] buffer = new byte[sectorSize];
@@ -1025,7 +1062,7 @@ public partial class Form1
             int bankOffset = currentAddress & 0x3FFF;
             int readLength = Math.Min(BeggarMaxReadChunkBytes, sectorSize - offset);
             readLength = Math.Min(readLength, 0x4000 - bankOffset);
-            if (!TrySwitchBeggarMaxRomBank(protocol, bank))
+            if (!TrySelectBeggarMaxRomBank(protocol, bank, ref selectedBank))
             {
                 AppendLog(Tf(
                     "log",
@@ -1046,7 +1083,7 @@ public partial class Form1
 
             byte[] chunk = new byte[readLength];
             int cartAddress = GetBeggarMaxBankBaseAddress(bank) + bankOffset;
-            if (!protocol.TryReadGbc((uint)cartAddress, chunk, 3000))
+            if (!protocol.TryReadGbc((uint)cartAddress, chunk, Timeout.Infinite))
             {
                 AppendLog(Tf(
                     "log",
@@ -1085,6 +1122,20 @@ public partial class Form1
         string label,
         CancellationToken cancellationToken = default)
     {
+        int selectedBank = -1;
+        RewriteBeggarMaxSectorWithBank(protocol, sectorAddress, sectorData, geometry, label, ref selectedBank, cancellationToken);
+    }
+
+    private void RewriteBeggarMaxSectorWithBank(
+        WaterDeviceProtocol protocol,
+        int sectorAddress,
+        byte[] sectorData,
+        NorGeometryInfo geometry,
+        string label,
+        ref int selectedBank,
+        CancellationToken cancellationToken,
+        Action? beforeProgram = null)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         int sectorSize = geometry.SectorSizeBytes > 0
             ? geometry.SectorSizeBytes
@@ -1095,7 +1146,7 @@ public partial class Form1
         }
 
         AppendProgressLog("beggar-max-erase", Tf("log", "erase_sector", "Erase {0}: 0x{1:X6}", label, sectorAddress));
-        EraseBeggarMaxRange(protocol, sectorAddress, sectorAddress + sectorSize - 1, sectorSize, cancellationToken);
+        EraseBeggarMaxRange(protocol, sectorAddress, sectorAddress + sectorSize - 1, sectorSize, ref selectedBank, cancellationToken);
 
         AdvanceMeasuredProgress(
             sectorSize,
@@ -1103,7 +1154,9 @@ public partial class Form1
             BuildProgressDetailText(label, "progress_phase_erase", "Erase"));
         cancellationToken.ThrowIfCancellationRequested();
 
-        ProgramBeggarMaxSector(protocol, sectorAddress, sectorData, geometry, label, cancellationToken);
+        if (beforeProgram is not null && !IsAllBytes(sectorData, 0xFF))
+            beforeProgram();
+        ProgramBeggarMaxSector(protocol, sectorAddress, sectorData, geometry, label, ref selectedBank, cancellationToken);
     }
 
     private void EraseBeggarMaxSectorBatch(
@@ -1111,6 +1164,7 @@ public partial class Form1
         IReadOnlyDictionary<int, byte[]> sectorMap,
         NorGeometryInfo geometry,
         string label,
+        ref int selectedBank,
         CancellationToken cancellationToken = default)
     {
         if (sectorMap.Count == 0)
@@ -1183,6 +1237,7 @@ public partial class Form1
                 start,
                 end + sectorSize - 1,
                 sectorSize,
+                ref selectedBank,
                 cancellationToken,
                 _ => AdvanceMeasuredProgress(
                     sectorSize,
@@ -1197,6 +1252,7 @@ public partial class Form1
         byte[] sectorData,
         NorGeometryInfo geometry,
         string label,
+        ref int selectedBank,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1215,7 +1271,6 @@ public partial class Form1
 
         ushort bufferWriteBytes = (ushort)Math.Clamp(geometry.BufferWriteBytes > 0 ? geometry.BufferWriteBytes : 256, 1, ushort.MaxValue);
         int offset = 0;
-        int currentBank = -1;
         while (offset < sectorData.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1225,14 +1280,8 @@ public partial class Form1
             int writeLength = Math.Min(4096, sectorData.Length - offset);
             writeLength = Math.Min(writeLength, 0x4000 - bankOffset);
 
-            if (bank != currentBank)
-            {
-                currentBank = bank;
-                if (!TrySwitchBeggarMaxRomBank(protocol, bank))
-                {
-                    throw new InvalidOperationException(T("error", "segment_program_begin_failed", "Failed to switch MAX ROM bank before programming."));
-                }
-            }
+            if (!TrySelectBeggarMaxRomBank(protocol, bank, ref selectedBank))
+                throw new InvalidOperationException(T("error", "segment_program_begin_failed", "Failed to switch MAX ROM bank before programming."));
 
             byte[] chunk = sectorData.AsSpan(offset, writeLength).ToArray();
             int cartAddress = GetBeggarMaxBankBaseAddress(bank) + bankOffset;
@@ -1303,6 +1352,7 @@ public partial class Form1
         int startAddress,
         int endAddress,
         int sectorSize,
+        ref int selectedBank,
         CancellationToken cancellationToken = default,
         Action<int>? afterSectorErased = null)
     {
@@ -1310,46 +1360,57 @@ public partial class Form1
 
         for (int sectorAddress = alignedEndAddress; sectorAddress >= startAddress; sectorAddress -= sectorSize)
         {
+            long eraseStart = StartLandscapeErase();
             cancellationToken.ThrowIfCancellationRequested();
-            if (!TrySwitchBeggarMaxRomBank(protocol, sectorAddress >> 14))
+            if (!TrySelectBeggarMaxRomBank(protocol, sectorAddress >> 14, ref selectedBank))
             {
                 throw new InvalidOperationException(T("error", "erase_segment_failed", "Failed to switch MAX ROM bank before erase."));
             }
 
-            int bankBaseAddress = GetBeggarMaxBankBaseAddress(sectorAddress >> 14);
+            // 0x30 命令与状态轮询都必须落在扇区自身地址上，不能只用 bank 基址：
+            // 等长 64 KiB 扇区的 bank 内偏移恒为 0（与旧写法等价），
+            // 8 KiB 小扇区共用一个 bank 时若丢掉偏移，会反复擦第一个扇区并误判完成。
+            uint commandAddress = (uint)GbcNorImageWriter.SectorCommandAddress(sectorAddress);
             if (!protocol.TryWriteGbc(0x0AAA, [0xAA], BeggarMaxWriteTimeoutMs) ||
                 !protocol.TryWriteGbc(0x0555, [0x55], BeggarMaxWriteTimeoutMs) ||
                 !protocol.TryWriteGbc(0x0AAA, [0x80], BeggarMaxWriteTimeoutMs) ||
                 !protocol.TryWriteGbc(0x0AAA, [0xAA], BeggarMaxWriteTimeoutMs) ||
                 !protocol.TryWriteGbc(0x0555, [0x55], BeggarMaxWriteTimeoutMs) ||
-                !protocol.TryWriteGbc((uint)bankBaseAddress, [0x30], BeggarMaxWriteTimeoutMs))
+                !protocol.TryWriteGbc(commandAddress, [0x30], BeggarMaxWriteTimeoutMs))
             {
                 throw new InvalidOperationException(T("error", "erase_segment_failed", "Failed to erase a MAX flash sector."));
             }
 
             byte[] poll = [0x00];
-            do
+            while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Thread.Sleep(BeggarMaxSectorErasePollDelayMs);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!protocol.TryReadGbc((uint)bankBaseAddress, poll, BeggarMaxWriteTimeoutMs))
-                {
+                if (!protocol.TryReadGbc(commandAddress, poll, BeggarMaxWriteTimeoutMs))
                     throw new InvalidOperationException(T("error", "erase_segment_failed", "Failed to poll MAX flash sector erase status."));
-                }
+                if (poll[0] == 0xFF) break;
+                Thread.Sleep(BeggarMaxSectorErasePollDelayMs);
             }
-            while (poll[0] != 0xFF);
             cancellationToken.ThrowIfCancellationRequested();
+            FinishLandscapeErase(eraseStart, sectorSize);
             afterSectorErased?.Invoke(sectorAddress);
         }
+    }
+
+    private static bool TrySelectBeggarMaxRomBank(WaterDeviceProtocol protocol, int bank, ref int selectedBank)
+    {
+        if (bank == selectedBank) return true;
+        selectedBank = -1;
+        if (!TrySwitchBeggarMaxRomBank(protocol, bank)) return false;
+        selectedBank = bank;
+        return true;
     }
 
     private static bool TrySwitchBeggarMaxRomBank(WaterDeviceProtocol protocol, int bank)
     {
         byte low = (byte)(bank & 0xFF);
         byte high = (byte)((bank >> 8) & 0xFF);
-        return protocol.TryWriteGbc(0x3000, [high], 3000) &&
-               protocol.TryWriteGbc(0x2000, [low], 3000);
+        return protocol.TryWriteGbc(0x3000, [high], Timeout.Infinite) &&
+               protocol.TryWriteGbc(0x2000, [low], Timeout.Infinite);
     }
 
     private static int GetBeggarMaxBankBaseAddress(int bank) =>

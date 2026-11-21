@@ -25,8 +25,8 @@ public static class GbaWorkspaceClearPlan
         return cleared;
     }
 
-    // 合卡清除菜单、目录、菜单配置、映射及游戏，系统区内的存档扇区仍保留。
-    public static uint[] BuildEraseSectors(WaterCartScanResult scan, IEnumerable<WaterNorWriteSegment>? replacementSegments = null)
+    // 合卡只清菜单、目录、状态和映射。单卡工作区沿用原游戏区擦除范围。
+    public static uint[] BuildEraseSectors(WaterCartScanResult scan, IEnumerable<WaterNorWriteSegment>? replacementSegments = null, bool clearGameArea = false)
     {
         int sector = scan.Geometry.SectorSizeBytes;
         int capacity = scan.Geometry.DeviceSizeBytes;
@@ -43,7 +43,8 @@ public static class GbaWorkspaceClearPlan
         if (clearMapping && (WaterWlMappingCodec.Offset % sector != 0 || WaterWlMappingCodec.SectorSize % sector != 0))
             throw new InvalidOperationException(ClientText.T("client", "mapping_sector_unaligned", "The mapping area is not aligned to NOR sectors. The mapping cannot be cleared."));
         var replacements = (replacementSegments ?? []).ToArray();
-        return Enumerable.Range(0, capacity / sector)
+        int end = clearGameArea ? capacity : start;
+        return Enumerable.Range(0, end / sector)
             .Select(index => checked((uint)(index * sector)))
             .Where(address => address >= start || address < menuEnd ||
                 clearMapping && address >= WaterWlMappingCodec.Offset && address < WaterWlMappingCodec.Offset + WaterWlMappingCodec.SectorSize)

@@ -31,9 +31,17 @@ public sealed class DetectedNorGameInfo
     public string BucketRangeText => $"{StartBucket:00}-{EndBucket:00}";
 }
 
+public enum GbaNorCategory
+{
+    Unknown,
+    SingleGame,
+    Multicart,
+}
+
 public sealed class NorGeometryInfo
 {
     public int DeviceSizeBytes { get; set; }
+    public bool IsCfiWindowBlank { get; init; }
     public int SectorCount { get; set; }
     public int SectorSizeBytes { get; set; }
     public int BufferWriteBytes { get; set; }
@@ -44,6 +52,10 @@ public sealed class NorGeometryInfo
     // True only for S70GL02GS-style stacked 2 Gbit NOR that requires per-die command addressing.
     public bool IsS70Gl02GsDualDie { get; set; }
     public bool IsWaterLinkMultiNor { get; set; }
+    // 仅 GBC/MAX 单次 CFI 读填写：Erase Block Region 明细（按 CFI 表顺序）与 0x9E bootFlag。
+    // 扇区布局由 GbcCfiSectorMap 依此动态生成；空数组表示没有读到 region 表，不猜。
+    public GbcEraseRegionInfo[] EraseRegions { get; set; } = [];
+    public byte GbcBootBlockFlag { get; set; }
 }
 
 public sealed class MenuFlashStatusInfo
@@ -388,6 +400,8 @@ public sealed class WaterCartScanResult
     public bool IsNorProbeOnly { get; set; }
     public bool HasGbaHeaderScan { get; set; }
     public bool IsChm1 { get; set; }
+    public string? StandardWaterLinkId { get; set; }
+    public bool IsChwq { get; set; }
     public bool UsesChm1Layout => WlMapping.IsDetected &&
         (WlMapping.Header.Flags & GbaMultiMenuBuilder.Services.Chm1Layout.LocalSaveFlag) != 0;
     public bool NoCartridgeDetected { get; set; }
@@ -401,6 +415,8 @@ public sealed class WaterCartScanResult
     public bool IsWriteProtected { get; set; }
     public string WriteProtectionReason { get; set; } = string.Empty;
     public byte[] NorId { get; set; } = [];
+    /// <summary>GBC/MAX 侧 TryGbcReadFlashId 读到的原始 4 字节 byte 模式 ID，未做 8 字节桥接。</summary>
+    public byte[] GbcFlashId { get; set; } = [];
     public string RawNorIdHex { get; set; } = string.Empty;
     public string ChipName { get; set; } = string.Empty;
     public string CapacitySummary { get; set; } = string.Empty;

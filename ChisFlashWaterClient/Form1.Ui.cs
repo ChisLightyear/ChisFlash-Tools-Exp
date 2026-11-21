@@ -12,9 +12,6 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private const int HeaderActionButtonWidth = 104;
-    private const int ContentSplitPanel1MinSize = 220;
-    private const int ContentSplitPanel2MinSize = 120;
-    private const int ContentSplitPreferredLogHeight = 148;
     private const int MenuBackgroundPreviewColumnWidth = 144;
     private ToolTip infoValueToolTip = null!;
     private const int MenuBackgroundPreviewCaptionMinHeight = 24;
@@ -134,7 +131,7 @@ public partial class Form1
         rootLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 132F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
 
         var headerPanel = new TableLayoutPanel
         {
@@ -162,22 +159,8 @@ public partial class Form1
             Margin = new Padding(4),
         };
         comboBoxPorts.DropDown += (_, _) => AdjustPortDropDownWidth();
-        comboBoxPorts.SelectedIndexChanged += (_, _) =>
-        {
-            ResetGbaMenuDraft();
-            ClearGbcProfileCapacity();
-            RefreshBurnProfileModeOptions(GetSelectedBeggarCartMode() == BeggarCartMode.Gb
-                ? BurnProfileMode.GbcUnselected : GetSelectedBurnProfileMode());
-            InvalidateFcDevice();
-            if (dataGridViewRoms is not null && !dataGridViewRoms.IsDisposed && dataGridViewRoms.Columns.Count > 0)
-            {
-                int selectedIndex = dataGridViewRoms.SelectedRows.Count > 0
-                    ? dataGridViewRoms.SelectedRows[0].Index
-                    : -1;
-                RebuildWorkspaceRows(selectedIndex);
-            }
-            UpdateActionButtons(isBusy);
-        };
+        comboBoxPorts.SelectedIndexChanged += OnSerialPortSelectionChanged;
+        comboBoxPorts.SelectionChangeCommitted += (_, _) => ConnectSelectedProgrammer();
 
         radioButtonBeggarCartModeGba = new RadioButton
         {
@@ -219,7 +202,7 @@ public partial class Form1
         panelProgrammerModeHost.Controls.Add(panelBeggarCartMode);
 
         buttonRefreshPorts = CreateHeaderButton(string.Empty, HeaderActionButtonWidth);
-        buttonRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true, preferBeggar: true);
+        buttonRefreshPorts.Click += (_, _) => RefreshAndConnectProgrammer();
 
         buttonScan = CreateHeaderButton(string.Empty, HeaderActionButtonWidth);
         buttonScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedPortAsync);
@@ -236,22 +219,40 @@ public partial class Form1
         };
         comboBoxLanguage.SelectedIndexChanged += comboBoxLanguage_SelectedIndexChanged;
 
-        labelStatus = new Label
+        labelStatus = new SingleLineLabel
         {
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(60, 88, 122),
             AutoEllipsis = true,
+            UseMnemonic = false,
             Padding = new Padding(4, 0, 4, 0),
         };
 
-        var footerPanel = new Panel
+        buttonLog = CreateHeaderButton(string.Empty, 76);
+        buttonLog.Dock = DockStyle.Fill;
+        buttonLog.Margin = new Padding(4, 0, 0, 0);
+        buttonLog.Click += (_, _) => ShowLogWindow();
+
+        BuildProgressControls();
+        var footerPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 4, 0, 0),
-            Padding = new Padding(0),
+            ColumnCount = 5,
+            RowCount = 1,
         };
-        footerPanel.Controls.Add(labelStatus);
+        footerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45F));
+        footerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55F));
+        footerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184F));
+        footerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footerPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        footerPanel.Controls.Add(labelStatus, 0, 0);
+        footerPanel.Controls.Add(labelProgress, 1, 0);
+        footerPanel.Controls.Add(labelSpeed, 2, 0);
+        footerPanel.Controls.Add(progressBarTotal, 3, 0);
+        footerPanel.Controls.Add(buttonLog, 4, 0);
 
         headerPanel.Controls.Add(labelPortCaption, 0, 0);
         headerPanel.Controls.Add(comboBoxPorts, 1, 0);
@@ -264,23 +265,9 @@ public partial class Form1
 
         BuildInfoGroup();
         BuildListGroup();
-        BuildLogGroup();
-
-        splitContainerContent = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            FixedPanel = FixedPanel.Panel2,
-            Margin = new Padding(0, 3, 0, 0),
-            SplitterWidth = 8,
-        };
-        splitContainerContent.Panel1.Controls.Add(groupBoxList);
-        splitContainerContent.Panel2.Controls.Add(groupBoxLog);
-        splitContainerContent.SizeChanged += (_, _) => EnsureContentSplitterLayout();
-
         rootLayout.Controls.Add(headerPanel, 0, 0);
         rootLayout.Controls.Add(groupBoxInfo, 0, 1);
-        rootLayout.Controls.Add(splitContainerContent, 0, 2);
+        rootLayout.Controls.Add(groupBoxList, 0, 2);
         rootLayout.Controls.Add(footerPanel, 0, 3);
 
         Controls.Add(rootLayout);
@@ -289,11 +276,6 @@ public partial class Form1
         ConfigureDragDropTargets();
         InitializeMeasuredProgress();
         UpdateMenuBackgroundPreviewLayout();
-        if (!contentSplitterLayoutScheduled)
-        {
-            contentSplitterLayoutScheduled = true;
-            Shown += OnFirstShownEnsureContentSplitterLayout;
-        }
         ResumeLayout(false);
         PerformLayout();
     }
@@ -314,7 +296,7 @@ public partial class Form1
         menuSave = new ToolStripMenuItem();
 
         menuRefreshPorts = new ToolStripMenuItem();
-        menuRefreshPorts.Click += (_, _) => RefreshPorts(resetAnalysisState: true, preferBeggar: true);
+        menuRefreshPorts.Click += (_, _) => RefreshAndConnectProgrammer();
         menuScan = new ToolStripMenuItem();
         menuScan.Click += async (_, _) => await RunUiActionSafelyAsync(ScanSelectedPortAsync);
         menuExit = new ToolStripMenuItem();
@@ -337,9 +319,9 @@ public partial class Form1
         menuUpdateBackground.Click += async (_, _) => await RunUiActionSafelyAsync(
             async () => { await UpdateMenuBackgroundAsync(this); });
         menuEraseConfig = new ToolStripMenuItem();
-        menuEraseConfig.Click += async (_, _) => await RunUiActionSafelyAsync(EraseHeadAreaAsync);
+        menuEraseConfig.Click += async (_, _) => await RunUiActionSafelyAsync(() => TrackLandscapeAsync(EraseHeadAreaAsync, eraseOnly: true));
         menuEraseEntireNor = new ToolStripMenuItem();
-        menuEraseEntireNor.Click += async (_, _) => await RunUiActionSafelyAsync(EraseEntireNorAsync);
+        menuEraseEntireNor.Click += async (_, _) => await RunUiActionSafelyAsync(() => TrackLandscapeAsync(EraseEntireNorAsync, eraseOnly: true));
         menuUnlockPpb = new ToolStripMenuItem();
         menuUnlockPpb.Click += async (_, _) => await RunUiActionSafelyAsync(UnlockPpbAsync);
         menuFragmentTest = new ToolStripMenuItem();
@@ -421,6 +403,13 @@ public partial class Form1
         mainMenuStrip.Items.AddRange([menuDevice, menuCartridge, menuRom, menuSave]);
         BuildUpdateMenu();
         BuildFcMenus();
+        mainMenuStrip.Items.Add(new ToolStripControlHost(burnLandscape)
+        {
+            Alignment = ToolStripItemAlignment.Right,
+            AutoSize = false,
+            Size = new Size(150, Font.Height),
+            Margin = Padding.Empty,
+        });
     }
 
     private void BuildInfoGroup()
@@ -609,7 +598,6 @@ public partial class Form1
             CanSelectItem = item => item is BurnProfileModeOption { IsSelectable: true },
             IsGroupItem = item => item is BurnProfileModeOption { IsGroup: true },
             DropDownStyle = ComboBoxStyle.DropDownList,
-            IntegralHeight = false,
             Width = 220,
             Margin = new Padding(6, 7, 6, 7),
         };
@@ -619,6 +607,10 @@ public partial class Form1
             {
                 return;
             }
+
+            if (GetSelectedBeggarCartMode() == BeggarCartMode.Gba && comboBoxBurnProfileMode.SelectedItem is BurnProfileModeOption option)
+                manualGbaBurnProfile = burnProfileModeOptions.Contains(option) ? (GetSelectedPortName(), option.Mode) : null;
+            gbcFreeProfileAutoMatched = false;
 
             gbaSingleGridActive = false;
             buttonQueueAdd.Text = T("ui", "queue_add_rom", "Add ROM");
@@ -675,6 +667,7 @@ public partial class Form1
 
         settingsPanel.Controls.Add(CreateToolbarPair(labelBurnProfileModeCaption, comboBoxBurnProfileMode));
         settingsPanel.Controls.Add(buttonQueueAdd);
+        BuildGbaAddMenuArrow(settingsPanel);
         settingsPanel.Controls.Add(buttonQueueRemove);
         settingsPanel.Controls.Add(buttonQueueClear);
         settingsPanel.Controls.Add(buttonQueueBurn);
@@ -818,81 +811,74 @@ public partial class Form1
         dataGridViewRoms.ContextMenuStrip = romContextMenu;
     }
 
-    private void BuildLogGroup()
+    private void BuildProgressControls()
     {
-        groupBoxLog = new GroupBox
+        progressBarTotal = new ProgressBar
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12, 14, 12, 12),
+            Margin = new Padding(0, 4, 4, 4),
+            Style = ProgressBarStyle.Continuous,
         };
 
-        var logLayout = new TableLayoutPanel
+        labelProgress = new SingleLineLabel
         {
+            Name = "labelProgress",
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 3,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            UseMnemonic = false,
         };
-        logLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        logLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-        logLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
 
-        textBoxLog = new TextBox
+        labelSpeed = new SingleLineLabel
+        {
+            Name = "labelSpeed",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(4, 0, 8, 0),
+            UseMnemonic = false,
+        };
+    }
+
+    private void ShowLogWindow()
+    {
+        if (logWindow is { IsDisposed: false } existing)
+        {
+            if (existing.WindowState == FormWindowState.Minimized)
+                existing.WindowState = FormWindowState.Normal;
+            existing.Activate();
+            return;
+        }
+
+        var viewer = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = true,
             ReadOnly = true,
             ScrollBars = ScrollBars.Vertical,
-            WordWrap = true,
-            BackColor = Color.White,
+            BackColor = SystemColors.Window,
+            Text = sessionLog.ToString(),
         };
-
-        progressBarTotal = new ProgressBar
+        var window = new Form
         {
-            Dock = DockStyle.Fill,
-            Margin = new Padding(0, 8, 0, 0),
-            Style = ProgressBarStyle.Continuous,
+            Text = buttonLog.Text,
+            Font = Font,
+            AutoScaleMode = AutoScaleMode.Font,
+            StartPosition = FormStartPosition.CenterParent,
+            ShowInTaskbar = false,
+            ClientSize = new Size(820, 480),
+            MinimumSize = new Size(420, 240),
+            Padding = new Padding(8),
         };
-
-        statusStripProgress = new StatusStrip
+        logWindow = window;
+        textBoxLog = viewer;
+        window.Controls.Add(viewer);
+        window.FormClosed += (_, _) =>
         {
-            Dock = DockStyle.Fill,
-            SizingGrip = false,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
+            logWindow = null;
+            textBoxLog = null;
         };
-
-        labelProgress = new ToolStripStatusLabel
-        {
-            Name = "labelProgress",
-            Text = string.Empty,
-        };
-
-        labelProgressSpring = new ToolStripStatusLabel
-        {
-            Name = "labelProgressSpring",
-            Spring = true,
-        };
-
-        labelSpeed = new ToolStripStatusLabel
-        {
-            Name = "labelSpeed",
-            Text = string.Empty,
-        };
-
-        statusStripProgress.Items.AddRange(
-        [
-            labelProgress,
-            labelProgressSpring,
-            labelSpeed,
-        ]);
-
-        logLayout.Controls.Add(textBoxLog, 0, 0);
-        logLayout.Controls.Add(progressBarTotal, 0, 1);
-        logLayout.Controls.Add(statusStripProgress, 0, 2);
-
-        groupBoxLog.Controls.Add(logLayout);
+        window.Show(this);
+        ScrollLogToEnd(viewer);
     }
 
     private void ApplyLanguage(ClientUiLanguage selectedLanguage, bool refreshScanResult = true)
@@ -958,7 +944,8 @@ public partial class Form1
 
         groupBoxInfo.Text = T("ui", "info_group", "Cart Info");
         UpdateWorkspaceGroupTitle();
-        groupBoxLog.Text = T("ui", "log_group", "Log");
+        buttonLog.Text = T("ui", "log_group", "Log");
+        if (logWindow is { IsDisposed: false }) logWindow.Text = buttonLog.Text;
         menuItemReplaceRom.Text = T("ui", "replace_rom", "Replace ROM");
         menuItemDeleteMapping.Text = T("ui", "delete_mapping", "Delete Mapping");
         menuItemExportRom.Text = T("ui", "export_rom", "Export ROM");
@@ -979,7 +966,6 @@ public partial class Form1
         labelMenuItemCountCaption.Text = T("ui", "menu_item_count", "Menu Items");
         labelMenuTitleCaption.Text = T("ui", "menu_title", "Menu Title");
         labelMenuBackgroundPreviewCaption.Text = T("ui", "menu_background_preview", "Background Preview");
-        UpdateAdaptiveLayout();
 
         RefreshGridHeaders();
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
@@ -1010,6 +996,7 @@ public partial class Form1
         }
 
         UpdateActionButtons(isBusy);
+        UpdateAdaptiveLayout();
     }
 
     private void HandleBeggarCartModeSelectionChanged()
@@ -1026,6 +1013,8 @@ public partial class Form1
         }
 
         lastSelectedBeggarCartMode = selectedMode;
+        keepMulticartList = false;
+        manualGbaBurnProfile = null;
         ClearGbcProfileCapacity();
 
         RefreshBurnProfileModeOptions(GetSelectedBurnProfileMode());
@@ -1133,6 +1122,9 @@ public partial class Form1
 
     private Bitmap? TryBuildGbcWorkspacePreviewImage()
     {
+        if (IsGbcFreeWorkspace() && !HasGbcFreeMenu())
+            return null;
+
         try
         {
             MenuPreviewModel preview = BuildGbcWorkspacePreviewModel();
@@ -3190,14 +3182,9 @@ public partial class Form1
             string pendingText = isBeggarMaxGbcMode
                 ? FormatWorkspaceUsageBytes(usage.Pending)
                 : FormatWorkspaceBucketSizeMb(usage.Pending);
-            string freeText = isBeggarMaxGbcMode
-                ? FormatWorkspaceUsageBytes(usage.Free)
-                : FormatWorkspaceBucketSizeMb(usage.Free);
-            string contiguousText = isBeggarMaxGbcMode
-                ? FormatWorkspaceUsageBytes(usage.LargestContiguousFree)
-                : FormatWorkspaceBucketSizeMb(usage.LargestContiguousFree);
+            string contiguousSuffix = FormatWorkspaceContiguousSuffix(usage, isBeggarMaxGbcMode);
             string saveUsageText = saveUsage.HasValue
-                ? Tf(
+                ? " | " + Tf(
                     "ui",
                     "rom_workspace_save_usage",
                     "Save {0}/{1} | free {2}",
@@ -3209,25 +3196,19 @@ public partial class Form1
                 ? Tf(
                     "ui",
                     "rom_workspace_with_usage_pending",
-                    string.IsNullOrWhiteSpace(saveUsageText)
-                        ? "ROM Workspace (used {0}/{1} | pending {2} | free {3} | max contiguous {4})"
-                        : "ROM Workspace (used {0}/{1} | pending {2} | free {3} | max contiguous {4} | {5})",
+                    "ROM Workspace (used {0}/{1} | pending {2}{3}{4})",
                     usedText,
                     totalText,
                     pendingText,
-                    freeText,
-                    contiguousText,
+                    contiguousSuffix,
                     saveUsageText)
                 : Tf(
                     "ui",
                     "rom_workspace_with_usage",
-                    string.IsNullOrWhiteSpace(saveUsageText)
-                        ? "ROM Workspace (used {0}/{1} | free {2} | max contiguous {3})"
-                        : "ROM Workspace (used {0}/{1} | free {2} | max contiguous {3} | {4})",
+                    "ROM Workspace (used {0}/{1}{2}{3})",
                     usedText,
                     totalText,
-                    freeText,
-                    contiguousText,
+                    contiguousSuffix,
                     saveUsageText);
             return;
         }
@@ -3351,58 +3332,5 @@ public partial class Form1
             TextAlign = ContentAlignment.MiddleLeft,
             Margin = new Padding(4),
         };
-    }
-
-    private void EnsureContentSplitterLayout()
-    {
-        if (splitContainerContent is null || splitContainerContent.IsDisposed)
-        {
-            return;
-        }
-
-        int availableHeight = splitContainerContent.ClientSize.Height;
-        if (availableHeight <= splitContainerContent.SplitterWidth)
-        {
-            return;
-        }
-
-        int minDistance = ContentSplitPanel1MinSize;
-        int maxDistance = availableHeight - splitContainerContent.SplitterWidth - ContentSplitPanel2MinSize;
-        if (maxDistance < minDistance)
-        {
-            return;
-        }
-
-        if (!contentSplitterInitialized)
-        {
-            splitContainerContent.Panel1MinSize = 0;
-            splitContainerContent.Panel2MinSize = 0;
-        }
-
-        int currentDistance = contentSplitterInitialized
-            ? splitContainerContent.SplitterDistance
-            : availableHeight - splitContainerContent.SplitterWidth - ContentSplitPreferredLogHeight;
-        int targetDistance = currentDistance <= 0
-            ? maxDistance
-            : currentDistance;
-        targetDistance = Math.Clamp(targetDistance, minDistance, maxDistance);
-
-        if (splitContainerContent.SplitterDistance != targetDistance)
-        {
-            splitContainerContent.SplitterDistance = targetDistance;
-        }
-
-        if (!contentSplitterInitialized)
-        {
-            splitContainerContent.Panel1MinSize = ContentSplitPanel1MinSize;
-            splitContainerContent.Panel2MinSize = ContentSplitPanel2MinSize;
-            contentSplitterInitialized = true;
-        }
-    }
-
-    private void OnFirstShownEnsureContentSplitterLayout(object? sender, EventArgs e)
-    {
-        Shown -= OnFirstShownEnsureContentSplitterLayout;
-        EnsureContentSplitterLayout();
     }
 }

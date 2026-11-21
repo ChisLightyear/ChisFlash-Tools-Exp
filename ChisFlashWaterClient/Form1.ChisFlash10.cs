@@ -93,6 +93,8 @@ public partial class Form1
     private void ClearChisFlash10Image()
     {
         if (isBusy) return;
+        // 记录本地移除，刷新时不再把卡内旧游戏重新填回工作区。
+        gbaSingleGameRemoved = true;
         chisFlash10Rom = null;
         chisFlash10ReplacementCapacityBytes = 0;
         chisFlash10Save = null;
@@ -100,14 +102,12 @@ public partial class Form1
         RefreshChisFlash10Grid();
     }
 
+    // 盖中盖口径：读数失败不设门槛。无卡 / 写保护 / 容量匹配 / 命令集 / 扇区几何 /
+    // 写缓冲 / 扇区铺满一律不再拦写入；只保留模式与内容分流这种非读数条件。
     private bool CanWriteChisFlash10() => IsChisFlash10Mode() &&
         IsBeggarCompatibleSelectedProgrammer() && GetSelectedBeggarCartMode() == BeggarCartMode.Gba &&
-        HasActiveScanResult() && currentScanResult is { NoCartridgeDetected: false, IsWriteProtected: false } scan &&
-        !scan.IsBeggarMaxGbcMode && !scan.IsChm1 &&
-        scan.Geometry.DeviceSizeBytes == ChisFlash10Image.CapacityBytes &&
-        scan.Geometry.PrimaryCommandSetId == 2 && scan.Geometry.SectorSizeBytes > 0 &&
-        scan.Geometry.BufferWriteBytes is >= 0 and <= ushort.MaxValue &&
-        (long)scan.Geometry.SectorSizeBytes * scan.Geometry.SectorCount == ChisFlash10Image.CapacityBytes;
+        HasActiveScanResult() && currentScanResult is { } scan &&
+        !scan.IsBeggarMaxGbcMode && !scan.IsChm1;
 
     private async Task ExportChisFlash10RomAsync()
     {
@@ -143,10 +143,11 @@ public partial class Form1
             {
                 using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
                 OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-                BeginMeasuredProgress("ChisFlash 1.0V", image.Length + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, (image.Length + 4095) / 4096 + clearSectors.Length);
-                EraseGbaWorkspaceSectors(protocol, ProgrammerKind.BeggarLegacy, scan, clearSectors, true, cancellation.Token);
+                const string title = "ChisFlash 1.0V";
+                int writeUnits = (image.Length + 4095) / 4096;
+                BeginMeasuredProgress(title, image.Length + (long)clearSectors.Length * scan.Geometry.SectorSizeBytes, writeUnits + clearSectors.Length);
                 int written = 0;
-                LegacyGbaRomWriter.Write(image,
+                var timing = LegacyGbaRomWriter.Write(image,
                     (address, value) =>
                     {
                         if (!protocol.TryWriteRom(address, BitConverter.GetBytes(value)))
@@ -168,12 +169,17 @@ public partial class Form1
                     {
                         if (phase == "write")
                         {
-                            AdvanceMeasuredProgress(current - written, 1, "ChisFlash 1.0V");
+                            AdvanceMeasuredProgress(current - written, 1);
                             written = current;
                         }
                         else AppendLog($"ChisFlash 1.0V · {phase} {current}/{total}");
-                    }, cancellation.Token);
-                CompleteMeasuredProgress("ChisFlash 1.0V");
+                    }, cancellation.Token,
+                    beforeErase: clearSectors.Length == 0 ? null :
+                        () => EraseGbaWorkspaceSectors(protocol, ProgrammerKind.BeggarLegacy, scan, clearSectors, true, cancellation.Token),
+                    startSectorErase: StartLandscapeErase, finishSectorErase: FinishLegacyRomSectorErase,
+                    beginErase: count => BeginMeasuredProgressPhase(count, true, BuildProgressDetailText(title, "progress_phase_erase", "Erase")),
+                    beginProgram: () => BeginMeasuredProgressPhase(writeUnits, false, BuildProgressDetailText(title, "progress_phase_write", "Write"), image.Length));
+                CompleteLegacyGbaRomProgress(image.Length, timing);
             });
         }
         finally
@@ -190,18 +196,17 @@ public partial class Form1
     {
         bool idle = !busy && !isAnalyzingQueueImports;
         bool hasRom = chisFlash10Rom is not null;
+        bool hasGame = GetChisFlash10CartGame() is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
-        menuFcScan.Text = T("ui", "analyze_configuration", "分析配置");
-        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = item == menuFcScan && idle;
+        foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
         menuScan.Enabled = buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
-        menuFcScan.Enabled = idle;
         buttonRefreshPorts.Enabled = menuRefreshPorts.Enabled = idle;
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = comboBoxBurnProfileMode.Enabled = idle;
         UpdateProgrammerModeSelectorUi(idle);
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !hasRom;
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = CanReplaceGbaWorkspaceSelection();
-        buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && hasRom;
+        buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && (hasRom || hasGame);
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && (hasRom || !HasPendingGbaWorkspaceClear() && HasGbaGamesOnCard(currentScanResult));
         buttonQueueAdd.Text = menuAddRom.Text = T("ui", "queue_add_rom", "Add ROM");
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
@@ -213,6 +218,7 @@ public partial class Form1
         menuItemExportRom.Enabled = false;
         menuItemDeleteMapping.Enabled = menuItemExportSave.Enabled = menuItemImportSave.Enabled = menuItemClearSave.Enabled = false;
         menuItemExportChipSaveContext.Enabled = menuItemImportChipSaveContext.Enabled = menuItemClearChipSaveContext.Enabled = false;
+        UpdateNativeSaveCommands(idle, GetHeadAreaGame() is not null);
         if (menuFcTools is not null) menuFcTools.Visible = false;
         if (gbaMenuOptions is not null) gbaMenuOptions.Visible = false;
         if (checkBoxWaitcntPatch is not null) checkBoxWaitcntPatch.Enabled = idle;

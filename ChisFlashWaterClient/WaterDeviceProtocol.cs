@@ -16,6 +16,8 @@ public sealed class WaterDeviceProtocol : IDisposable
     public bool LastAckTimedOut { get; private set; }
     private bool lastReadTimedOut;
     private bool carbonateFlashGbxCompatibility;
+    private bool useOriginalBeggarBufferHandling;
+    private GbFlashTransport? gbFlash;
     public string PortName => port.PortName;
 
     public WaterDeviceProtocol(string portName, Action<int>? transferObserver = null)
@@ -31,9 +33,11 @@ public sealed class WaterDeviceProtocol : IDisposable
         };
     }
 
-    public void Open(bool carbonateFlashGbxCompatibility = false, bool initializeCartPower = false)
+    public void Open(bool carbonateFlashGbxCompatibility = false, bool initializeCartPower = false,
+        bool useOriginalBeggarBufferHandling = false)
     {
         this.carbonateFlashGbxCompatibility = carbonateFlashGbxCompatibility;
+        this.useOriginalBeggarBufferHandling = useOriginalBeggarBufferHandling;
         port.Open();
         port.RtsEnable = true;
         port.DtrEnable = true;
@@ -56,8 +60,29 @@ public sealed class WaterDeviceProtocol : IDisposable
         port.Dispose();
     }
 
+    public void OpenGbFlash()
+    {
+        gbFlash = new GbFlashTransport(port, transferObserver);
+        gbFlash.Open();
+    }
+
     public bool TryReadLegacyNorId(out byte[] id, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null)
+        {
+            id = new byte[8];
+            WriteGbFlashNorCommand(0x90);
+            try
+            {
+                byte[] words = new byte[4];
+                gbFlash.Read(false, false, 0, words);
+                words.CopyTo(id, 0);
+                gbFlash.Read(false, false, 0x1C, words);
+                words.CopyTo(id, 4);
+                return true;
+            }
+            finally { gbFlash.WriteBus(false, 0, [0xF0, 0]); }
+        }
         SendPackage([0xF0]);
         id = new byte[8];
         return TryReadPayload(id, timeoutMs);
@@ -69,19 +94,30 @@ public sealed class WaterDeviceProtocol : IDisposable
         payload = new byte[8];
         foreach (uint address in new uint[] { 0xFFF0, 0xFFE0, 0xFFD0 })
         {
-            if (!TryReadRam(address, ignored, 3000)) return false;
+            if (!TryReadRam(address, ignored)) return false;
         }
-        return TryReadRam(0xFFF0, payload, 3000);
+        return TryReadRam(0xFFF0, payload);
     }
+
+    public static string? GetStandardWaterLinkId(ReadOnlySpan<byte> identifier) => identifier switch
+    {
+        [0x43, 0x48, 0x57, 0x31, 1, 3, 63, 8] => "CHW1",
+        [0x43, 0x48, 0x57, 0x32, 1, 3, 63, 8] => "CHW2",
+        _ => null
+    };
+
+    public static bool IsChwqIdentifier(ReadOnlySpan<byte> identifier) =>
+        identifier.SequenceEqual(new byte[] { 0x43, 0x48, 0x57, 0x51, 1, 3, 159, 8 });
 
     public bool TryReadExtendedId(out byte[] payload)
     {
+        if (gbFlash is not null) { payload = []; return false; }
         SendPackage([0xA4]);
         payload = new byte[32];
-        return TryReadPayload(payload, 1500);
+        return TryReadPayload(payload, Timeout.Infinite);
     }
 
-    public bool TryReadSysInfo(out WaterSysInfo info, int timeoutMs = 1500)
+    public bool TryReadSysInfo(out WaterSysInfo info, int timeoutMs = Timeout.Infinite)
     {
         SendPackage([0xA2]);
         byte[] payload = new byte[32];
@@ -106,14 +142,14 @@ public sealed class WaterDeviceProtocol : IDisposable
         return true;
     }
 
-    public bool TryReadSaveSlotSummary(out byte[] payload, int timeoutMs = 3000)
+    public bool TryReadSaveSlotSummary(out byte[] payload, int timeoutMs = Timeout.Infinite)
     {
         SendPackage([0xA5]);
         payload = new byte[4 + 1 + WaterSaveSlotSummaryInfo.SlotCount];
         return TryReadPayload(payload, timeoutMs);
     }
 
-    public bool TryReadSaveSlotSummaryFiltered(IReadOnlyCollection<byte> gameSlots, out byte[] payload, int timeoutMs = 3000)
+    public bool TryReadSaveSlotSummaryFiltered(IReadOnlyCollection<byte> gameSlots, out byte[] payload, int timeoutMs = Timeout.Infinite)
     {
         byte[] slots = gameSlots
             .Where(slot => slot < WaterSaveSlotSummaryInfo.SlotCount)
@@ -129,7 +165,7 @@ public sealed class WaterDeviceProtocol : IDisposable
         return TryReadPayload(payload, timeoutMs);
     }
 
-    public bool TryReadSaveSlotWindow(byte gameSlot, uint slotOffset, byte[] buffer, int timeoutMs = 3000)
+    public bool TryReadSaveSlotWindow(byte gameSlot, uint slotOffset, byte[] buffer, int timeoutMs = Timeout.Infinite)
     {
         byte[] pack = new byte[1 + 1 + 4 + 2];
         pack[0] = 0xA7;
@@ -190,7 +226,7 @@ public sealed class WaterDeviceProtocol : IDisposable
         return true;
     }
 
-    public bool TryEraseSpiFlashBlock(uint byteAddress, int timeoutMs = 60000)
+    public bool TryEraseSpiFlashBlock(uint byteAddress, int timeoutMs = Timeout.Infinite)
     {
         byte[] pack = new byte[1 + 4];
         pack[0] = 0xA9;
@@ -200,7 +236,7 @@ public sealed class WaterDeviceProtocol : IDisposable
         return TryReadAck(timeoutMs);
     }
 
-    public bool TryWriteSpiFlash(uint byteAddress, byte[] bytes, int timeoutMs = 60000)
+    public bool TryWriteSpiFlash(uint byteAddress, byte[] bytes, int timeoutMs = Timeout.Infinite)
     {
         byte[] pack = new byte[1 + 4 + bytes.Length];
         pack[0] = 0xAA;
@@ -213,6 +249,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryWriteRom(uint wordAddress, byte[] bytes, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.WriteBus(false, wordAddress << 1, bytes); return true; }
         byte[] pack = new byte[1 + 4 + bytes.Length];
         pack[0] = 0xF5;
         Array.Copy(BitConverter.GetBytes(wordAddress), 0, pack, 1, 4);
@@ -224,6 +261,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryReadRom(uint byteAddress, byte[] buffer, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.Read(false, false, byteAddress, buffer); return true; }
         byte[] pack = new byte[1 + 4 + 2];
         pack[0] = 0xF6;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -233,7 +271,8 @@ public sealed class WaterDeviceProtocol : IDisposable
         return TryReadPayload(buffer, timeoutMs);
     }
 
-    public bool TryReadRomRange(uint byteAddress, byte[] buffer, int chunkSize = 4096, int timeoutMsPerChunk = Timeout.Infinite)
+    public bool TryReadRomRange(uint byteAddress, byte[] buffer, int chunkSize = 4096, int timeoutMsPerChunk = Timeout.Infinite,
+        Action<int>? onRead = null)
     {
         if (buffer.Length == 0)
             return true;
@@ -249,13 +288,20 @@ public sealed class WaterDeviceProtocol : IDisposable
                 return false;
 
             Buffer.BlockCopy(chunk, 0, buffer, offset, readLength);
+            onRead?.Invoke(readLength);
         }
 
         return true;
     }
 
-    public bool TryEraseLegacyRomChip(int timeoutMs = 3000)
+    public bool TryEraseLegacyRomChip(int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null)
+        {
+            WriteGbFlashNorCommand(0x80);
+            WriteGbFlashNorCommand(0x10);
+            return true;
+        }
         SendPackage([0xF1]);
         return TryReadAck(timeoutMs);
     }
@@ -270,7 +316,7 @@ public sealed class WaterDeviceProtocol : IDisposable
     /// 命令码选择：0xF7 已被 CMD_RAM_WRITE 占用（盖中盖分桶切换在用），
     /// 不能复用；0xAD 在固件 cmd_code_t 与上位机协议里均未被占用。
     /// </summary>
-    public bool TryWriteEraseSequence(uint wordAddress, byte[] payload, int timeoutMs = 60000)
+    public bool TryWriteEraseSequence(uint wordAddress, byte[] payload, int timeoutMs = Timeout.Infinite)
     {
         byte[] pack = new byte[1 + 4 + payload.Length];
         pack[0] = 0xAD;
@@ -282,14 +328,15 @@ public sealed class WaterDeviceProtocol : IDisposable
     }
 
     [Obsolete("Firmware-side 0xF3 erase is unsafe. Use the host-controlled per-sector passthrough erase sequence.", error: true)]
-    public bool TryEraseRomSector(uint byteAddress, int timeoutMs = 60000)
+    public bool TryEraseRomSector(uint byteAddress, int timeoutMs = Timeout.Infinite)
     {
         throw new NotSupportedException(
             "Firmware-side 0xF3 sector erase is disabled. Use the host-controlled per-sector passthrough erase sequence.");
     }
 
-    public bool TryProgramRom(uint byteAddress, byte[] bytes, ushort bufferWriteBytes, int timeoutMs = 60000)
+    public bool TryProgramRom(uint byteAddress, byte[] bytes, ushort bufferWriteBytes, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.ProgramRom(false, byteAddress, bytes, bufferWriteBytes); return true; }
         byte[] pack = new byte[1 + 4 + 2 + bytes.Length];
         pack[0] = 0xF4;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -302,6 +349,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryWriteRam(uint byteAddress, byte[] bytes, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.WriteRam(false, byteAddress, bytes); return true; }
         byte[] pack = new byte[1 + 4 + bytes.Length];
         pack[0] = 0xF7;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -313,6 +361,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryReadRam(uint byteAddress, byte[] buffer, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.Read(false, true, byteAddress, buffer); return true; }
         byte[] pack = new byte[1 + 4 + 2];
         pack[0] = 0xF8;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -320,6 +369,41 @@ public sealed class WaterDeviceProtocol : IDisposable
 
         SendPackage(pack);
         return TryReadPayload(buffer, timeoutMs);
+    }
+
+    public bool TryProgramFlashSave(uint byteAddress, byte[] data)
+    {
+        if (gbFlash is not null) { gbFlash.WriteRam(false, byteAddress, data, flashSave: true); return true; }
+        byte[] packet = new byte[5 + data.Length];
+        packet[0] = 0xF9;
+        BitConverter.GetBytes(byteAddress).CopyTo(packet, 1);
+        data.CopyTo(packet, 5);
+        SendPackage(packet);
+        return TryReadAck(Timeout.Infinite);
+    }
+
+    public bool TryWriteFramSave(uint byteAddress, byte[] data)
+    {
+        if (gbFlash is not null) return TryWriteRam(byteAddress, data);
+        byte[] packet = new byte[6 + data.Length];
+        packet[0] = 0xE7;
+        BitConverter.GetBytes(byteAddress).CopyTo(packet, 1);
+        packet[5] = 25;
+        data.CopyTo(packet, 6);
+        SendPackage(packet);
+        return TryReadAck(Timeout.Infinite);
+    }
+
+    public bool TryReadFramSave(uint byteAddress, byte[] buffer)
+    {
+        if (gbFlash is not null) return TryReadRam(byteAddress, buffer);
+        byte[] packet = new byte[8];
+        packet[0] = 0xE8;
+        BitConverter.GetBytes(byteAddress).CopyTo(packet, 1);
+        BitConverter.GetBytes((ushort)buffer.Length).CopyTo(packet, 5);
+        packet[7] = 25;
+        SendPackage(packet);
+        return TryReadPayload(buffer, Timeout.Infinite);
     }
 
     public bool TryReadRamRange(uint byteAddress, byte[] buffer, int chunkSize = 4096, int timeoutMsPerChunk = Timeout.Infinite)
@@ -345,6 +429,12 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryWriteGbc(uint byteAddress, byte[] bytes, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null)
+        {
+            if (bytes.Length > 1 && byteAddress is >= 0xA000 and < 0xC000) gbFlash.WriteRam(true, byteAddress, bytes);
+            else gbFlash.WriteBus(true, byteAddress, bytes);
+            return true;
+        }
         byte[] pack = new byte[1 + 4 + bytes.Length];
         pack[0] = 0xFA;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -356,6 +446,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     public bool TryReadGbc(uint byteAddress, byte[] buffer, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.Read(true, byteAddress is >= 0xA000 and < 0xC000, byteAddress, buffer); return true; }
         byte[] pack = new byte[1 + 4 + 2];
         pack[0] = 0xFB;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -365,8 +456,9 @@ public sealed class WaterDeviceProtocol : IDisposable
         return TryReadPayload(buffer, timeoutMs);
     }
 
-    public bool TryProgramGbcRom(uint byteAddress, byte[] bytes, ushort bufferWriteBytes, int timeoutMs = 60000)
+    public bool TryProgramGbcRom(uint byteAddress, byte[] bytes, ushort bufferWriteBytes, int timeoutMs = Timeout.Infinite)
     {
+        if (gbFlash is not null) { gbFlash.ProgramRom(true, byteAddress, bytes, bufferWriteBytes); return true; }
         byte[] pack = new byte[1 + 4 + 2 + bytes.Length];
         pack[0] = 0xFC;
         Array.Copy(BitConverter.GetBytes(byteAddress), 0, pack, 1, 4);
@@ -379,18 +471,26 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     private void SendPackage(byte[] bytes)
     {
+        if (gbFlash is not null) throw new NotSupportedException($"GBFlash 不提供水线专用命令 0x{bytes[0]:X2}。");
         lastReadTimedOut = false;
         IReadOnlyList<byte[]> frames = LegacyCommandFraming.BuildFrames(bytes, carbonateFlashGbxCompatibility);
         for (int index = 0; index < frames.Count; index++)
         {
-            DiscardInputSafely();
+            if (!useOriginalBeggarBufferHandling) DiscardInputSafely();
             byte[] frame = frames[index];
             port.Write(frame, 0, frame.Length);
             transferObserver?.Invoke(frame.Length - 4);
             // 中间分包各自等ACK；最后一个应答仍由原命令调用者处理。
-            if (index + 1 < frames.Count && !TryReadAck(60000))
+            if (index + 1 < frames.Count && !TryReadAck(Timeout.Infinite))
                 throw new IOException(ClientText.T("client", "carbonate_packet_ack", "No ACK received for the calcium carbonate packet: ") + DescribeLastAckFailure());
         }
+    }
+
+    private void WriteGbFlashNorCommand(byte command)
+    {
+        gbFlash!.WriteBus(false, 0xAAA, [0xAA, 0]);
+        gbFlash.WriteBus(false, 0x554, [0x55, 0]);
+        gbFlash.WriteBus(false, 0xAAA, [command, 0]);
     }
 
     private void PulseControlSignals(int tailDelayMs)
