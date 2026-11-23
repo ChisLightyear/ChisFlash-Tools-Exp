@@ -74,7 +74,12 @@ public partial class Form1
                         row.Cells[column.Index] = cell = new DataGridViewCheckBoxCell();
                     cell.Value = value;
                     cell.ToolTipText = T("ui", "waitcnt_row_hint", "Apply WAITCNT patch to this pending game when burned.");
-                    if (IsGbaSingleCardMode() || IsChisFlash10Mode())
+                    if ((IsGbaSingleCardMode() || IsChisFlash10Mode()) && row.Tag is WorkspaceListRow { PendingItem: { } single })
+                    {
+                        single.ApplyWaitcntPatch = value;
+                        row.Cells["PatchStatus"].Value = FormatPendingPatchDisplay(single);
+                    }
+                    else if (IsGbaSingleCardMode() || IsChisFlash10Mode())
                         row.Cells["PatchStatus"].Value = value ? T("ui", "waitcnt_patch", "WAITCNT Patch") :
                             GbaCardText("original_rom", "原文件，不打补丁", "Original ROM; no patches");
                     else if (row.Tag is WorkspaceListRow workspaceRow)

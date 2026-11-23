@@ -3,6 +3,62 @@ namespace ChisFlashWaterClient;
 
 public static class GbaWorkspaceClearPlan
 {
+    internal static byte[] BuildRemovedGameSector(int sectorSize)
+    {
+        var data = new byte[sectorSize];
+        ReadOnlySpan<byte> pattern = "CHIS"u8;
+        for (int offset = 0; offset < data.Length; offset += pattern.Length)
+            pattern[..Math.Min(pattern.Length, data.Length - offset)].CopyTo(data.AsSpan(offset));
+        return data;
+    }
+
+    internal static (uint Address, int SizeBytes) PlanHeadErase(WaterCartScanResult scan)
+    {
+        if (scan.IsNorProbeOnly || scan.MenuConfig.IsDetected || scan.WlMapping.IsDetected ||
+            scan.Games.Any(game => game.IsMenu) || !scan.Games.Any(game => game.StartBucket == 0 && !game.IsMenu))
+            throw new InvalidOperationException(ClientText.T("client", "clear_analyze_first",
+                "Analyze the cartridge contents before clearing its games."));
+
+        return (0, GetHeadEraseSectorSize(scan.Geometry));
+    }
+
+    internal static uint[] PlanMappedGameHeadErases(WaterCartScanResult scan, IReadOnlySet<WaterCartEntry> removed)
+    {
+        if (removed.Count == 0) return [];
+
+        int sectorSize = GetHeadEraseSectorSize(scan.Geometry);
+        var occupied = scan.Entries.Where(entry => !removed.Contains(entry)).SelectMany(entry => entry.PhysicalBuckets).ToHashSet();
+        var addresses = new SortedSet<uint>();
+        foreach (var game in removed)
+        {
+            int bucket = game.StartBucket;
+            long address = (long)bucket * WaterCartScanner.BucketSizeBytes;
+            if (game.IsMenu || !scan.Entries.Contains(game) || bucket <= 0 ||
+                occupied.Contains(bucket) || address % sectorSize != 0 || address + sectorSize > scan.Geometry.DeviceSizeBytes)
+                throw new InvalidOperationException(ClientText.Tf("client", "game_head_erase_range_invalid",
+                    "无法独立擦除「{0}」的启动头，请重新分析卡带并核对游戏布局。", game.Title));
+            addresses.Add((uint)address);
+        }
+        return addresses.ToArray();
+    }
+
+    private static int GetHeadEraseSectorSize(NorGeometryInfo geometry)
+    {
+        // GBA CFI 将最小扇区大小记在 SectorSizeBytes，混合几何不能用该值确认首扇区大小。
+        if (geometry.IsCfiWindowBlank || geometry.SectorSizeBytes <= 0 ||
+            geometry.SectorSizeBytes > WaterCartScanner.BucketSizeBytes ||
+            geometry.SectorSizeBytes > geometry.DeviceSizeBytes ||
+            geometry.RegionCount != 1 && geometry.LargestSectorSizeBytes != geometry.SectorSizeBytes)
+            throw new InvalidOperationException(ClientText.T("client", "nor_geometry_invalid",
+                "The NOR capacity or sector size is invalid. Analyze the cartridge again."));
+
+        return geometry.SectorSizeBytes;
+    }
+
+    internal static WaterCartScanResult BuildHeadRemovedScan(WaterCartScanResult scan) =>
+        WaterCartScanner.RebuildCachedScanResult(scan,
+            gamesOverride: scan.Games.Where(game => game.StartBucket != 0).ToArray());
+
     public static byte[] PreserveStatusSector(byte[] original, byte[] updated)
     {
         if (original.Length != updated.Length || original.Length < 11)

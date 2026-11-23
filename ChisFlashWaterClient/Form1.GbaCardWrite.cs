@@ -38,15 +38,20 @@ public partial class Form1
         if (scan.IsNorProbeOnly) throw new InvalidOperationException(ClientText.T("client", "single_analyze_first", "Analyze the cartridge contents before burning a single-game ROM."));
         var kind = GetRequiredSelectedProgrammerKind();
         if (kind != ProgrammerKind.BeggarLegacy) EnsureCfiWindowAllowsBurn(scan.Geometry);
+        var patchItem = queued ?? singleGbaPatchItem;
+        if (sourceRom is not null && patchItem is not null)
+            sourceRom = await PrepareSelectedGamePatchesAsync(patchItem, sourceRom, scan, patch);
         long length = sourceRom?.Length ?? (long)GetGbaSingleGame()!.LogicalBucketCount * WaterCartScanner.BucketSizeBytes;
         // 盖中盖兼容路径在烧录时读取 CFI，全 00／全 FF 的扫描结果交给现场读取处理。
         if (length <= 0 || length > ChisFlash10Image.CapacityBytes ||
             (!scan.Geometry.IsCfiWindowBlank && scan.Geometry.DeviceSizeBytes > 0 && length > scan.Geometry.DeviceSizeBytes))
             throw new InvalidDataException(ClientText.T("client", "game_length_invalid", "The game length is invalid or exceeds the detected NOR capacity."));
-        byte[]? image = sourceRom is null ? null : PrepareGbaRomWaitcnt(ChisFlash10Image.Build(sourceRom), patch);
+        byte[]? image = sourceRom is null ? null : ChisFlash10Image.Build(sourceRom);
+        if (image is not null && patchItem is null && patch) Services.WaitcntPatchService.Apply(image);
         if (image is not null) ValidateReplacementRomLength(image.Length, queued?.ReplacementCapacityBytes ?? gbaSingleReplacementCapacityBytes, gameName);
-        string patchText = sourceRom is not null && patch ? ClientText.T("client", "single_waitcnt_notice", "Apply the WAITCNT patch selected in the list. ") : ClientText.T("client", "single_original_notice", "Write the original ROM. ");
-        if (MessageBox.Show(this, (HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() + "\n\n" : string.Empty) + ClientText.Tf("client", "single_burn_confirm", "Write {0} ({1}) from address 0?\n\nThis overwrites the existing game or multicart menu in that range. {2}\nNo multicart menu will be installed. The separate save chip is unchanged.", sourceRom is null ? GetGbaSingleGame()!.Title : gameName, FormatMiBSize(length), patchText),
+        string patchText = sourceRom is not null && patchItem is not null ? FormatPendingPatchDisplay(patchItem) + " " :
+            sourceRom is not null && patch ? ClientText.T("client", "single_waitcnt_notice", "Apply the WAITCNT patch selected in the list. ") : ClientText.T("client", "single_original_notice", "Write the original ROM. ");
+        if (MessageBox.Show(this, (HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() + "\n\n" : string.Empty) + ClientText.Tf("client", "single_burn_confirm", "Write {0} ({1}) from address 0?\n\nThis overwrites the existing game or multicart menu in that range. {2}\nNo multicart menu will be installed. The separate save chip is unchanged.", sourceRom is null ? GetGbaSingleGame()!.Title : gameName, FormatMiBSize(length), patchText) + GbaMappedHeadEraseNotice(scan),
             ClientText.T("client", "single_burn_title", "Burn Single-Game ROM"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         string port = GetSelectedPortName()!;
         bool directLegacyErase = UseDirectGbaWorkspaceErase(scan, GetSelectedBurnProfileMode());
@@ -153,7 +158,7 @@ public partial class Form1
         if (scan.IsNorProbeOnly) throw new InvalidOperationException(ClientText.T("client", "multicart_analyze_first", "Analyze the cartridge contents before burning a multicart."));
         EnsureCfiWindowAllowsBurn(scan.Geometry);
         if (UsesChm1Mode(GetSelectedBurnProfileMode()) && !scan.IsChm1) throw new InvalidOperationException(ClientText.T("client", "chm1_hardware_required", "01G/02G fragment-management hardware has not been identified. The CHM1 multicart layout cannot be written."));
-        if (!ConfirmGbaConversion(rows.Length)) return;
+        if (!ConfirmGbaConversion(rows.Length, GbaMappedHeadEraseNotice(scan))) return;
         bool keep = gbaKeepCurrentGame!.Checked && GetGbaSingleGame() is not null;
         int keptGameIndex = keep ? workspaceRows.FindIndex(row => row.CartEntry is not null && row.PendingItem is null) : -1;
         bool mappedSource = GetGbaSingleGame() is { } source && (source.FoundInMenuConfig || source.FoundInWlMapping);
@@ -179,7 +184,7 @@ public partial class Form1
             string menuPath = Path.Combine(staging, "menu.gba");
             File.WriteAllBytes(menuPath, menu);
             var games = rows.Select((row, index) => GbaConversionGame(PrepareGbaConversionWaitcnt(row.PendingItem!, staging, index), GetWorkspaceRowDisplayTitle(row),
-                row.PendingItem!.SaveTypeInfo, row.PendingItem.ApplySramPatch, UsesBatterylessPatch(mode),
+                row.PendingItem!.SaveTypeInfo, row.PendingItem.WantsSram(mode), row.PendingItem.WantsBatteryless(mode),
                 row.PendingItem.BatterylessAlreadyPatched, row.PendingItem.BatterylessCanExpand, row.PendingItem.CoverPath)).ToList();
             if (keep)
             {
@@ -236,7 +241,7 @@ public partial class Form1
         }
     }
 
-    private bool ConfirmGbaConversion(int pendingGames)
+    private bool ConfirmGbaConversion(int pendingGames, string headEraseNotice)
     {
         using var dialog = new Form { Text = ClientText.T("client", "conversion_title", "Convert to Multicart"), Font = Font, Width = LogicalToDeviceUnits(600), Height = LogicalToDeviceUnits(320), StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false };
@@ -258,6 +263,7 @@ public partial class Form1
         gbaCurrentGameLength.Enabled = needsReadLength;
         layout.Controls.Add(gbaConversionOptions, 0, 1);
         var note = new Label { Dock = DockStyle.Fill, Text = HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() : ClientText.Tf("client", "conversion_confirm", "Write {0} new game(s).\nThe multicart menu will overwrite the first 4 MiB. To keep the current game, select it and specify the read length.\nAfter preparation, games are written first and the menu directory last.", pendingGames), AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
+        note.Text += headEraseNotice;
         layout.Controls.Add(note, 0, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var ok = new Button { Text = ClientText.T("client", "start_burn", "Start Burn"), AutoSize = true };

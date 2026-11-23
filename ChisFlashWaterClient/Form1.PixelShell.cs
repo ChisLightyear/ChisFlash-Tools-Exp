@@ -74,13 +74,14 @@ public partial class Form1
             gbaAddMenuArrow.AccessibleName = gbaAddMenuCommand.Text = hasMenu
                 ? ShellText("更换菜单…", "Change menu…") : ShellText("添加菜单…", "Add menu…");
         }
-        groupBoxList.Enabled = ready;
+        bool canApplyPendingWork = startBurnEnabled && !analyzingShellCard;
+        groupBoxList.Enabled = ready || canApplyPendingWork;
         comboBoxLanguage.Enabled = ready && !busy && !isAnalyzingQueueImports;
         comboBoxPorts.Enabled = !busy && !isAnalyzingQueueImports && !analyzingShellCard;
         panelProgrammerModeHost.Enabled = !busy && !isAnalyzingQueueImports && !analyzingShellCard;
         menuDevice.Enabled = ready;
         menuCartridge.Enabled &= ready;
-        menuRom.Enabled &= ready;
+        menuRom.Enabled = (menuRom.Enabled && ready) || canApplyPendingWork;
         menuSave.Enabled &= ready;
         dataGridViewRoms.BackgroundColor = ready ? SystemColors.Window : SystemColors.ControlDark;
         buttonScan.Enabled = buttonRefreshPorts.Enabled = !busy && !isAnalyzingQueueImports && !analyzingShellCard;

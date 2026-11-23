@@ -36,7 +36,8 @@ public partial class Form1
             dataGridViewRoms.Rows[index].Cells[7].ToolTipText = chisFlash10Save.CodeEvidence is null
                 ? Chis10Text("tag_evidence", "按 ROM 标签识别；未确认实际存档函数。", "Identified by ROM tag; save functions are not confirmed.")
                 : Chis10Text("code_evidence", "已匹配存档代码：", "Matched save code: ") + chisFlash10Save.CodeEvidence;
-            dataGridViewRoms.Rows[index].Tag = new WorkspaceListRow { CartEntry = GetChisFlash10CartGame() };
+            dataGridViewRoms.Rows[index].Tag = new WorkspaceListRow { CartEntry = GetChisFlash10CartGame(), PendingItem = chis10PatchItem };
+            InstallPatchPickerCell(dataGridViewRoms.Rows[index]);
         }
         else if (GetChisFlash10CartGame() is { } game)
         {
@@ -74,9 +75,11 @@ public partial class Form1
             var prepared = await Task.Run(() =>
             {
                 byte[] data = File.ReadAllBytes(files[0]);
-                return (Data: data, Save: ChisFlash10Image.Analyze(data));
+                var save = ChisFlash10Image.Analyze(data);
+                return (Data: data, Save: save, Patches: AnalyzeSinglePatchItem(data, files[0], save));
             });
             chisFlash10Rom = prepared.Data;
+            chis10PatchItem = prepared.Patches;
             chisFlash10ReplacementCapacityBytes = 0;
             chisFlash10WaitcntPatch = defaultWaitcntPatchEnabled;
             chisFlash10Save = prepared.Save;
@@ -109,23 +112,27 @@ public partial class Form1
         HasActiveScanResult() && currentScanResult is { } scan &&
         !scan.IsBeggarMaxGbcMode && !scan.IsChm1;
 
-    private async Task ExportChisFlash10RomAsync()
+    private async Task ExportChisFlash10RomAsync(byte[]? preparedImage = null)
     {
         if (isBusy || chisFlash10Rom is null) return;
         using var dialog = new SaveFileDialog { Filter = "GBA ROM (*.gba)|*.gba", FileName = chisFlash10Name };
-        if (dialog.ShowDialog(this) == DialogResult.OK) await File.WriteAllBytesAsync(dialog.FileName, chisFlash10Rom);
+        if (dialog.ShowDialog(this) == DialogResult.OK) await File.WriteAllBytesAsync(dialog.FileName, preparedImage ?? chisFlash10Rom);
     }
 
     private async Task HandleChisFlash10PrimaryActionAsync()
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
         if (isBusy || chisFlash10Rom is null || chisFlash10Save is null) return;
-        byte[] image = PrepareGbaRomWaitcnt(ChisFlash10Image.Build(chisFlash10Rom), chisFlash10WaitcntPatch);
+        var selected = chis10PatchItem;
+        byte[] source = selected is null ? PrepareGbaRomWaitcnt(chisFlash10Rom, chisFlash10WaitcntPatch) :
+            await PrepareSelectedGamePatchesAsync(selected, chisFlash10Rom, currentScanResult, chisFlash10WaitcntPatch);
+        byte[] image = ChisFlash10Image.Build(source);
         ValidateReplacementRomLength(image.Length, chisFlash10ReplacementCapacityBytes, chisFlash10Name);
-        if (!CanWriteChisFlash10()) { await ExportChisFlash10RomAsync(); return; }
+        bool patched = chisFlash10WaitcntPatch || selected?.WantsSram(GetSelectedBurnProfileMode()) == true;
+        if (!CanWriteChisFlash10()) { await ExportChisFlash10RomAsync(patched ? image : null); return; }
         string message = chisFlash10Name + Environment.NewLine + FormatDetectedSaveTypeDisplay(chisFlash10Save) + Environment.NewLine + Environment.NewLine +
-            (chisFlash10WaitcntPatch ? Chis10Text("confirm_waitcnt", "将应用所勾选的 WAITCNT 补丁，再按盖中盖原版流程擦写该 ROM 覆盖的范围。不安装合卡菜单，也不改写独立存档芯片。继续烧录？",
-                "Apply the selected WAITCNT patch, then program the ROM using the original Beggar procedure? The menu and separate save chip are unchanged.") :
+            (patched ? (selected is null ? "WAITCNT" : FormatPendingPatchDisplay(selected)) + Environment.NewLine +
+                ShellText("按所选补丁烧录这个 ROM？", "Program this ROM with the selected patches?") :
                 Chis10Text("confirm", "将按盖中盖原版流程擦写该 ROM 覆盖的范围。原文件不打补丁，不安装合卡菜单，也不改写独立存档芯片。当前固件是否支持该存档类型，需与卡带固件对应。继续烧录？",
                     "Program this ROM using the original Beggar procedure and its file range? The ROM is not patched. No multicart menu is installed and the separate save chip is not written. Save compatibility depends on the cartridge firmware."));
         if (HasPendingGbaWorkspaceClear()) message = GbaWorkspaceClearConfirmation() + Environment.NewLine + message;
@@ -136,7 +143,8 @@ public partial class Form1
         using var cancellation = new CancellationTokenSource();
         activeBurnCancellation = cancellation;
         isBurnCancellationRequested = false;
-        SetBusy(true, Chis10Text("writing", "正在烧录 1.0V 原 ROM…", "Programming the original 1.0V ROM…"));
+        SetBusy(true, patched ? ShellText("正在烧录已打补丁的 ROM…", "Programming patched ROM…") :
+            Chis10Text("writing", "正在烧录 1.0V 原 ROM…", "Programming the original 1.0V ROM…"));
         try
         {
             await Task.Run(() =>
@@ -212,7 +220,12 @@ public partial class Form1
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : HasPendingGbaWorkspaceClear() ? T("ui", "queue_burn", "Start Burn") :
             CanWriteChisFlash10() ? Chis10Text("burn", "烧录原 ROM", "Program original ROM") : Chis10Text("export", "导出原 ROM", "Export original ROM");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && (hasRom || HasPendingGbaWorkspaceClear());
+        if (hasRom && activeBurnCancellation is null && !HasPendingGbaWorkspaceClear() &&
+            (chisFlash10WaitcntPatch || chis10PatchItem?.WantsSram(GetSelectedBurnProfileMode()) == true))
+            buttonQueueBurn.Text = menuStartBurn.Text = CanWriteChisFlash10()
+                ? ShellText("烧录 ROM", "Program ROM") : ShellText("导出补丁 ROM", "Export patched ROM");
+        SetStartBurnEnabled(activeBurnCancellation is not null ? !isBurnCancellationRequested :
+            idle && (hasRom || HasPendingGbaWorkspaceClear() || HasPendingGbaHeadRemoval()));
         menuExportSelectedRom.Enabled = idle && hasRom;
         menuPendingGbaCovers.Enabled = menuDeleteSelectedMapping.Enabled = menuFragmentTest.Enabled = false;
         menuItemExportRom.Enabled = false;

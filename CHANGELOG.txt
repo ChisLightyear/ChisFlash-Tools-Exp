@@ -1,3 +1,20 @@
+ChisFlash Water Client 2.046 r26
+2026-11-23
+
+GBA 单卡和合卡的待烧录游戏可逐项选择存档补丁，WAITCNT 继续使用独立列。
+可更换或撤回待写入的合卡菜单，保留游戏待办和补丁选项。
+工作区有待应用的改动时，可以点击“开始烧录”。移除最后一个卡内游戏后，空列表也可提交。
+移除卡内 GBA 游戏并确认烧录时，其启动扇区会擦除并完整填充重复的 ASCII CHIS。
+合卡会同步更新游戏目录。原来的启动头不再被识别，盖中盖原版烧录器仍会触发自动擦除。
+通过模拟卡和离线擦写流程验证。未进行实卡擦写验证。
+
+Pending GBA games now have per-game save patch options. WAITCNT remains a separate option.
+Pending multicart menus can be changed or withdrawn while retaining queued games and patch selections.
+Start Burn recognizes pending edits even when the last on-card game was removed.
+Confirming an on-card GBA game removal erases its boot sector and fills it with repeated ASCII CHIS.
+Multicart directories are updated as well. The old boot header is no longer recognized, and the original Beggar client still triggers its automatic erase on the next write.
+Tested using simulated cartridges and offline programming checks.
+
 ChisFlash 上位机 2.046 r22
 2026-11-09
 

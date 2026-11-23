@@ -195,7 +195,7 @@ public partial class Form1
     {
         bool raw = IsGbcRawImageMode();
         bool idle = !busy && !isAnalyzingQueueImports;
-        bool hasImage = raw && gbcImageData is not null && GbcRtcRomValidator.IsValid(gbcImageData);
+        bool hasImage = raw && gbcImageData is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
         if (menuFcTools is not null) menuFcTools.Visible = false;
@@ -210,7 +210,7 @@ public partial class Form1
         buttonQueueClear.Text = menuClearRomQueue.Text = T("gbc_profile", "clear_image", "Clear image");
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : CanWriteGbcImage()
             ? T("gbc_profile", "burn_image", "Burn complete ROM") : T("gbc_profile", "export_image", "Export complete ROM");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && hasImage;
+        SetStartBurnEnabled(activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && hasImage);
         menuExportSelectedRom.Enabled = idle && hasImage;
         foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
         menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);

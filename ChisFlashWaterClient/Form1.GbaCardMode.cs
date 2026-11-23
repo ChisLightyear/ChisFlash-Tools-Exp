@@ -76,9 +76,6 @@ public partial class Form1
                 if (conversion)
                 {
                     groupBoxList.Text = GbaCardText("multicart_list", "ROM 工作区（合卡 · 待烧录）", "ROM Workspace (Multicart draft)");
-                    bool canBurn = !isBusy && !isAnalyzingQueueImports &&
-                        (pendingImportItems.Count > 0 || gbaKeepCurrentGame!.Checked && GetGbaSingleGame() is not null || HasPendingGbaWorkspaceClear());
-                    buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : canBurn;
                     buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : T("ui", "queue_burn", "Start Burn");
                 }
             }
@@ -121,7 +118,8 @@ public partial class Form1
                     false, GbaCardText("original_rom", "原文件，不打补丁", "Original ROM; no patches"), "—", string.Empty);
                 var row = dataGridViewRoms.Rows[index];
                 row.ReadOnly = true;
-                row.Tag = new WorkspaceListRow { CartEntry = head };
+                row.Tag = new WorkspaceListRow { CartEntry = head, PendingItem = pending ? singleGbaPatchItem : null };
+                if (pending) InstallPatchPickerCell(row);
                 foreach (DataGridViewCell cell in row.Cells)
                     cell.ToolTipText = $"{header}\n{gameCode}\n" + (gbaSingleNeedsRelocation ? ClientText.T("client", "single_relocation_hint", "Pending write to 0x000000; current data remains at its original mapped location") : "0x000000") +
                         (pending && head is not null ? "\n" + GbaCardText("on_card", "卡内游戏", "Current game") + ": " + head.Title : string.Empty);
@@ -147,7 +145,6 @@ public partial class Form1
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
         bool idle = !busy && !isAnalyzingQueueImports;
         bool pending = gbaSingleRom is not null || gbaSingleNeedsRelocation || HasPendingGbaWorkspaceClear();
-        bool canBurn = idle && pending;
         bool hasGame = HasActiveScanResult() && GetGbaSingleGame() is not null;
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
@@ -156,7 +153,8 @@ public partial class Form1
         menuReplaceSelectedRom.Enabled = menuItemReplaceRom.Enabled = CanReplaceGbaWorkspaceSelection();
         buttonQueueRemove.Enabled = buttonQueueClear.Enabled = menuRemoveSelectedRom.Enabled = menuClearRomQueue.Enabled = idle && pending;
         menuExportSelectedRom.Enabled = menuItemExportRom.Enabled = idle && hasGame;
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : canBurn;
+        SetStartBurnEnabled(activeBurnCancellation is not null ? !isBurnCancellationRequested :
+            idle && (pending || HasPendingGbaHeadRemoval()));
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel") : T("ui", "queue_burn", "Start Burn");
         foreach (var item in new[] { menuUpdateMenu, menuReplaceMenuFile, menuRepairMenu, menuUpdateBackground, menuEraseConfig, menuPendingGbaCovers, menuDeleteSelectedMapping, menuFragmentTest,
             menuItemDeleteMapping, menuItemExportSave, menuItemImportSave, menuItemClearSave, menuItemExportChipSaveContext, menuItemImportChipSaveContext, menuItemClearChipSaveContext }) item.Enabled = false;
@@ -194,6 +192,7 @@ public partial class Form1
             if (HasActiveScanResult() && currentScanResult!.Geometry is { IsCfiWindowBlank: false } geometry && bytes.Length > geometry.DeviceSizeBytes)
                 throw new InvalidDataException(ClientText.T("client", "game_exceeds_nor", "The game exceeds the detected NOR capacity."));
             var save = ChisFlash10Image.Analyze(bytes);
+            singleGbaPatchItem = await Task.Run(() => AnalyzeSinglePatchItem(bytes, files[0], save));
             void Apply() { gbaSingleReplacementCapacityBytes = 0; gbaSingleRom = bytes; gbaSingleRomPath = Path.GetFullPath(files[0]); gbaSingleRomName = Path.GetFileName(files[0]); gbaSingleRomSave = save; gbaSingleWaitcntPatch = defaultWaitcntPatchEnabled; gbaSingleGameRemoved = false; RefreshGbaCardModeUi(); }
             if (InvokeRequired) Invoke(new Action(Apply)); else Apply();
         }

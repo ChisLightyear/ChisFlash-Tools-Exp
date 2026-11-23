@@ -299,6 +299,12 @@ public partial class Form1
         if (HasPendingGbaWorkspaceClear() &&
             (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
         { await BurnEmptySingleGbaWorkspaceAsync(); return; }
+        if ((SupportsGbaCardMode() || IsChisFlash10Mode()) && !HasGbaListMenu() && HasPendingGbaHeadRemoval() &&
+            (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
+        {
+            await BurnGbaHeadRemovalAsync();
+            return;
+        }
         if (IsGbaSingleCardMode()) { await BurnSingleGbaAsync(); return; }
         if (SupportsGbaCardMode() && !HasGbaListMenu())
         {
@@ -315,10 +321,12 @@ public partial class Form1
         if (IsGbcProfileUnselected()) { labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
         if (IsGbcRawImageMode()) { await HandleGbcImagePrimaryActionAsync(); return; }
         if (IsMbc5FixedSlotMode()) { await HandleMbc5PrimaryActionAsync(); return; }
-        if (IsFcWorkspaceActive)
+        if (IsFcWorkspaceActive || HasActiveMixWorkspace)
         {
             if (fcWorkspace!.IsBusy) fcWorkspace.Cancel();
-            else if (CanUseFcDevice) await fcWorkspace.BurnAsync();
+            else if (!CanUseFcDevice)
+                throw new InvalidOperationException(T("log", "select_port_first", "Please select a serial port first."));
+            else await fcWorkspace.BurnAsync();
             return;
         }
         if(CanWriteMdQueue){AppendLog(T("gbc_profile", "choose_mix", "Select MIX to program NES / MD / SNES."));return;}
@@ -5018,7 +5026,7 @@ public partial class Form1
         if (scan.IsBeggarMaxGbcMode && IsMbc5FixedSlotMode())
         {
             ActiveMbc5Layout = IsMbc5MaxMode() ? new Mbc5MaxThirtyTwoMiBLayout() : new Mbc5EightMiBLayout();
-            ActiveMbc5LayoutChanged = false;
+            ActiveMbc5AppliedLayout = null;
         }
         ApplyScanResult(BuildScanAfterNorErase(scan, entireNor));
     }
@@ -6263,9 +6271,10 @@ public partial class Form1
         int segmentOffset,
         bool emitLogs,
         CancellationToken cancellationToken,
-        ref int selectedBucket)
+        ref int selectedBucket,
+        bool directLegacyAddress = false)
     {
-        bool usesLegacyBanks = programmerKind == ProgrammerKind.BeggarLegacy;
+        bool usesLegacyBanks = programmerKind == ProgrammerKind.BeggarLegacy && !directLegacyAddress;
         for (int offset = 0; offset < sectorData.Length;)
         {
             cancellationToken.ThrowIfCancellationRequested();

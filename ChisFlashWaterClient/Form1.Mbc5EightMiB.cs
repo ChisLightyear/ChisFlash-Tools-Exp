@@ -7,12 +7,12 @@ namespace ChisFlashWaterClient;
 public partial class Form1
 {
     private Mbc5EightMiBLayout mbc5Layout = new();
-    private bool mbc5LayoutChanged;
+    private Mbc5EightMiBLayout? mbc5AppliedLayout;
     private readonly Dictionary<string, bool> mbc5ColumnVisibility = new();
     private ToolStripMenuItem? menuExportMbc5Image;
     private BurnProfileMode? mbc5ActiveProfile;
     private Mbc5EightMiBLayout mbc5MaxLayout = new Mbc5MaxThirtyTwoMiBLayout();
-    private bool mbc5MaxLayoutChanged;
+    private Mbc5EightMiBLayout? mbc5MaxAppliedLayout;
     private bool IsMbc5MaxMode() => GetSelectedBurnProfileMode() == BurnProfileMode.GbcSixteenInOne;
     private bool IsMbc5FixedSlotMode() => IsMbc5EightMiBMode() || IsMbc5MaxMode();
     private Mbc5EightMiBLayout ActiveMbc5Layout
@@ -20,10 +20,20 @@ public partial class Form1
         get => IsMbc5MaxMode() ? mbc5MaxLayout : mbc5Layout;
         set { if (IsMbc5MaxMode()) mbc5MaxLayout = value; else mbc5Layout = value; }
     }
+    private Mbc5EightMiBLayout? ActiveMbc5AppliedLayout
+    {
+        get => IsMbc5MaxMode() ? mbc5MaxAppliedLayout : mbc5AppliedLayout;
+        set { if (IsMbc5MaxMode()) mbc5MaxAppliedLayout = value; else mbc5AppliedLayout = value; }
+    }
     private bool ActiveMbc5LayoutChanged
     {
-        get => IsMbc5MaxMode() ? mbc5MaxLayoutChanged : mbc5LayoutChanged;
-        set { if (IsMbc5MaxMode()) mbc5MaxLayoutChanged = value; else mbc5LayoutChanged = value; }
+        get
+        {
+            var layout = ActiveMbc5Layout;
+            var applied = ActiveMbc5AppliedLayout;
+            return Enumerable.Range(0, layout.NumberOfSlots)
+                .Any(slot => !ReferenceEquals(layout.GetContent(slot), applied?.GetContent(slot)));
+        }
     }
     private string Mbc5ProfileName => IsMbc5MaxMode() ? "MBC5 MAX 32M" : "MBC5 8M";
     private string Mbc5ImageSize => IsMbc5MaxMode() ? "32M" : "8M";
@@ -127,6 +137,7 @@ public partial class Form1
             dataGridViewRoms.Columns["SaveStatus"]!.HeaderText = Mbc5Text("slot_hint", "槽位状态", "Slot Status");
             dataGridViewRoms.Rows.Clear();
             bool maxMode = IsMbc5MaxMode();
+            bool layoutChanged = maxMode && ActiveMbc5LayoutChanged;
             int addGameSlot = maxMode ? FindEmptyMbc5GameSlot() : -1;
             for (int slot = 0; slot < ActiveMbc5Layout.NumberOfSlots; slot++)
             {
@@ -141,7 +152,7 @@ public partial class Form1
                 string state = !definition.Enabled ? Mbc5Text("disabled", "不可用", "Unavailable")
                     : content is null ? Mbc5Text("empty", "可添加", "Empty")
                     : content.Source == "cart" ? T("value", "row_state_cart", "On Cart")
-                    : maxMode && ActiveMbc5LayoutChanged ? T("value", "row_state_pending", "Pending") : T("value", "source_file", "File");
+                    : layoutChanged ? T("value", "row_state_pending", "Pending") : T("value", "source_file", "File");
                 string title = content?.Title ?? Mbc5Text("not_added", "未添加", "Not added");
                 if (maxMode && slot == 0 && content is null)
                     title = GbaCardText("select_menu_hint", "双击选择菜单", "Double-click to select a menu");
@@ -182,7 +193,7 @@ public partial class Form1
             if (menuExportMbc5Image is null)
             {
                 menuExportMbc5Image = new ToolStripMenuItem();
-                menuExportMbc5Image.Click += async (_, _) => await RunUiActionSafelyAsync(ExportMbc5ImageAsync);
+                menuExportMbc5Image.Click += async (_, _) => await RunUiActionSafelyAsync(() => ExportMbc5ImageAsync());
                 menuRom.DropDownItems.Add(menuExportMbc5Image);
             }
             RefreshMbc5Preview();
@@ -242,7 +253,7 @@ public partial class Form1
         buttonQueueClear.Enabled = menuClearRomQueue.Enabled = idle && ActiveMbc5Layout.HasContent;
         buttonQueueClear.Text = menuClearRomQueue.Text = maxMode
             ? T("ui", "clear_workspace", "Clear Workspace") : Mbc5Text("clear_slots", "清空槽位", "Clear Slots");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && ActiveMbc5Layout.HasContent;
+        SetStartBurnEnabled(activeBurnCancellation is not null ? !isBurnCancellationRequested : idle && ActiveMbc5LayoutChanged);
         buttonQueueBurn.Text = menuStartBurn.Text = activeBurnCancellation is not null ? T("ui", "cancel_burn", "Cancel")
             : maxMode ? T("ui", "queue_burn", "Start Burn") : CanWriteMbc5Image()
             ? Mbc5Text("burn_image", "烧录完整ROM", "Burn Full ROM") : Mbc5Text("export_image", $"导出完整{Mbc5ImageSize} ROM", $"Export Full {ActiveMbc5Layout.ImageCapacityBytes / Mbc5EightMiBLayout.MiB} MiB ROM");
@@ -331,7 +342,6 @@ public partial class Form1
                 }
             }
             ActiveMbc5Layout = proposed;
-            ActiveMbc5LayoutChanged = true;
         }
         finally
         {
@@ -349,7 +359,6 @@ public partial class Form1
             MessageBox.Show(this, Mbc5ErrorMessage(error), Mbc5SlotName(slot), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        ActiveMbc5LayoutChanged = true;
         RefreshMbc5Grid(slot);
     }
 
@@ -358,13 +367,12 @@ public partial class Form1
         if (isBusy || MessageBox.Show(this, Mbc5Text("clear_confirm", $"清空{ActiveMbc5Layout.NumberOfSlots}个工作区槽位？不会擦除卡带。", "Clear all workspace slots? The cartridge will not be erased."),
             Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         ActiveMbc5Layout.Clear();
-        ActiveMbc5LayoutChanged = true;
         RefreshMbc5Grid();
     }
 
-    private async Task ExportMbc5ImageAsync()
+    private async Task ExportMbc5ImageAsync(bool allowEmpty = false)
     {
-        if (isBusy || !ActiveMbc5Layout.HasContent) return;
+        if (isBusy || (!allowEmpty && !ActiveMbc5Layout.HasContent)) return;
         using var dialog = new SaveFileDialog { Filter = "GB ROM (*.gb)|*.gb", FileName = $"MBC5_{Mbc5ImageSize}.gb" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         byte[] image = ActiveMbc5Layout.BuildImage();
@@ -427,7 +435,7 @@ public partial class Form1
             throw new InvalidOperationException(Mbc5ErrorMessage(error));
         ActiveMbc5Layout = proposed;
         mbc5ScannedSaveLayout = proposed.Snapshot();
-        ActiveMbc5LayoutChanged = false;
+        ActiveMbc5AppliedLayout = mbc5ScannedSaveLayout;
     }
 
     private static bool TryReadMbc5CartContent(byte[] image, int offset, int capacity, out Mbc5SlotContent? content)
@@ -445,15 +453,14 @@ public partial class Form1
     private async Task HandleMbc5PrimaryActionAsync()
     {
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
-        if (isBusy || !ActiveMbc5Layout.HasContent) return;
+        if (isBusy || !ActiveMbc5LayoutChanged) return;
         if (!CanWriteMbc5Image())
         {
             if (IsMbc5MaxMode())
                 throw new InvalidOperationException(T("error", "select_and_scan_first", "Please select and scan the current cart first."));
-            await ExportMbc5ImageAsync();
+            await ExportMbc5ImageAsync(allowEmpty: true);
             return;
         }
-        if (!ActiveMbc5LayoutChanged && MessageBox.Show(this, Mbc5Text("unchanged_confirm", "工作区没有修改，仍要完整擦写吗？", "The workspace is unchanged. Rewrite the entire ROM anyway?"), Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         if (MessageBox.Show(this, Mbc5Text("burn_confirm", $"将全擦除{Mbc5ImageSize} NOR并烧录当前固定槽位布局。未加入工作区的旧ROM会被清除，SRAM存档不擦除。\n\n请确认卡带已安装匹配的{(IsMbc5MaxMode() ? "MBC5 MAX 16in1" : "MBC5 3/4in1")}固件。继续？", $"Erase the entire {Mbc5ImageSize} NOR and write this layout? Old ROMs absent from the workspace will be erased; SRAM is not erased.\n\nConfirm matching fixed-slot firmware before continuing."),
             Mbc5ProfileName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         byte[] image = ActiveMbc5Layout.BuildImage();
@@ -466,7 +473,7 @@ public partial class Form1
         try
         {
             await Task.Run(() => WriteMbc5ImageOnDevice(port, scan, image, cancellation.Token));
-            ActiveMbc5LayoutChanged = false;
+            ActiveMbc5AppliedLayout = ActiveMbc5Layout.Snapshot();
             if (IsMbc5MaxMode()) RefreshMbc5Grid(SelectedMbc5Slot());
             AppendLog(Mbc5Text("written", $"完整{Mbc5ImageSize} ROM写入完成。", $"The full {Mbc5ImageSize} ROM was written."));
         }

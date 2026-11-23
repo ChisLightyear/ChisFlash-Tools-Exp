@@ -121,6 +121,11 @@ public partial class Form1 : DpiAwareForm
         public string SramPatchTargetIdentifier { get; init; } = string.Empty;
         public string AppliedSramPatchIdentifier { get; init; } = string.Empty;
         public bool ApplySramPatch { get; init; }
+        public HashSet<BurnProfileMode> SkipSramFor { get; } = [];
+        public HashSet<BurnProfileMode> SkipBatterylessFor { get; } = [];
+        public bool WantsSram(BurnProfileMode mode) => ApplySramPatch && !SkipSramFor.Contains(mode);
+        public bool WantsBatteryless(BurnProfileMode mode) =>
+            UsesBatterylessPatch(mode) && !SkipBatterylessFor.Contains(mode) && !SkipSramFor.Contains(mode);
         public bool ApplyWaitcntPatch { get; set; }
         public bool BatterylessAlreadyPatched { get; init; }
         public bool BatterylessHasPayloadSpace { get; init; }
@@ -796,7 +801,7 @@ public partial class Form1 : DpiAwareForm
             item.SramPatchTargetIdentifier,
             item.AppliedSramPatchIdentifier,
             inspection);
-        bool appliesSramPatch = item.ApplySramPatch &&
+        bool appliesSramPatch = item.WantsSram(burnProfileMode) &&
             !alreadyPrepared &&
             !string.IsNullOrWhiteSpace(item.SramPatchTargetIdentifier);
         bool appliesBatterylessPatch = CanApplyBatterylessPatch(item, burnProfileMode);
@@ -847,6 +852,9 @@ public partial class Form1 : DpiAwareForm
         {
             return T("value", "patch_batteryless_unavailable", "Batteryless Unavailable");
         }
+
+        if (item.SkipSramFor.Contains(burnProfileMode) || item.SkipBatterylessFor.Contains(burnProfileMode))
+            return GbaCardText("patch_unchecked", "未勾选补丁", "No patch selected");
 
         if (item.SaveTypeInfo.Kind is DetectedSaveTypeKind.None or DetectedSaveTypeKind.Sram)
         {
@@ -1493,7 +1501,7 @@ public partial class Form1 : DpiAwareForm
     private bool CanApplyBatterylessPatch(PendingRomImportItem item, BurnProfileMode mode)
     {
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);
-        return UsesBatterylessPatch(mode) &&
+        return item.WantsBatteryless(mode) &&
                item.SaveTypeInfo.Kind != DetectedSaveTypeKind.None &&
                !inspection.AlreadyPatched &&
                inspection.CanInstallPayload;
@@ -1502,7 +1510,7 @@ public partial class Form1 : DpiAwareForm
     private bool RequiresBatterylessPatchButUnavailable(PendingRomImportItem item, BurnProfileMode mode)
     {
         BatterylessPatchInspection inspection = GetBatterylessInspection(item);
-        return UsesBatterylessPatch(mode) &&
+        return item.WantsBatteryless(mode) &&
                item.SaveTypeInfo.Kind != DetectedSaveTypeKind.None &&
                !inspection.AlreadyPatched &&
                !inspection.CanInstallPayload;

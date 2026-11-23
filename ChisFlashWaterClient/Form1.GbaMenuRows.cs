@@ -94,6 +94,9 @@ public partial class Form1
             ? DragDropEffects.Copy : DragDropEffects.None;
     }
     private WaterCartEntry? GetGbaSingleGame() => gbaSingleGameRemoved ? null : gbaSingleCartSource ??= GetHeadAreaGame();
+    private bool HasPendingGbaHeadRemoval() => gbaSingleGameRemoved &&
+        currentScanResult?.Games.Any(game => !game.IsMenu && game.StartBucket == 0) == true;
+
     private int WorkspaceIndexFromGrid(int index) => index >= 0 && index < dataGridViewRoms.Rows.Count &&
         dataGridViewRoms.Rows[index].Tag is WorkspaceListRow row ? workspaceRows.IndexOf(row) : -1;
     private int GridIndexFromWorkspace(int index) => index < 0 ? -1 :
@@ -102,6 +105,7 @@ public partial class Form1
     private void ResetGbaMenuDraft()
     {
         gbaWorkspaceClearSource = null;
+        removedGbaGames.Clear();
         gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = false;
         gbaSingleGameRemoved = false; gbaSingleCartSource = null; gbaSingleNeedsRelocation = false;
         if (gbaSingleRom is null) gbaSingleReplacementCapacityBytes = 0;
@@ -258,6 +262,14 @@ public partial class Form1
         if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_edit_invalid", "The directory is invalid. The game list cannot be edited."));
         if (IsSelectedGbaMenuRow())
         {
+            if (gbaDraftMenu is not null)
+            {
+                gbaDraftMenu = null;
+                gbaDraftMenuName = string.Empty;
+                RefreshWorkspaceGrid();
+                UpdateMenuBackgroundPreview(currentScanResult);
+                return;
+            }
             var games = workspaceRows.Where(row => !row.IsLoadingPlaceholder).ToList();
             if (games.Count == 0 && HasGbaListMenu())
             {
@@ -290,7 +302,17 @@ public partial class Form1
         if (!TryGetSelectedWorkspaceRow(out var row, out int index) || row is null) return;
         if (row.PendingItem is not null) pendingImportItems.Remove(row.PendingItem);
         if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null) gbaKeepCurrentGame!.Checked = false;
-        if (row.CartEntry is not null && !HasGbaListMenu()) gbaSingleGameRemoved = true;
+        if (row.CartEntry is { } entry)
+        {
+            if (entry.FoundInMenuConfig || entry.FoundInWlMapping)
+                removedGbaGames.Add(entry);
+            if (!HasGbaListMenu())
+            {
+                gbaSingleGameRemoved = true;
+                gbaSingleNeedsRelocation = false;
+                if (entry.FoundInMenuConfig || entry.FoundInWlMapping) StageGbaWorkspaceClear();
+            }
+        }
         workspaceRows.Remove(row);
         RefreshWorkspaceGrid(GetSafeSelectionIndex(index, workspaceRows.Count));
     }
@@ -330,13 +352,19 @@ public partial class Form1
         bool disabled = IsSelectedGbaDisabledGameRow();
         bool occupied = dataGridViewRoms.SelectedRows.Count > 0 && !disabled && (menu ? HasGbaListMenu() : IsGbaSingleCardMode() ? gbaSingleRom is not null || GetGbaSingleGame() is not null
             : TryGetSelectedWorkspaceRow(out _, out _));
-        bool canRemoveMenu = !menu || workspaceRows.Count(row => !row.IsLoadingPlaceholder) <= 1;
+        bool canRemoveMenu = !menu || gbaDraftMenu is not null || workspaceRows.Count(row => !row.IsLoadingPlaceholder) <= 1;
         buttonQueueAdd.Enabled = menuAddRom.Enabled = idle && !disabled &&
             (!IsGbaSingleCardMode() || menu || gbaSingleRom is null && GetGbaSingleGame() is null);
         buttonQueueRemove.Enabled = menuRemoveSelectedRom.Enabled = idle && occupied && canRemoveMenu;
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "clear_workspace", "Clear Workspace");
-        if (!IsGbaSingleCardMode() && activeBurnCancellation is null && !HasGbaListMenu())
-            buttonQueueBurn.Enabled = menuStartBurn.Enabled = idle && (pendingImportItems.Count > 0 || gbaSingleNeedsRelocation || HasPendingGbaWorkspaceClear());
+        if (!IsGbaSingleCardMode() && activeBurnCancellation is null)
+        {
+            // 移除后工作区已经隐藏了原条目，这里对照扫描结果判断是否仍有删除待办。
+            bool removedFromCard = HasPendingGbaHeadRemoval()
+                || gbaMenuRemoved && currentScanResult?.MenuConfig.IsDetected == true;
+            SetStartBurnEnabled(idle && (removedFromCard || removedGbaGames.Count > 0 || gbaSingleNeedsRelocation ||
+                pendingImportItems.Count > 0 || gbaDraftMenu is not null || HasWorkspaceChanges()));
+        }
         menuClearRomQueue.ToolTipText = IsGbaMulticartUnavailable()
             ? T("ui", "clear_workspace_hint", "Remove the menu and games from the workspace; Start Burn applies on-card erasures.")
             : ShellText("清空工作区，开始烧录时清除合卡配置区。", "Clear the workspace. Start Burn clears the multicart configuration.");

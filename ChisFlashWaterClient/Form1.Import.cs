@@ -692,6 +692,7 @@ public partial class Form1
         {
             foreach (WaterCartEntry entry in GetWorkspaceBaseEntries(currentScanResult))
             {
+                if (removedGbaGames.Contains(entry)) continue;
                 workspaceRows.Add(new WorkspaceListRow
                 {
                     CartEntry = entry,
@@ -822,6 +823,9 @@ public partial class Form1
                     FormatMiBSize(pending!.FileSizeBytes), FormatMiBSize(allocatedSizeBytes));
             }
             gridRow.Tag = row;
+            if (pending is { IsLoadingPlaceholder: false, FcRom: null, MdRom: null, ImportedPlatform: null or RomPlatform.Gba } &&
+                SupportsGbaCardMode())
+                InstallPatchPickerCell(gridRow);
             ApplyGbcDedicatedSaveCellStyle(gridRow, row);
             ApplySaveStatusCellStyle(gridRow, saveStatusText);
             if (isLoadingPlaceholder)
@@ -1000,7 +1004,7 @@ public partial class Form1
             return false;
         }
 
-        if (HasPendingGbaWorkspaceClear()) return true;
+        if (HasPendingGbaWorkspaceClear() || removedGbaGames.Count > 0) return true;
         if (IsGbcFreeWorkspace() &&
             (gbcFreeMenuDraft.HasValue || gbcFreeMenuHidden && currentScanResult.HasBeggarMaxDirectoryHeaders)) return true;
 
@@ -1349,7 +1353,9 @@ public partial class Form1
         {
             if (workspaceSnapshot.Count <= 1)
             {
-                if (pendingRows.Count == 0) return;
+                if (pendingRows.Count == 0)
+                    throw new InvalidOperationException(ShellText("已从工作区移除原游戏。无菜单的 GBC 自由合卡需加入替换 ROM 后才能烧录。",
+                        "The game was removed from the workspace. Add a replacement ROM to burn this GBC cartridge without a menu."));
                 burnGbcSingle = true;
             }
             else
@@ -1408,6 +1414,9 @@ public partial class Form1
                     : "Apply the current workspace changes to the cart in {0} mode?\n\nNo new ROM data will be written. This will only rewrite the menu metadata{1}.",
                 modeText,
                 mappingText);
+            if (removedGbaGames.Count > 0)
+                message = ShellText("应用当前工作区改动并更新合卡菜单目录？",
+                    "Apply the workspace changes and update the multicart directory?");
             statusBusyText = T("status", "apply_workspace_busy", "Applying workspace changes...");
             statusDoneText = T("status", "apply_workspace_done", "Workspace changes applied");
             statusFailedText = T("status", "apply_workspace_failed", "Applying workspace changes failed");
@@ -1490,6 +1499,7 @@ public partial class Form1
         }
 
         if (!eraseGbcMenu && !burnGbcSingle && IsGbcFreeWorkspace()) message += MaxSaveMigrationNotice(workspaceSnapshot);
+        if (!IsGbcWorkspaceMode()) message += GbaMappedHeadEraseNotice(currentScanResult);
 
         DialogResult confirm = MessageBox.Show(
             this,
@@ -1520,11 +1530,9 @@ public partial class Form1
         }
         else if (metadataOnly)
         {
-            AppendLog(Tf(
-                "log",
-                "apply_workspace_start",
-                "Start applying current workspace changes in {0} mode. No ROM data will be rewritten.",
-                modeText));
+            AppendLog(removedGbaGames.Count == 0
+                ? Tf("log", "apply_workspace_start", "Start applying current workspace changes in {0} mode. No ROM data will be rewritten.", modeText)
+                : ShellText("开始清除已移除游戏的启动扇区并更新目录。", "Clearing removed games' boot sectors and updating the directory."));
         }
         else
         {
@@ -1992,7 +2000,9 @@ public partial class Form1
 
         BeginMeasuredProgress(operationTitle, totalBytes, totalSectors);
         EraseGbaWorkspaceSectors(protocol, programmerKind, scanResult, clearSectors,
-            UseDirectGbaWorkspaceErase(scanResult, burnProfileMode), cancellationToken);
+            UseDirectGbaWorkspaceErase(scanResult, burnProfileMode), cancellationToken,
+            removedGbaGames.Count > 0 && !HasPendingGbaWorkspaceClear()
+                ? ShellText("清除游戏启动头", "Clear game boot headers") : null);
 
         foreach (PlannedWorkspaceImport import in plannedImports
                      .OrderBy(item =>
@@ -2577,7 +2587,7 @@ public partial class Form1
     private PendingRomPreparation BuildPendingRomPreparation(
         PendingRomImportItem item,
         byte[] romBytes,
-        WaterCartScanResult scanResult,
+        WaterCartScanResult? scanResult,
         BurnProfileMode burnProfileMode,
         bool applyWaitcntPatch,
         CancellationToken cancellationToken = default)
@@ -2589,7 +2599,7 @@ public partial class Form1
             item.SramPatchTargetIdentifier,
             item.AppliedSramPatchIdentifier,
             inspection);
-        bool shouldApplySramPatch = item.ApplySramPatch &&
+        bool shouldApplySramPatch = item.WantsSram(burnProfileMode) &&
             !alreadyPrepared &&
             !string.IsNullOrWhiteSpace(item.SramPatchTargetIdentifier);
         bool shouldApplyBatterylessPatch = CanApplyBatterylessPatch(item, burnProfileMode);
@@ -2613,7 +2623,7 @@ public partial class Form1
             };
         }
 
-        CartridgeDefinition? cartridgeDefinition = shouldApplyBatterylessPatch
+        CartridgeDefinition? cartridgeDefinition = shouldApplyBatterylessPatch && scanResult is not null
             ? ResolveBatterylessCartridge(scanResult)
             : null;
 

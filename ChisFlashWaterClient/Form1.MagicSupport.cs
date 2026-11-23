@@ -877,6 +877,14 @@ public partial class Form1
         RewriteNorSectorBatch(protocol, sectorBatch, geometry, programmerKind, cancellationToken: cancellationToken);
     }
 
+    private bool startBurnEnabled;
+
+    private void SetStartBurnEnabled(bool enabled)
+    {
+        startBurnEnabled = enabled;
+        buttonQueueBurn.Enabled = menuStartBurn.Enabled = enabled;
+    }
+
     private void UpdateActionButtons(bool busy)
     {
         if (groupBoxList is not null) groupBoxList.Enabled = WorkspaceUnlocked;
@@ -897,7 +905,12 @@ public partial class Form1
             UpdateFcActionButtons(busy);
             return;
         }
-        if(HasActiveMixWorkspace){UpdateMixRebuildMenu(busy,true);return;}
+        if (HasActiveMixWorkspace)
+        {
+            UpdateMixRebuildMenu(busy, true);
+            UpdateFcStartBurn(busy);
+            return;
+        }
         menuRom.Enabled=true;
         if (menuFcTools is not null) menuFcTools.Visible = false;
         menuCartridge.Enabled = true;
@@ -921,7 +934,7 @@ public partial class Form1
             !workspaceLocked &&
             !TryValidateWorkspaceCapacity(out _);
         // 按钮按工作区内容启用；实际写入范围等检查在点击后给出具体原因。
-        bool canBurnQueue = hasQueueItems || hasWorkspaceChanges;
+        bool canBurnQueue = hasQueueItems || hasWorkspaceChanges || IsGbcFreeWorkspace() && gbcFreeMenuDraft.HasValue;
         bool canRunFragmentTest = hasActiveScan &&
             !scanCapacityInvalid &&
             GetSelectedProgrammerKind() == ProgrammerKind.WaterLink;
@@ -964,16 +977,15 @@ public partial class Form1
         buttonQueueClear.Text = menuClearRomQueue.Text = T("ui", "queue_clear", "Clear Queue");
         buttonQueueRemove.Enabled = canModifyWorkspace && hasSelectedQueuedItem;
         buttonQueueClear.Enabled = canModifyWorkspace && hasQueueItems;
-        buttonQueueBurn.Enabled = hasActiveBurnCancellation
+        SetStartBurnEnabled(hasActiveBurnCancellation
             ? !isBurnCancellationRequested
-            : canModifyWorkspace && canBurnQueue;
+            : canModifyWorkspace && canBurnQueue);
         buttonQueueBurn.Text = hasActiveBurnCancellation
             ? T("ui", "cancel_burn", "Cancel")
             : T("ui", "queue_burn", "Start Burn");
         menuAddRom.Enabled = buttonQueueAdd.Enabled;
         menuRemoveSelectedRom.Enabled = buttonQueueRemove.Enabled;
         menuClearRomQueue.Enabled = buttonQueueClear.Enabled;
-        menuStartBurn.Enabled = buttonQueueBurn.Enabled;
         menuStartBurn.Text = buttonQueueBurn.Text;
         buttonQueueAdd.Enabled=!workspaceUiBusy&&!isAnalyzingQueueImports;
         menuAddRom.Enabled=buttonQueueAdd.Enabled;
@@ -995,7 +1007,8 @@ public partial class Form1
             menuImportSelectedSave.Enabled=menuItemImportSave.Enabled=false;
             menuReplaceSelectedRom.Enabled=menuItemReplaceRom.Enabled=false;
         }
-        if(CanWriteMdQueue&&!workspaceUiBusy&&!isAnalyzingQueueImports){buttonQueueBurn.Enabled=true;menuStartBurn.Enabled=true;buttonQueueBurn.Text=menuStartBurn.Text="MIX · NES / MD";}
+        if (CanWriteMdQueue && canModifyWorkspace)
+            buttonQueueBurn.Text = menuStartBurn.Text = "MIX · NES / MD";
         bool canToggleProgrammerMode = !workspaceUiBusy && !isAnalyzingQueueImports;
         UpdateProgrammerModeSelectorUi(canToggleProgrammerMode);
         // Mode selection is local navigation, not authorization to write a card.

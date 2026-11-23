@@ -201,7 +201,7 @@ public partial class Form1
         UpdateProgrammerModeSelectorUi(idle);
         bool cancelling = fcWorkspace!.IsBusy;
         buttonQueueBurn.Text = menuStartBurn.Text = cancelling ? T("ui", "cancel_burn", "Cancel") : T("ui", "queue_burn", "Start Burn");
-        buttonQueueBurn.Enabled = menuStartBurn.Enabled = cancelling || idle && CanUseFcDevice;
+        UpdateFcStartBurn(busy);
         menuExit.Enabled = idle;
         menuFcUp.Enabled = menuFcDown.Enabled = menuFcPreview.Enabled = idle;
         menuFcEdit.Enabled = idle;
@@ -209,4 +209,7 @@ public partial class Form1
         menuFcOpen.Enabled = idle;
         foreach (var label in fcMenuLabels) label.Item.Text = T("fc", label.Key, label.Fallback);
     }
+
+    private void UpdateFcStartBurn(bool busy) => SetStartBurnEnabled(fcWorkspace!.IsBusy ||
+        (!busy && !isAnalyzingQueueImports && fcWorkspace.HasPendingChanges));
 }

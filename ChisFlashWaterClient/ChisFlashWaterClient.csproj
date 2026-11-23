@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.25</FileVersion>
-    <InformationalVersion>2.046 r25</InformationalVersion>
+    <FileVersion>2.0.46.26</FileVersion>
+    <InformationalVersion>2.046 r26</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -79,20 +79,16 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="..\..\menus\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba"
-             Link="Assets\lk_multimenu.gba">
+    <Content Include="Assets\lk_multimenu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\..\menus\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba"
-             Link="Assets\wl_magic_menu.gba">
+    <Content Include="Assets\wl_magic_menu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\..\menus\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba"
-             Link="Assets\universal_menu.gba">
+    <Content Include="Assets\universal_menu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\..\menus\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba"
-             Link="Assets\simplified_ns_menu.gba">
+    <Content Include="Assets\simplified_ns_menu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\batteryless_payload.bin">

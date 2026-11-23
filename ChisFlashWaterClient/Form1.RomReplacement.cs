@@ -73,6 +73,7 @@ public partial class Form1
             {
                 if (chisFlash10)
                 {
+                    chis10PatchItem = SetSinglePatchDefaults(prepared.Item);
                     chisFlash10Rom = prepared.Bytes; chisFlash10Name = prepared.Item.FileName; chisFlash10Save = prepared.Save;
                     gbaSingleGameRemoved = false;
                     chisFlash10WaitcntPatch = defaultWaitcntPatchEnabled; chisFlash10ReplacementCapacityBytes = limit;
@@ -80,6 +81,7 @@ public partial class Form1
                 }
                 else
                 {
+                    singleGbaPatchItem = SetSinglePatchDefaults(prepared.Item);
                     gbaSingleRom = prepared.Bytes; gbaSingleRomPath = prepared.Item.FilePath;
                     gbaSingleRomName = prepared.Item.FileName; gbaSingleRomSave = prepared.Save;
                     gbaSingleWaitcntPatch = defaultWaitcntPatchEnabled; gbaSingleReplacementCapacityBytes = limit;

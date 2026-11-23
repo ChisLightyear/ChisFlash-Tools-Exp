@@ -22,6 +22,7 @@ public sealed class FcWorkspaceControl : UserControl
     private readonly List<(Control Control,string Key,string Fallback)> labels=[];
     private CancellationTokenSource? operation;
     private FcCardSnapshot? snapshot;
+    private IReadOnlyList<FcGame> appliedGames = [];
     private bool refreshing;
     private bool imageReplacement;
     private IReadOnlyList<FcGame>? imageSnapshot;
@@ -31,6 +32,13 @@ public sealed class FcWorkspaceControl : UserControl
     public bool CanBurn => burn.Enabled;
     public bool CanRebuildConfiguration => backendFactory is not null&&!IsBusy&&snapshot is {IsFc:true,Writable:true};
     public bool HasGames => games.Count > 0;
+    public bool HasPendingChanges => imageReplacement || games.Count != appliedGames.Count ||
+        games.Where((game, index) =>
+        {
+            var applied = appliedGames[index];
+            return game.Id != applied.Id || game.Enabled != applied.Enabled || game.Name != applied.Name ||
+                game.Info != applied.Info || game.Md != applied.Md || game.Snes != applied.Snes;
+        }).Any();
     public bool HasSelection => grid.CurrentRow?.DataBoundItem is FcGame;
     public bool CanExportSelection => grid.CurrentRow?.DataBoundItem is FcGame { RomBytes: > 0 };
     public bool CanEditConfiguration => grid.CurrentRow?.DataBoundItem is FcGame { IsNes: true };
@@ -230,7 +238,7 @@ public sealed class FcWorkspaceControl : UserControl
             if(original is null||rebuilt is null)continue;
             games[index]=new FcGame{Id=staged.Id,Name=staged.Name,Enabled=staged.Enabled,Info=staged.Info==original.Info?rebuilt.Info:staged.Info,Md=staged.Md,Snes=staged.Snes,Data=rebuilt.Data,OriginalRomBytes=rebuilt.RomBytes,OriginalOffset=rebuilt.OriginalOffset,OriginalAllocated=rebuilt.OriginalAllocated,OriginalConfig=rebuilt.OriginalConfig,DirectoryIdentity=rebuilt.DirectoryIdentity,OriginalSaveMap=rebuilt.OriginalSaveMap,OriginalBattery=rebuilt.OriginalBattery,OriginalStoredRamBytes=rebuilt.OriginalStoredRamBytes};
         }
-        snapshot=result;games.ResetBindings();RefreshSummary();status.Text=L("rebuild_menu_done","MIX configuration rebuilt; ROM data and saves unchanged.");
+        snapshot=result;appliedGames=result.Games;games.ResetBindings();RefreshSummary();status.Text=L("rebuild_menu_done","MIX configuration rebuilt; ROM data and saves unchanged.");
     });
     public void RebuildConfigurations()
     {
@@ -416,7 +424,7 @@ public sealed class FcWorkspaceControl : UserControl
         snapshot=null;
         var backend=backendFactory!();var result=await Task.Run(()=>backend.Scan(ct,p),ct);
         ct.ThrowIfCancellationRequested();
-        snapshot=result;games.Clear();if(!imageReplacement)foreach(var g in result.Games)games.Add(g.Copy());
+        snapshot=result;appliedGames=result.Games;games.Clear();if(!imageReplacement)foreach(var g in result.Games)games.Add(g.Copy());
         foreach(var g in pending)games.Add(g);
         status.Text=!result.Writable?L("write_locked","Burn disabled: NOR capacity is unavailable or the card is write-protected. Check the scan result and scan again."):
             result.Warning??(result.IsFc?L("scan_directory_only","MIX directory loaded; ROM content is read only when needed for rebuild/export."):L("convert_notice","This is not an MIX card. Add NES ROMs; burning requires explicit conversion confirmation."));
@@ -445,6 +453,6 @@ public sealed class FcWorkspaceControl : UserControl
         // A failure invalidates the snapshot: stale metadata can never be reused.
         snapshot=null;
         var result=await Task.Run(()=>backend.Write(expected,copy,convert,ct,p),ct);
-        snapshot=result;imageReplacement=false;games.Clear();foreach(var g in result.Games)games.Add(g.Copy());status.Text=string.Format(L("burn_counts","MIX card directory updated: {0} games. {1} unchecked rows were excluded; existing saves preserved; new RAM initialized by bank."),result.Games.Count,copy.Count(g=>!g.Enabled));
+        snapshot=result;appliedGames=result.Games;imageReplacement=false;games.Clear();foreach(var g in result.Games)games.Add(g.Copy());status.Text=string.Format(L("burn_counts","MIX card directory updated: {0} games. {1} unchecked rows were excluded; existing saves preserved; new RAM initialized by bank."),result.Games.Count,copy.Count(g=>!g.Enabled));
     });
 }
