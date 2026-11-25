@@ -214,6 +214,7 @@ public partial class Form1
         menuExportSelectedRom.Enabled = idle && hasImage;
         foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
         menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);
+        menuUnlockPpb.Enabled = idle && CanUnlockPpbCurrentScan(out _);
         menuPendingGbaCovers.Enabled = menuDeleteSelectedMapping.Enabled = menuFragmentTest.Enabled = false;
         menuItemReplaceRom.Enabled = menuItemExportRom.Enabled = false;
         if (raw)

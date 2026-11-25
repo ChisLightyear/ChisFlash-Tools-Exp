@@ -40,6 +40,17 @@ public enum GbaNorCategory
 
 public sealed class NorGeometryInfo
 {
+    internal NorGeometryInfo CopyForWrite(int capacity, int sector)
+    {
+        var copy = (NorGeometryInfo)MemberwiseClone();
+        copy.DeviceSizeBytes = capacity;
+        copy.SectorSizeBytes = sector;
+        copy.SectorCount = capacity / sector;
+        if (copy.LargestSectorSizeBytes <= 0) copy.LargestSectorSizeBytes = sector;
+        if (copy.RegionCount <= 0) copy.RegionCount = 1;
+        return copy;
+    }
+
     public int DeviceSizeBytes { get; set; }
     public bool IsCfiWindowBlank { get; init; }
     public int SectorCount { get; set; }
@@ -397,6 +408,13 @@ public sealed class WaterCartEntry
 
 public sealed class WaterCartScanResult
 {
+    internal WaterCartScanResult WithWriteGeometry(int capacity, int sector)
+    {
+        var plan = (WaterCartScanResult)MemberwiseClone();
+        plan.Geometry = Geometry.CopyForWrite(capacity, sector);
+        return plan;
+    }
+
     public bool IsNorProbeOnly { get; set; }
     public bool HasGbaHeaderScan { get; set; }
     public bool IsChm1 { get; set; }
@@ -417,6 +435,14 @@ public sealed class WaterCartScanResult
     public byte[] NorId { get; set; } = [];
     /// <summary>GBC/MAX 侧 TryGbcReadFlashId 读到的原始 4 字节 byte 模式 ID，未做 8 字节桥接。</summary>
     public byte[] GbcFlashId { get; set; } = [];
+    public bool HasNorId
+    {
+        get
+        {
+            ReadOnlySpan<byte> id = IsBeggarMaxGbcMode ? GbcFlashId : NorId;
+            return id.IndexOfAnyExcept((byte)0) >= 0 && id.IndexOfAnyExcept((byte)0xFF) >= 0;
+        }
+    }
     public string RawNorIdHex { get; set; } = string.Empty;
     public string ChipName { get; set; } = string.Empty;
     public string CapacitySummary { get; set; } = string.Empty;

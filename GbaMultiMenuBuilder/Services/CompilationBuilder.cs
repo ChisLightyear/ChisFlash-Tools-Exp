@@ -3301,7 +3301,7 @@ public sealed class CompilationBuilder
         return title;
     }
 
-    private static string ComputeRomCode(byte[] status, byte[] itemList)
+    internal static string ComputeRomCode(byte[] status, byte[] itemList)
     {
         var data = new byte[status.Length + itemList.Length];
         Buffer.BlockCopy(status, 0, data, 0, status.Length);
@@ -3311,7 +3311,7 @@ public sealed class CompilationBuilder
         return $"L{suffix}";
     }
 
-    private static void WriteHeaderMetadata(byte[] compilation, string romCode)
+    internal static void WriteHeaderMetadata(byte[] compilation, string romCode)
     {
         var romCodeBytes = Encoding.ASCII.GetBytes(romCode);
         Buffer.BlockCopy(romCodeBytes, 0, compilation, 0xAC, romCodeBytes.Length);

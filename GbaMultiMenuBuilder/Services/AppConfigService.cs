@@ -11,7 +11,11 @@ public static class AppConfigService
     private const string WindowSection = "window";
     private const string GridSection = "grid";
 
+#if CLIENT_SINGLE_EXE
+    private static string ConfigPath => ChisFlashWaterClient.Services.AppConfigService.ConfigPath;
+#else
     private static string ConfigPath => Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+#endif
 
     public static AppSettings LoadSettings()
     {

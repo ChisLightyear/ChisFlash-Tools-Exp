@@ -77,6 +77,18 @@ public static class GbcCfiSectorMap
         return new GbcCfiBurnGeometry(deviceSizeBytes, bufferWriteBytes, sectors);
     }
 
+    internal static GbcCfiBurnGeometry ReadBurnGeometry(byte[] cfi, NorGeometryInfo measured, int imageLength)
+    {
+        if (cfi.AsSpan().IndexOfAnyExcept((byte)0) >= 0 && cfi.AsSpan().IndexOfAnyExcept((byte)0xFF) >= 0)
+            return ReadBurnGeometry(cfi);
+        int capacity = !measured.IsCfiWindowBlank && measured.DeviceSizeBytes > 1 ? measured.DeviceSizeBytes : imageLength;
+        if (!measured.IsCfiWindowBlank && TryBuild(measured.EraseRegions, measured.GbcBootBlockFlag, capacity, out var sectors))
+            return new(capacity, measured.BufferWriteBytes, sectors);
+        int size = !measured.IsCfiWindowBlank && measured.SectorSizeBytes > 0 ? measured.SectorSizeBytes : WaterWlMappingCodec.SectorSize;
+        return new(capacity, measured.BufferWriteBytes, Enumerable.Range(0, (imageLength + size - 1) / size)
+            .Select(index => (index * size, size)).ToArray());
+    }
+
     /// <summary>
     /// 生成按地址递增排列、铺满 deviceSizeBytes 的扇区表。
     /// region 明细缺失 / 非法 / 铺不满容量一律返回 false，不猜、不回落固定几何。

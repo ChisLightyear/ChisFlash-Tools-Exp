@@ -31,13 +31,9 @@ public partial class Form1
         gbcProfilePort = GetSelectedPortName() ?? string.Empty;
     }
 
-    private static IReadOnlyList<BurnProfileMode> GetGbcProfileModes(int? capacity) => capacity switch
-    {
-        0x800000 => [BurnProfileMode.GbcUnselected, BurnProfileMode.Mbc5EightMiB, BurnProfileMode.MbcxRtcEightMiB],
-        0x2000000 => [BurnProfileMode.GbcUnselected, BurnProfileMode.GbcSixteenInOne, BurnProfileMode.MbcxRtcThirtyTwoMiB, BurnProfileMode.BeggarMaxSram, BurnProfileMode.FcMbcx],
-        null => [BurnProfileMode.GbcUnselected, BurnProfileMode.Mbc5EightMiB, BurnProfileMode.MbcxRtcEightMiB, BurnProfileMode.GbcSixteenInOne, BurnProfileMode.MbcxRtcThirtyTwoMiB, BurnProfileMode.BeggarMaxSram, BurnProfileMode.FcMbcx],
-        _ => [BurnProfileMode.GbcUnselected],
-    };
+    private static IReadOnlyList<BurnProfileMode> GetGbcProfileModes() =>
+        [BurnProfileMode.GbcUnselected, BurnProfileMode.Mbc5EightMiB, BurnProfileMode.MbcxRtcEightMiB,
+         BurnProfileMode.GbcSixteenInOne, BurnProfileMode.MbcxRtcThirtyTwoMiB, BurnProfileMode.BeggarMaxSram, BurnProfileMode.FcMbcx];
 
     private static bool MatchesGbcFreeMulticart(WaterCartScanResult scan) => scan is
     {

@@ -6,13 +6,8 @@ public sealed record GbaCoverCatalogEntry(string GameCode, string Title, string 
 
 public static class GbaCoverCatalog
 {
-    public static string? FindCatalogDirectory()
-    {
-        string directory = Path.Combine(AppContext.BaseDirectory, "covers");
-        return File.Exists(Path.Combine(directory, "cover_index.csv"))
-            ? directory
-            : null;
-    }
+    public static string? FindCatalogDirectory() =>
+        GbaMultiMenuBuilder.Services.GbaCoverCatalog.FindCatalogDirectory();
 
     public static Dictionary<string, GbaCoverCatalogEntry> LoadPrimaryByGameCode(string directory)
     {

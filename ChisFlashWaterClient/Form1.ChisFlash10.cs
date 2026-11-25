@@ -109,8 +109,7 @@ public partial class Form1
     // 写缓冲 / 扇区铺满一律不再拦写入；只保留模式与内容分流这种非读数条件。
     private bool CanWriteChisFlash10() => IsChisFlash10Mode() &&
         IsBeggarCompatibleSelectedProgrammer() && GetSelectedBeggarCartMode() == BeggarCartMode.Gba &&
-        HasActiveScanResult() && currentScanResult is { } scan &&
-        !scan.IsBeggarMaxGbcMode && !scan.IsChm1;
+        (HasManualGbaProfile() || HasActiveScanResult() && currentScanResult is { IsBeggarMaxGbcMode: false, IsChm1: false });
 
     private async Task ExportChisFlash10RomAsync(byte[]? preparedImage = null)
     {
@@ -186,7 +185,8 @@ public partial class Form1
                         () => EraseGbaWorkspaceSectors(protocol, ProgrammerKind.BeggarLegacy, scan, clearSectors, true, cancellation.Token),
                     startSectorErase: StartLandscapeErase, finishSectorErase: FinishLegacyRomSectorErase,
                     beginErase: count => BeginMeasuredProgressPhase(count, true, BuildProgressDetailText(title, "progress_phase_erase", "Erase")),
-                    beginProgram: () => BeginMeasuredProgressPhase(writeUnits, false, BuildProgressDetailText(title, "progress_phase_write", "Write"), image.Length));
+                    beginProgram: () => BeginMeasuredProgressPhase(writeUnits, false, BuildProgressDetailText(title, "progress_phase_write", "Write"), image.Length),
+                    writeLayout: (scan.Geometry.DeviceSizeBytes, ResolveGbaPpbSectorSizeBytes(scan), scan.Geometry.BufferWriteBytes));
                 CompleteLegacyGbaRomProgress(image.Length, timing);
             });
         }
@@ -208,6 +208,8 @@ public partial class Form1
         menuRom.Enabled = menuCartridge.Enabled = true;
         menuSave.Enabled = false;
         foreach (ToolStripItem item in menuCartridge.DropDownItems) item.Enabled = false;
+        menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);
+        menuUnlockPpb.Enabled = idle && CanUnlockPpbCurrentScan(out _);
         menuScan.Enabled = buttonScan.Enabled = idle && !string.IsNullOrWhiteSpace(GetSelectedPortName());
         buttonRefreshPorts.Enabled = menuRefreshPorts.Enabled = idle;
         comboBoxPorts.Enabled = comboBoxLanguage.Enabled = comboBoxBurnProfileMode.Enabled = idle;

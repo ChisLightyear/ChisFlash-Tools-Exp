@@ -49,7 +49,7 @@ public static class Chm1MenuBuilder
     public static bool RequiresEmptyDirectoryRebuild(byte[] previousHead, WaterCartScanResult scan) =>
         scan.WlMapping.LegacyVersionDetected ||
         (!scan.MenuConfig.IsDetected &&
-         (scan.WlMapping.IsDetected || !scan.Games.Any(game => !game.IsMenu && game.StartBucket > 0))) ||
+         (scan.WlMapping.IsDetected ? scan.WlMapping.RecordCount == 0 : !scan.Games.Any(game => !game.IsMenu && game.StartBucket > 0))) ||
         (!scan.WlMapping.IsDetected &&
          (previousHead.AsSpan(Chm1Layout.MappingOffset, 4).SequenceEqual("WLMI"u8) ||
           previousHead.AsSpan(0xB0000, 4).SequenceEqual("UMMF"u8)));
@@ -64,24 +64,28 @@ public static class Chm1MenuBuilder
             throw new InvalidOperationException("01G/02G fragment management requires a WL or NS menu.");
         if (!magic && menu.AsSpan().IndexOf("WLMI"u8) >= 0 && !GbaMenuRomService.SupportsCovers(menu))
             throw new InvalidOperationException("An ordinary layout requires a classic or NS menu; the WL menu requires bucket mapping.");
-        if (scan.Games.Any(game => !game.IsMenu && game.StartBucket == 0))
-            throw new InvalidOperationException("A game occupies the first 4 MiB; export or relocate it before installing a menu.");
         if (!rebuildEmptyDirectory && (scan.WlMapping.LegacyVersionDetected || (scan.MenuConfig.IsDetected && !scan.WlMapping.IsDetected &&
             (previousHead.AsSpan(Chm1Layout.MappingOffset, 4).SequenceEqual("WLMI"u8) ||
              previousHead.AsSpan(0xB0000, 4).SequenceEqual("UMMF"u8)))))
             throw new InvalidOperationException("The existing fragmented map is invalid; restore its backup before converting the menu.");
-        if (!rebuildEmptyDirectory && scan.WlMapping.IsDetected && !scan.MenuConfig.IsDetected)
-            throw new InvalidOperationException("The fragmented map has no valid menu directory; restore the directory before converting the menu.");
-
+        var records = scan.WlMapping.Records.OrderBy(record => record.EntrySlot).ToArray();
         List<MenuItemConfigInfo> original = rebuildEmptyDirectory ? [] : scan.MenuConfig.IsDetected
             ? scan.MenuConfig.Items.Select(WaterMenuConfigCodec.Clone).ToList()
+            : scan.WlMapping.IsDetected ? records.Select(record => new MenuItemConfigInfo
+            {
+                Index = record.EntrySlot,
+                Title = scan.Games.FirstOrDefault(game => !game.IsMenu && game.StartBucket == record.PhysicalBuckets[0])?.Title
+                    ?? new WaterCartEntry { WlRecord = record }.Title,
+                RomOffsetBlocks = checked((ushort)(record.PhysicalBuckets[0] * 8)),
+                RomSizeBlocks = checked((ushort)(record.LogicalBucketCount * 8)),
+            }).ToList()
             : scan.Games.Where(game => !game.IsMenu && game.StartBucket > 0).Select(game => new MenuItemConfigInfo
             {
                 Title = game.Title, RomOffsetBlocks = checked((ushort)(game.StartBucket * 8)),
                 RomSizeBlocks = checked((ushort)((game.EndBucket - game.StartBucket + 1) * 8)),
             }).ToList();
         var items = WaterMenuConfigCodec.ReindexItems(original, Chm1Layout.ItemListOffset);
-        var maps = items.Select(item => scan.WlMapping.IsDetected
+        var maps = original.Select(item => scan.WlMapping.IsDetected
             ? scan.WlMapping.Records.Single(record => record.EntrySlot == item.Index).PhysicalBuckets.ToArray()
             : Enumerable.Range(item.StartBucket, item.CoveredBucketCount).ToArray()).ToArray();
         if (!magic && maps.Any(map => !map.SequenceEqual(Enumerable.Range(map[0], map.Length))))

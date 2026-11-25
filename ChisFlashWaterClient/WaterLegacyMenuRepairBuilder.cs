@@ -287,12 +287,20 @@ public static class WaterLegacyMenuRepairBuilder
         };
     }
 
+    internal static MenuFlashStatusInfo CreateWriteStatus(NorGeometryInfo geometry, bool batteryPresent, int? menuLength = null)
+    {
+        if (!TryResolveLegacyMetadataLayout(geometry, out _, out int address, out _, out string error, menuLength))
+            throw new InvalidOperationException(error);
+        return CreateLegacyStatusInfo(geometry.SectorSizeBytes, address, batteryPresent);
+    }
+
     private static bool TryResolveLegacyMetadataLayout(
         NorGeometryInfo geometry,
         out int itemListAddress,
         out int statusAddress,
         out string layoutSource,
-        out string errorMessage)
+        out string errorMessage,
+        int? menuLength = null)
     {
         itemListAddress = 0;
         statusAddress = 0;
@@ -310,7 +318,7 @@ public static class WaterLegacyMenuRepairBuilder
             return false;
         }
 
-        int menuLengthBytes = ResolveLegacyMenuLength(out layoutSource);
+        int menuLengthBytes = menuLength ?? ResolveLegacyMenuLength(out layoutSource);
         int alignedMenuBytes = AlignPastBoundary(menuLengthBytes, LayoutAlignmentBytes);
         itemListAddress = DivCeil(alignedMenuBytes, sectorSize) * sectorSize;
         statusAddress = itemListAddress + sectorSize;

@@ -48,11 +48,6 @@ public partial class Form1
     private async Task ActivateFcWorkspaceAsync()
     {
         if (isBusy || isAnalyzingQueueImports || IsFcWorkspaceActive) return;
-        if (!GetGbcProfileModes(GetGbcProfileCapacity()).Contains(BurnProfileMode.FcMbcx))
-        {
-            labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type");
-            return;
-        }
         burnProfileModeSelectionInitialized = false;
         if (!burnProfileModeOptions.Any(option => option.Mode == BurnProfileMode.FcMbcx))
         {

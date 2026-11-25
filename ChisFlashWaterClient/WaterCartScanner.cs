@@ -138,7 +138,8 @@ public static class WaterCartScanner
         bool scanContent = true,
         bool scanGameHeaders = false,
         bool isChwq = false,
-        string? standardWaterLinkId = null)
+        string? standardWaterLinkId = null,
+        Action<WaterCartScanResult>? onNorRead = null)
     {
         // 盖中盖口径：NOR ID 读失败不抛异常、不判定「无卡」，留空数组继续扫。
         if (!device.TryReadLegacyNorId(out byte[] norId, Timeout.Infinite))
@@ -150,7 +151,10 @@ public static class WaterCartScanner
             "WaterLink diagnostics: used legacy-compatible NOR ID read first."));
         log?.Invoke(BitConverter.ToString(norId).Replace("-", " "));
         // CFI 读数一律原样使用，不因容量 0 / QRY 不符而返回无卡结果。
+        var hardware = CreateNorProbeResult(norId, new(), string.Empty, false);
+        onNorRead?.Invoke(hardware);
         NorGeometryInfo geometry = ReadNorGeometry(device, WaterProbeTimeoutMs, log);
+        hardware.Geometry = geometry;
         // 完整 NOR ID 决定型号、分类及双 die；容量与写缓冲仍使用现有 CFI 读取。
         geometry.IsS70Gl02GsDualDie = IsS70Gl02GsDualDieNorId(norId);
         WaterRuntimeStatusInfo runtimeStatus = ReadWaterRuntimeStatus(device, log);
@@ -228,7 +232,8 @@ public static class WaterCartScanner
         };
     }
 
-    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null, bool scanContent = true, bool scanGameHeaders = false, bool readLocalIdentity = true)
+    public static WaterCartScanResult ScanLegacyBeggar(WaterDeviceProtocol device, Action<string>? log = null, bool scanContent = true, bool scanGameHeaders = false, bool readLocalIdentity = true,
+        Action<WaterCartScanResult>? onNorRead = null)
     {
         // 盖中盖口径：NOR ID 读失败不抛异常，留空数组继续扫。
         if (!device.TryReadLegacyNorId(out byte[] norId, LegacyBeggarTimeoutMs))
@@ -244,7 +249,10 @@ public static class WaterCartScanner
 
         // 盖中盖口径：CFI 读失败照样继续，读到的（可能是全 0）几何原样使用，
         // 不判定无卡、不回落、不写保护。
+        var hardware = CreateNorProbeResult(norId, new(), string.Empty, false);
+        onNorRead?.Invoke(hardware);
         NorGeometryInfo geometry = ReadNorGeometry(device, LegacyBeggarTimeoutMs, log);
+        hardware.Geometry = geometry;
 
         bool isChm1 = false;
         bool isChwq = false;
@@ -269,6 +277,11 @@ public static class WaterCartScanner
         log?.Invoke(chipName);
         log?.Invoke(BuildCapacitySummary(geometry));
 
+        hardware.ChipName = chipName;
+        hardware.IsChipRecognized = chipRecognized;
+        hardware.IsChm1 = isChm1;
+        hardware.IsChwq = isChwq;
+        hardware.StandardWaterLinkId = standardWaterLinkId;
         if (!isChm1 && !isChwq && standardWaterLinkId is null && (scanContent || scanGameHeaders) && IsSingleGameGbaNor(norId))
             return ReadSingleGameGbaResult(device, norId, geometry, chipName, chipRecognized, log);
 
@@ -481,11 +494,15 @@ public static class WaterCartScanner
 
             // 盖中盖口径：ID 与 CFI 都读不到也照样给出扫描结果，不设失败门槛。
             // 烧录时另有现场重读，这里只负责显示，不拿 NOR ID 猜容量。
-            NorGeometryInfo resolvedGeometry = ReadGbcNorGeometry(device, log);
-            bool flashIdRecognized = flashIdRead && LooksLikeSupportedBeggarMaxId(flashId);
             byte[] expandedNorId = flashIdRead
                 ? ExpandBeggarMaxIdToLegacyNorId(flashId)
                 : [];
+            result.IsBeggarMaxGbcMode = true;
+            result.GbcFlashId = flashIdRead ? flashId : [];
+            result.NorId = expandedNorId;
+            result.RawNorIdHex = rawFlashIdHex;
+            NorGeometryInfo resolvedGeometry = ReadGbcNorGeometry(device, log);
+            bool flashIdRecognized = flashIdRead && LooksLikeSupportedBeggarMaxId(flashId);
             string chipName = flashIdRecognized
                 ? GetBeggarMaxChipName(flashId, resolvedGeometry.DeviceSizeBytes)
                     ?? GetChipName(expandedNorId, resolvedGeometry.DeviceSizeBytes, resolvedGeometry.BufferWriteBytes)
@@ -494,13 +511,10 @@ public static class WaterCartScanner
             List<DetectedNorGameInfo> games=[];
             List<WaterCartEntry> entries=[];
             bool isFcContent=false,isMdContent=false;
-            bool hasDirectoryHeaders=scanContent && ScanBeggarMaxContent(device,resolvedGeometry.DeviceSizeBytes,log,out games,out entries,out isFcContent,out isMdContent);
-
             result = new WaterCartScanResult
             {
                 IsBeggarMaxGbcMode = true,
                 IsNorProbeOnly = !scanContent,
-                HasBeggarMaxDirectoryHeaders = hasDirectoryHeaders,
                 IsFcMbcxContent = isFcContent,
                 IsMdMbcxContent = isMdContent,
                 IsChipRecognized = flashIdRecognized,
@@ -517,6 +531,15 @@ public static class WaterCartScanner
                 Entries = entries,
             };
 
+            if (scanContent)
+            {
+                result.HasBeggarMaxDirectoryHeaders = ScanBeggarMaxContent(device, resolvedGeometry.DeviceSizeBytes, log,
+                    out games, out entries, out isFcContent, out isMdContent);
+                result.Games = games;
+                result.Entries = entries;
+                result.IsFcMbcxContent = isFcContent;
+                result.IsMdMbcxContent = isMdContent;
+            }
             return true;
         }
         catch (Exception ex)
@@ -526,7 +549,8 @@ public static class WaterCartScanner
                 "beggar_max_probe_exception",
                 "GBC/MAX probe stopped because of an error: {0}",
                 ex.Message));
-            return false;
+            result.IsNorProbeOnly = true;
+            return result.HasNorId;
         }
     }
 
@@ -3030,10 +3054,7 @@ public static class WaterCartScanner
         WaterWlMappingInfo wlMapping,
         Action<string>? log)
     {
-        // 已有碎片表却缺少目录时，物理ROM头不能替代逻辑游戏映射。
-        if (wlMapping.IsDetected && !menuConfig.IsDetected)
-            return [];
-        List<WaterCartEntry> entries = wlMapping.IsDetected && menuConfig.IsDetected
+        List<WaterCartEntry> entries = wlMapping.IsDetected
             ? BuildEntriesFromWlMapping(games, menuConfig, wlMapping, log)
             : BuildEntriesFromMenuAndHeaders(games, menuConfig, log);
 
@@ -3050,6 +3071,18 @@ public static class WaterCartScanner
         Dictionary<int, DetectedNorGameInfo> headerByStartBucket = games
             .GroupBy(game => game.StartBucket)
             .ToDictionary(group => group.Key, group => group.First());
+
+        if (!menuConfig.IsDetected)
+        {
+            // 游戏边界来自 WL 记录，只有首个物理块上的 ROM 头可用于补充标题。
+            return wlMapping.Records.OrderBy(record => record.EntrySlot)
+                .Select(record => new WaterCartEntry
+                {
+                    WlRecord = record,
+                    HeaderGame = record.PhysicalBuckets.Count > 0
+                        ? headerByStartBucket.GetValueOrDefault(record.PhysicalBuckets[0]) : null,
+                }).ToList();
+        }
 
         Dictionary<int, MenuItemConfigInfo> menuItemByIndex = menuConfig.Items
             .GroupBy(item => item.Index)

@@ -1,3 +1,23 @@
+2.046 r27 - 2026-11-25
+
+ChisFlash Water Client 2.046 r27 is a Windows x64 preview. Extract the ZIP and run ChisFlashWaterClient.exe. The .NET runtime is included. The empty covers/ folder is for your own artwork.
+
+- GBA programming follows the selected cartridge profile when the NOR responds, including chips with an unknown model or a missing menu directory. A valid WaterLink mapping can rebuild the game list and retain fragmented block order.
+- Adding a menu over a single GBA game now offers to export the original ROM. Choose the export size and save location, or skip export. Programming starts when you click Start Burn.
+- GBA multicart burns report erase and programming times separately. Programming speed uses the image size and time spent in the programming phase. When blank sectors are skipped, the log also shows how much data was sent.
+- Updated English messages for menu rebuilding, ROM export and programmer errors.
+
+Verified with offline cartridge simulations and protocol checks.
+
+ChisFlash 水线上位机 2.046 r27 为 Windows x64 预发布版。解压后运行 ChisFlashWaterClient.exe，已内置 .NET 运行时。空的 covers/ 文件夹用于放置自己的封面。
+
+- GBA 烧录采用所选卡型。NOR 有效响应时，未知型号或缺少菜单目录的卡也能写入。有效的 WaterLink 映射可用于重建游戏列表并保留碎片块顺序。
+- 添加菜单时，如果会覆盖原单卡游戏，程序会询问是否先导出。可以选择大小和保存位置，也可以跳过。点击“开始烧录”后才会写卡。
+- GBA 合卡分别统计擦除和写入耗时。平均写速按镜像大小和写入阶段耗时计算；跳过全 FF 扇区时，日志同时列出实际下发量。
+- 补全菜单重建、ROM 导出及烧录器异常提示的英文文案。
+
+已通过离线卡带模拟与协议检查。
+
 ChisFlash Water Client 2.046 r26
 2026-11-23
 

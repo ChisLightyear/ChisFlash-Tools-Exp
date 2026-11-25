@@ -582,7 +582,7 @@ public static class WaterMagicUpgradeBuilder
         };
     }
 
-    private static WaterMagicRepairPlan BuildRepairPlanFromMappingOnly(WaterCartScanResult scanResult)
+    internal static WaterMagicRepairPlan BuildRepairPlanFromMappingOnly(WaterCartScanResult scanResult)
     {
         MenuFlashStatusInfo status = CreateDefaultStatusInfo();
         Dictionary<int, DetectedNorGameInfo> headerByStartBucket = scanResult.Games
@@ -622,7 +622,24 @@ public static class WaterMagicUpgradeBuilder
             repairedMenuConfig.Status.ItemListAddress,
             repairedMenuConfig.Status.SectorSize);
         byte[] statusSector = WaterMenuConfigCodec.BuildStatusSector(repairedMenuConfig.Status);
-        byte[] mappingSector = BuildMappingSector(repairedRecords, WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes), WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
+        var mapping = scanResult.WlMapping;
+        byte[] mappingSector;
+        if (mapping.RawSector.Length == WaterWlMappingCodec.SectorSize &&
+            mapping.Records.OrderBy(record => record.EntrySlot).Select(record => record.EntrySlot)
+                .SequenceEqual(Enumerable.Range(0, repairedRecords.Count)))
+        {
+            // 槽号连续时，新目录与原映射逐项对应，原样保留块归属和标志。
+            mappingSector = mapping.RawSector.ToArray();
+        }
+        else
+        {
+            int bucketCount = mapping.Header.BucketOwnerCount > 0 ? mapping.Header.BucketOwnerCount
+                : WaterWlMappingCodec.GetBucketCount(scanResult.Geometry.DeviceSizeBytes);
+            mappingSector = BuildMappingSector(repairedRecords, bucketCount, WaterWlMappingCodec.IsChimeraConfiguration(scanResult));
+            uint flags = BinaryPrimitives.ReadUInt32LittleEndian(mappingSector.AsSpan(8)) | mapping.Header.Flags;
+            BinaryPrimitives.WriteUInt32LittleEndian(mappingSector.AsSpan(8), flags);
+            WaterWlMappingCodec.SealSector(mappingSector);
+        }
 
         return new WaterMagicRepairPlan
         {

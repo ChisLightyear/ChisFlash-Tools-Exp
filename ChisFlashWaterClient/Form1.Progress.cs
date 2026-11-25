@@ -298,15 +298,31 @@ public partial class Form1
     }
 
     private void CompleteLegacyGbaRomProgress(int romBytes, (TimeSpan Erase, TimeSpan Program) timing)
+        => CompleteGbaRomProgress(romBytes, romBytes, timing.Erase, timing.Program);
+
+    private void CompleteGbaRomProgress(WaterDeviceProtocol protocol)
+    {
+        var timing = protocol.RomTiming;
+        CompleteGbaRomProgress(timing.ImageBytes, timing.ProgrammedBytes, timing.Erase, timing.Program);
+    }
+
+    private void CompleteGbaRomProgress(long imageBytes, long programmedBytes, TimeSpan erase, TimeSpan program)
     {
         CompleteMeasuredProgress(appendSummaryLog: false);
-        if (timing.Erase > TimeSpan.Zero)
-            AppendLog(Tf("log", "legacy_rom_erase_time", "ROM erase took {0:F3} s.", timing.Erase.TotalSeconds));
+        if (erase > TimeSpan.Zero)
+            AppendLog(Tf("log", "legacy_rom_erase_time", "ROM erase took {0:F3} s.", erase.TotalSeconds));
 
-        double seconds = timing.Program.TotalSeconds;
-        AppendLog(Tf("log", "legacy_rom_program_speed",
-            "ROM programming took {0:F3} s, average speed {1:F3} KiB/s.",
-            seconds, romBytes / Math.Max(0.001, seconds) / 1024.0));
+        if (imageBytes == 0) return;
+        double seconds = program.TotalSeconds;
+        double speed = imageBytes / Math.Max(0.001, seconds) / 1024.0;
+        if (programmedBytes == 0)
+            AppendLog(Tf("log", "rom_program_all_blank", "Programming took {0:F3} s. All sectors were FF and were skipped.", seconds));
+        else if (programmedBytes == imageBytes)
+            AppendLog(Tf("log", "legacy_rom_program_speed", "ROM programming took {0:F3} s, average speed {1:F3} KiB/s.", seconds, speed));
+        else
+            AppendLog(Tf("log", "rom_program_image_speed",
+                "ROM programming took {0:F3} s, average {1:F3} KiB/s over the {2} image range ({3} programmed).",
+                seconds, speed, FormatMiBSize(imageBytes), FormatMiBSize(programmedBytes)));
     }
 
     private void AbortMeasuredProgress()

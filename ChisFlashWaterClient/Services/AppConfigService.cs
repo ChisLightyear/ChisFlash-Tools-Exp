@@ -8,7 +8,12 @@ public static class AppConfigService
     private const string PathsGbcSection = "paths_gbc";
     private const string BurnSection = "burn";
 
+#if CLIENT_SINGLE_EXE
+    internal static string ConfigPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChisFlashWaterClient", ConfigFileName);
+#else
     private static string ConfigPath => Path.Combine(AppContext.BaseDirectory, ConfigFileName);
+#endif
 
     public static string LoadLastProgrammerPort() => IniDocument.Load(ConfigPath).Get(UiSection, "last_programmer_port", string.Empty);
 

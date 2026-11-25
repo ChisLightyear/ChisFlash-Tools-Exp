@@ -11,9 +11,21 @@ public static class GbaCoverCatalog
         string directory;
         try
         {
-            directory = string.IsNullOrWhiteSpace(preferredDirectory)
-                ? Path.Combine(AppContext.BaseDirectory, "covers")
-                : Path.GetFullPath(preferredDirectory.Trim());
+            if (string.IsNullOrWhiteSpace(preferredDirectory))
+            {
+#if CLIENT_SINGLE_EXE
+                // 私有封面放在用户运行的 EXE 旁边。
+                string baseDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+#else
+                string baseDirectory = AppContext.BaseDirectory;
+#endif
+                directory = Path.Combine(baseDirectory, "covers");
+                Directory.CreateDirectory(directory);
+            }
+            else
+            {
+                directory = Path.GetFullPath(preferredDirectory.Trim());
+            }
         }
         catch
         {

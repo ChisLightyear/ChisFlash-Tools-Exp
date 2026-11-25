@@ -231,7 +231,7 @@ public partial class Form1
         replacementItem.GbcDedicatedSaveAllocationOverride = selectedRow.GbcDedicatedSaveAllocationOverride;
         if (SupportsGbaCardMode() && IsGbaConversionDraft() && entry is not null)
         {
-            gbaKeepCurrentGame!.Checked = false;
+            gbaIncludeCartGameInDraft = false;
             selectedRow.CartEntry = null;
             pendingImportItems.Add(replacementItem);
         }
@@ -295,8 +295,29 @@ public partial class Form1
             RequestActiveBurnCancellation();
             return;
         }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_write_invalid", "The directory is invalid. Single-game and new multicart writes are unavailable."));
-        if (HasPendingGbaWorkspaceClear() &&
+        if (!IsFcWorkspaceActive && !HasActiveMixWorkspace && GetSelectedPortName() is not null &&
+            !EnsureCurrentScanIsWritable(out string reason))
+            throw new InvalidOperationException(reason);
+        if ((SupportsGbaCardMode() || IsChisFlash10Mode()) && HasActiveScanResult() &&
+            (currentScanResult!.Geometry.DeviceSizeBytes <= 0 || currentScanResult.Geometry.SectorSizeBytes <= 0 ||
+             currentScanResult.Geometry.IsCfiWindowBlank))
+        {
+            await BurnWithManualGbaLayoutAsync();
+            return;
+        }
+        await ApplyQueueActionAsync();
+    }
+
+    private async Task ApplyQueueActionAsync()
+    {
+        if (gbaDraftMenu is not null && !ReferenceEquals(gbaAcknowledgedMenuOverwrite, currentScanResult) &&
+            GetSingleGameAtRisk() is { } head)
+        {
+            var scan = currentScanResult;
+            if (!await ConfirmSingleGameExportAsync(head) || !ReferenceEquals(scan, currentScanResult)) return;
+            gbaAcknowledgedMenuOverwrite = scan;
+        }
+        if (HasPendingGbaWorkspaceClear() && gbaDraftMenu is null &&
             (IsChisFlash10Mode() ? chisFlash10Rom is null : gbaSingleRom is null && pendingImportItems.Count == 0))
         { await BurnEmptySingleGbaWorkspaceAsync(); return; }
         if ((SupportsGbaCardMode() || IsChisFlash10Mode()) && !HasGbaListMenu() && HasPendingGbaHeadRemoval() &&
@@ -316,7 +337,15 @@ public partial class Form1
             await SelectGbaMenuAsync();
             if (!HasGbaListMenu()) return;
         }
-        if (IsGbaConversionDraft()) { await BurnGbaConversionAsync(); return; }
+        if (SupportsGbaCardMode() && HasGbaListMenu() && !UsesWlTargetPlanningMode(GetSelectedBurnProfileMode()) &&
+            workspaceRows.Any(row => row.CartEntry?.WlRecord is { } record &&
+                !record.PhysicalBuckets.SequenceEqual(Enumerable.Range(row.CartEntry.StartBucket, record.LogicalBucketCount))))
+        {
+            await BurnGbaConversionAsync(repackMappedGames: true);
+            return;
+        }
+        if (IsGbaConversionDraft() && (workspaceRows.Count > 0 || gbaIncludeCartGameInDraft))
+        { await BurnGbaConversionAsync(); return; }
         if (IsChisFlash10Mode()) { await HandleChisFlash10PrimaryActionAsync(); return; }
         if (IsGbcProfileUnselected()) { labelStatus.Text = T("gbc_profile", "choose", "Choose cartridge type"); return; }
         if (IsGbcRawImageMode()) { await HandleGbcImagePrimaryActionAsync(); return; }
@@ -2531,7 +2560,15 @@ public partial class Form1
     private async Task RepairMissingMenuAsync()
     {
         EnsureGbaMulticartSupported();
-        if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
+        if (CanManageChm1()) { await InstallChm1MenuAsync(allowEmptyDirectory: true); return; }
+        if (currentScanResult is { IsBeggarMaxGbcMode: false, MenuConfig.IsDetected: false })
+        {
+            if (UsesSelectedWaterLinkTargetMode())
+                await UpdateWaterLinkMenuAsync(rebuildEmptyDirectory: !currentScanResult.WlMapping.IsDetected &&
+                    !currentScanResult.Games.Any(game => !game.IsMenu && game.StartBucket > 0));
+            else await UpdateLegacyMenuAsync();
+            return;
+        }
         MissingMenuActionMode missingMenuActionMode = GetMissingMenuActionMode();
         if (missingMenuActionMode == MissingMenuActionMode.None && !CanRepairMenuCurrentScan(out string reason))
         {
@@ -2980,33 +3017,7 @@ public partial class Form1
             targetMask = 0x03;
         }
         int targetCount = CountPpbTargets(targetMask);
-        int contiguousMask = (1 << targetCount) - 1;
-        if (targetCount <= 0 || targetMask != contiguousMask)
-        {
-            AppendLog(Tf(
-                "error",
-                "erase_entire_nor_target_mask_invalid",
-                "The detected NOR target mask 0x{0:X} is not a contiguous layout, so full erase was blocked.",
-                targetMask));
-            return;
-        }
-
-        const int logicalTargetSizeBytes = 128 * 1024 * 1024;
-        int deviceSizeBytes = scanSnapshot.Geometry.DeviceSizeBytes;
-        long targetCoverageBytes = (long)targetCount * logicalTargetSizeBytes;
-        bool targetCoverageMatches = targetCount == 1
-            ? deviceSizeBytes <= logicalTargetSizeBytes
-            : deviceSizeBytes == targetCoverageBytes;
-        if (!useGbcErase && !targetCoverageMatches)
-        {
-            AppendLog(Tf(
-                "error",
-                "erase_entire_nor_target_capacity_mismatch",
-                "The detected capacity ({0} MiB) does not match {1} NOR erase target(s), so full erase was blocked.",
-                deviceSizeBytes / (1024 * 1024),
-                targetCount));
-            return;
-        }
+        int deviceSizeBytes = Math.Max(0, scanSnapshot.Geometry.DeviceSizeBytes);
 
         string detectedDescription = BuildPpbDetectedTargetDescription(scanSnapshot, targetCount);
         int capacityMiB = deviceSizeBytes / (1024 * 1024);
@@ -3244,7 +3255,7 @@ public partial class Form1
             if(fcWorkspace!.Snapshot is null)await fcWorkspace.ScanAsync();
             await fcWorkspace.RebuildCardConfigurationAsync();return;
         }
-        if (currentScanResult?.IsChm1 == true)
+        if (CanManageChm1())
         {
             await InstallChm1MenuAsync(allowEmptyDirectory: true);
             return;
@@ -3255,12 +3266,12 @@ public partial class Form1
                 scan.WlMapping.LegacyVersionDetected || scan.WlMapping.Header.Magic == WaterWlMappingCodec.Magic ||
                 !scan.Games.Any(game => !game.IsMenu && game.StartBucket > 0)))
             {
-                await UpdateWaterLinkMenuAsync(rebuildEmptyDirectory: true);
+                await UpdateWaterLinkMenuAsync(rebuildEmptyDirectory: !scan.WlMapping.IsDetected || scan.WlMapping.RecordCount == 0);
                 return;
             }
-            if (CanInstallLegacyCurrentScan(out _))
+            if (!UsesSelectedMagicTargetMode())
             {
-                await RepairMissingMenuAsync();
+                await UpdateLegacyMenuAsync();
                 return;
             }
         }
@@ -3316,7 +3327,7 @@ public partial class Form1
         }
 
         bool usesWlLayout = actionMode == MenuUpdateActionMode.UpdateWaterLinkMenu;
-        if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(dialog.FileName); return; }
+        if (CanManageChm1()) { await InstallChm1MenuAsync(dialog.FileName, allowEmptyDirectory: true); return; }
         try
         {
             _ = LoadMenuRomForUpdate(dialog.FileName, usesWlLayout, out _);
@@ -3634,6 +3645,14 @@ public partial class Form1
                 "Clear the config area?\n\nThe first 4 MiB currently contains:\n{0}\n\nYes: clear current itemlist/WL mapping, fully erase and rewrite the head 4 MiB, then flash a fresh empty WL Magic menu.\nNo: inherit the current config area, preserve the current NS menu covers, update the menu with its bundled background, and rewrite the inherited itemlist/status/WL mapping.\nCancel: do nothing.\n\nWriting the menu will overwrite the head-area game above.",
                 headAreaGame.Title) + customMenuHint;
 
+        if (!scanSnapshot.MenuConfig.IsDetected && scanSnapshot.WlMapping is { IsDetected: true, RecordCount: > 0 } mapping)
+        {
+            clearConfigMessage = ShellText(
+                $"已读到 {mapping.RecordCount} 条 WL 游戏映射。是否清空这些记录？\n\n否：按映射重建游戏列表，保留原游戏的物理块顺序。\n是：清空目录和映射，写入空菜单。\n取消：退出。\n\n重建将写入头部菜单和配置区。",
+                $"Found {mapping.RecordCount} WL game mappings. Clear these records?\n\nNo: rebuild the game list from the mappings and keep each game's physical block order.\nYes: clear the directory and mappings and install an empty menu.\nCancel: exit.\n\nRebuilding writes the menu and configuration in the head area.") + customMenuHint;
+            if (headAreaGame is not null)
+                clearConfigMessage += ShellText($"\n头部游戏《{headAreaGame.Title}》会被覆盖。", $"\nThe game at address zero ({headAreaGame.Title}) will be overwritten.");
+        }
         DialogResult clearConfigConfirm = rebuildEmptyDirectory
             ? MessageBox.Show(this, EmptyMenuDirectoryConfirmation(headAreaGame),
                 T("dialog", "force_rebuild_menu_confirm_title", "Rebuild Menu"),
@@ -3849,6 +3868,8 @@ public partial class Form1
             updatePlan.MenuConfig.ItemCount,
             updateLegacySaveAreaStart - 1,
             updateLegacySaveAreaStart) + BuildCustomMenuSelectionHint(customMenuRomPath, usesWlLayout: false);
+        if (!scanSnapshot.MenuConfig.IsDetected && GetHeadAreaGame() is { } game)
+            message += ShellText($"\n地址 0 处的游戏《{game.Title}》将被覆盖。", $"\nThe game at address zero ({game.Title}) will be overwritten.");
 
         DialogResult confirm = MessageBox.Show(
             this,
@@ -3900,6 +3921,15 @@ public partial class Form1
         bool clearConfigArea = false,
         string? customMenuRomPath = null)
     {
+        // WL 目录按固定布局编码。实机擦写仍使用原扫描结果中的物理扇区大小。
+        int capacity = scanSnapshot.Geometry.DeviceSizeBytes;
+        if (capacity <= 0 || scanSnapshot.Geometry.IsCfiWindowBlank)
+        {
+            int buckets = Math.Max((int)scanSnapshot.WlMapping.Header.BucketOwnerCount, WaterWlMappingCodec.MinimumBucketCount);
+            buckets = Math.Max(buckets, scanSnapshot.Games.Select(game => game.EndBucket + 1).DefaultIfEmpty(0).Max());
+            capacity = checked(buckets * WaterCartScanner.BucketSizeBytes);
+        }
+        scanSnapshot = scanSnapshot.WithWriteGeometry(capacity, WaterWlMappingCodec.SectorSize);
         byte[] menuRomBytes = LoadMenuRomForUpdate(customMenuRomPath, usesWlLayout: true, out string menuRomPath);
 
         if (clearConfigArea)
@@ -3908,13 +3938,17 @@ public partial class Form1
                 menuRomBytes,
                 menuRomPath,
                 BuildEmptyWaterLinkMenuConfig(),
-                [], WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
+                [], scanSnapshot.WlMapping is { IsDetected: true, Header.BucketOwnerCount: > 0 } mapping
+                    ? mapping.Header.BucketOwnerCount : WaterWlMappingCodec.GetBucketCount(scanSnapshot.Geometry.DeviceSizeBytes),
                 WaterWlMappingCodec.IsChimeraConfiguration(scanSnapshot));
         }
 
-        if (CanRepairCurrentScan(out _))
+        bool rebuildFromMapping = !scanSnapshot.MenuConfig.IsDetected && scanSnapshot.WlMapping is { IsDetected: true, RecordCount: > 0 };
+        if (rebuildFromMapping || CanRepairCurrentScan(out _))
         {
-            WaterMagicRepairPlan repairPlan = WaterMagicUpgradeBuilder.BuildRepairPlan(scanSnapshot);
+            WaterMagicRepairPlan repairPlan = rebuildFromMapping
+                ? WaterMagicUpgradeBuilder.BuildRepairPlanFromMappingOnly(scanSnapshot)
+                : WaterMagicUpgradeBuilder.BuildRepairPlan(scanSnapshot);
             byte[] headAreaImage = WaterMagicUpgradeBuilder.BuildHeadAreaImage(
                 menuRomBytes,
                 repairPlan.RepairedMenuConfig,
@@ -4097,10 +4131,16 @@ public partial class Form1
 
         if (!scanSnapshot.MenuConfig.IsDetected)
         {
-            throw new InvalidOperationException(T(
-                "error",
-                "update_menu_requires_existing_menu",
-                "No menu config was detected. Use 'Repair Menu' first."));
+            int sector = scanSnapshot.Geometry.SectorSizeBytes > 0 ? scanSnapshot.Geometry.SectorSizeBytes : WaterWlMappingCodec.SectorSize;
+            var install = WaterLegacyMenuRepairBuilder.BuildInstallPlan(menuRomBytes,
+                scanSnapshot.WithWriteGeometry(scanSnapshot.Geometry.DeviceSizeBytes, sector),
+                IsBatteryPresentForSelectedMode(GetSelectedBurnProfileMode()));
+            return new LegacyMenuUpdatePlan
+            {
+                MenuConfig = install.InstalledMenuConfig, HeadAreaImage = install.HeadAreaImage,
+                MenuRomPath = menuRomPath, LayoutSource = install.LayoutSource,
+                SupportsCovers = GbaMenuRomService.SupportsCovers(menuRomBytes),
+            };
         }
 
         List<MenuItemConfigInfo> clonedItems = scanSnapshot.MenuConfig.Items
@@ -4157,16 +4197,6 @@ public partial class Form1
         {
             menuRomBytes = GbaMenuRomService.PrepareCoverMenuRom(menuRomBytes);
         }
-        else if (!TryResolveMenuBackgroundRegion(menuRomBytes, usesWlLayout, out int backgroundOffset) ||
-                 menuRomBytes
-                     .AsSpan(backgroundOffset, BackgroundImageEncoder.Width * BackgroundImageEncoder.Height)
-                     .ContainsAnyInRange((byte)BackgroundImageEncoder.MaxBackgroundColors, byte.MaxValue))
-        {
-            throw new InvalidOperationException(T(
-                "error",
-                "replace_menu_file_invalid_layout",
-                "The selected file is not a compatible menu ROM for the current layout."));
-        }
 
         return menuRomBytes;
     }
@@ -4203,7 +4233,7 @@ public partial class Form1
 
     private async Task RepairMagicMetadataAsync()
     {
-        if (currentScanResult?.IsChm1 == true) { await InstallChm1MenuAsync(); return; }
+        if (CanManageChm1()) { await InstallChm1MenuAsync(allowEmptyDirectory: true); return; }
         if (!CanRepairCurrentScan(out string reason))
         {
             AppendLog(reason);
@@ -4383,7 +4413,7 @@ public partial class Form1
         sectorBatch.Add(((uint)upgradePlan.MigratedMenuConfig.Status.StatusAddress, upgradePlan.StatusSector, statusLabel));
         sectorBatch.Add(((uint)WaterWlMappingCodec.Offset, upgradePlan.MappingSector, wlMappingLabel));
         RewriteNorSectorBatch(protocol, sectorBatch, scanResult.Geometry, programmerKind);
-        CompleteMeasuredProgress(T("ui", "upgrade_magic", "Upgrade Magic"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private byte[] UpdateWaterLinkMenuOnDevice(
@@ -4443,7 +4473,7 @@ public partial class Form1
         }
 
         RewriteNorSectorBatch(protocol, sectorBatch, scanResult.Geometry, programmerKind);
-        CompleteMeasuredProgress(progressTitle);
+        CompleteGbaRomProgress(protocol);
         return headAreaImage;
     }
 
@@ -4572,7 +4602,7 @@ public partial class Form1
             CountMenuHeadWriteUnits(headAreaImage, scanResult.Geometry, updatePlan.MenuConfig.Status, false, legacyHeadAreaLabel));
         AppendLog(Tf("log", "use_gba_menu_rom", "Use GBA menu ROM: {0}", updatePlan.MenuRomPath));
         RewriteMenuHeadArea(protocol, programmerKind, scanResult.Geometry, headAreaImage, updatePlan.MenuConfig.Status, false, legacyHeadAreaLabel);
-        CompleteMeasuredProgress(T("ui", "update_menu", "更新菜单"));
+        CompleteGbaRomProgress(protocol);
         return headAreaImage;
     }
 
@@ -4637,7 +4667,7 @@ public partial class Form1
             CountRewriteRangeProgressWorkBytes(rewriteRange, scanResult.Geometry),
             CountRewriteRangeProgressUnits(rewriteRange, scanResult.Geometry));
         RewriteNorRange(protocol, (uint)rewriteStart, rewriteRange, scanResult.Geometry, menuBackgroundLabel, programmerKind);
-        CompleteMeasuredProgress(T("ui", "update_menu_background", "Update Background"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private async Task<bool> UpdateGbaMenuCoversAsync(
@@ -4776,7 +4806,7 @@ public partial class Form1
             sectors.Sum(sector => CountRewriteSectorProgressWorkBytes(sector.Data, scanResult.Geometry)),
             sectors.Sum(sector => CountRewriteSectorProgressUnits(sector.Data)));
         RewriteNorSectorBatch(protocol, sectors, scanResult.Geometry, programmerKind);
-        CompleteMeasuredProgress(T("ui", "save_cover_changes", "Save Covers"));
+        CompleteGbaRomProgress(protocol);
         return currentMenuArea;
     }
 
@@ -4913,7 +4943,7 @@ public partial class Form1
             CountMenuHeadWriteUnits(installPlan.HeadAreaImage, scanResult.Geometry, installPlan.InstalledMenuConfig.Status, true, magicHeadAreaLabel));
         AppendLog(Tf("log", "use_magic_menu_rom", "Use magic menu ROM: {0}", menuRomPath));
         RewriteMenuHeadArea(protocol, programmerKind, scanResult.Geometry, installPlan.HeadAreaImage, installPlan.InstalledMenuConfig.Status, true, magicHeadAreaLabel);
-        CompleteMeasuredProgress(T("ui", "repair_menu", "Repair Menu"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private void InstallLegacyMenuOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult, WaterLegacyMenuInstallPlan installPlan, string menuRomPath)
@@ -4933,7 +4963,7 @@ public partial class Form1
             CountMenuHeadWriteUnits(installPlan.HeadAreaImage, scanResult.Geometry, installPlan.InstalledMenuConfig.Status, false, legacyHeadAreaLabel));
         AppendLog(Tf("log", "use_legacy_menu_rom", "Use legacy menu ROM: {0}", menuRomPath));
         RewriteMenuHeadArea(protocol, programmerKind, scanResult.Geometry, installPlan.HeadAreaImage, installPlan.InstalledMenuConfig.Status, false, legacyHeadAreaLabel);
-        CompleteMeasuredProgress(T("ui", "repair_menu", "Repair Menu"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private void RepairMagicMetadataOnDevice(
@@ -4981,7 +5011,7 @@ public partial class Form1
             ],
             scanResult.Geometry,
             programmerKind);
-        CompleteMeasuredProgress(T("ui", "repair_magic", "Repair Magic"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private void RepairLegacyMenuOnDevice(string portName, ProgrammerKind programmerKind, WaterCartScanResult scanResult, WaterLegacyMenuRepairPlan repairPlan)
@@ -5018,7 +5048,7 @@ public partial class Form1
             ],
             scanResult.Geometry,
             programmerKind);
-        CompleteMeasuredProgress(T("ui", "repair_legacy_menu", "Repair Legacy Menu"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private void ApplyScanAfterNorErase(WaterCartScanResult scan, bool entireNor)
@@ -5082,7 +5112,7 @@ public partial class Form1
             (long)sectorSize * sectorCount,
             sectorCount);
         ProgramNorSegments(protocol, programmerKind, scanResult.Geometry, [segment]);
-        CompleteMeasuredProgress(T("ui", "erase_config", "Erase Config"));
+        CompleteGbaRomProgress(protocol);
     }
 
     private void EraseEntireNorOnDevice(
@@ -5114,17 +5144,8 @@ public partial class Form1
                 }
 
                 int targetStartBytes = targetIndex * LogicalTargetSizeBytes;
-                int targetLengthBytes = targetCount == 1
-                    ? deviceSizeBytes
-                    : Math.Min(LogicalTargetSizeBytes, deviceSizeBytes - targetStartBytes);
-                if (targetLengthBytes <= 0)
-                {
-                    throw new InvalidOperationException(Tf(
-                        "error",
-                        "erase_entire_nor_target_range_invalid",
-                        "NOR target {0} is outside the detected capacity.",
-                        targetIndex));
-                }
+                // 擦除命令按实际目标掩码发出，容量只用于进度显示。
+                int targetLengthBytes = targetCount == 1 ? Math.Max(0, deviceSizeBytes) : LogicalTargetSizeBytes;
 
                 AppendLog(Tf(
                     "log",
@@ -5908,7 +5929,7 @@ public partial class Form1
                 : $"{label} S{sectorIndex:00}";
             sectors.Add((
                 startAddress + (uint)offset,
-                rangeData.AsSpan(offset, sectorSize).ToArray(),
+                rangeData.AsSpan(offset, Math.Min(sectorSize, rangeData.Length - offset)).ToArray(),
                 sectorLabel));
         }
 
@@ -5990,29 +6011,45 @@ public partial class Form1
             ? geometry.SectorSizeBytes
             : WaterWlMappingCodec.SectorSize;
 
-        foreach (var sector in sectors)
+        if (sectors.Any(part => part.Address % sectorSize != 0 || part.Data.Length != sectorSize))
         {
-            byte[] data = sector.Data;
-            string label = sector.Label;
-            if (data.Length != sectorSize)
+            // 目录扇区与物理擦除扇区大小可以不同，只补读本次写入没有覆盖的部分。
+            var parts = new Dictionary<uint, List<(int Offset, ReadOnlyMemory<byte> Data, string Label)>>();
+            foreach (var part in sectors)
             {
-                throw new InvalidOperationException(Tf("error", "sector_data_size_invalid", "{0} data size is invalid.", label));
+                for (int pos = 0; pos < part.Data.Length;)
+                {
+                    uint address = checked(part.Address + (uint)pos);
+                    int offset = (int)(address % sectorSize);
+                    uint start = address - (uint)offset;
+                    int length = Math.Min(sectorSize - offset, part.Data.Length - pos);
+                    if (!parts.TryGetValue(start, out var pieces)) parts[start] = pieces = [];
+                    pieces.Add((offset, part.Data.AsMemory(pos, length), part.Label));
+                    pos += length;
+                }
             }
-
-            if (geometry.SectorSizeBytes > 0 && geometry.SectorSizeBytes != data.Length)
+            List<(uint Address, byte[] Data, string Label)> merged = [];
+            foreach (var (address, pieces) in parts)
             {
-                throw new InvalidOperationException(Tf(
-                    "error",
-                    "nor_sector_size_mismatch",
-                    "NOR sector size does not match the target data size: {0} / {1}",
-                    geometry.SectorSizeBytes,
-                    data.Length));
+                int covered = 0;
+                foreach (var piece in pieces.OrderBy(p => p.Offset))
+                {
+                    if (piece.Offset > covered) break;
+                    covered = Math.Max(covered, piece.Offset + piece.Data.Length);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] data = covered == sectorSize ? new byte[sectorSize] :
+                    ReadRomRangeFromDevice(protocol, programmerKind, address, sectorSize);
+                foreach (var piece in pieces) piece.Data.CopyTo(data.AsMemory(piece.Offset));
+                merged.Add((address, data, pieces[0].Label));
             }
+            sectors = merged;
         }
 
         ushort bufferWriteBytes = GetEffectiveBufferWriteBytes(geometry);
         BeginMeasuredProgressPhase(sectors.Count, true, T("value", "progress_phase_erase", "Erase"));
 
+        long erasePhaseStart = Stopwatch.GetTimestamp();
         int selectedBucket = -1;
         try
         {
@@ -6042,9 +6079,11 @@ public partial class Form1
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
+            protocol.RomTiming.FinishErase(erasePhaseStart);
             int sectorsToWrite = sectors.Count(sector => !IsAllBytes(sector.Data, 0xFF));
             if (sectorsToWrite > 0)
                 BeginMeasuredProgressPhase(sectorsToWrite, false, T("value", "progress_phase_write", "Write"));
+            long writePhaseStart = Stopwatch.GetTimestamp();
             foreach (var sector in sectors)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -6075,6 +6114,7 @@ public partial class Form1
                     BuildProgressDetailText(label, "progress_phase_write", "Write"));
                 cancellationToken.ThrowIfCancellationRequested();
             }
+            protocol.RomTiming.FinishProgram(writePhaseStart, (long)sectors.Count * sectorSize, (long)sectorsToWrite * sectorSize);
         }
         catch (OperationCanceledException)
         {

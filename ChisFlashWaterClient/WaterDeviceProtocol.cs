@@ -12,6 +12,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     private readonly SerialPort port;
     private readonly Action<int>? transferObserver;
+    internal GbaRomTiming RomTiming { get; } = new();
     public byte? LastAckByte { get; private set; }
     public bool LastAckTimedOut { get; private set; }
     private bool lastReadTimedOut;
@@ -471,7 +472,7 @@ public sealed class WaterDeviceProtocol : IDisposable
 
     private void SendPackage(byte[] bytes)
     {
-        if (gbFlash is not null) throw new NotSupportedException($"GBFlash 不提供水线专用命令 0x{bytes[0]:X2}。");
+        if (gbFlash is not null) throw new NotSupportedException(ClientText.Tf("client", "gbflash_waterlink_command", "GBFlash does not support WaterLink command 0x{0:X2}.", bytes[0]));
         lastReadTimedOut = false;
         IReadOnlyList<byte[]> frames = LegacyCommandFraming.BuildFrames(bytes, carbonateFlashGbxCompatibility);
         for (int index = 0; index < frames.Count; index++)

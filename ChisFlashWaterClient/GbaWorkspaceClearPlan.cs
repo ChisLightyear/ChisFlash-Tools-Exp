@@ -14,7 +14,7 @@ public static class GbaWorkspaceClearPlan
 
     internal static (uint Address, int SizeBytes) PlanHeadErase(WaterCartScanResult scan)
     {
-        if (scan.IsNorProbeOnly || scan.MenuConfig.IsDetected || scan.WlMapping.IsDetected ||
+        if (scan.MenuConfig.IsDetected || scan.WlMapping.IsDetected ||
             scan.Games.Any(game => game.IsMenu) || !scan.Games.Any(game => game.StartBucket == 0 && !game.IsMenu))
             throw new InvalidOperationException(ClientText.T("client", "clear_analyze_first",
                 "Analyze the cartridge contents before clearing its games."));
@@ -36,7 +36,7 @@ public static class GbaWorkspaceClearPlan
             if (game.IsMenu || !scan.Entries.Contains(game) || bucket <= 0 ||
                 occupied.Contains(bucket) || address % sectorSize != 0 || address + sectorSize > scan.Geometry.DeviceSizeBytes)
                 throw new InvalidOperationException(ClientText.Tf("client", "game_head_erase_range_invalid",
-                    "无法独立擦除「{0}」的启动头，请重新分析卡带并核对游戏布局。", game.Title));
+                    "Cannot erase the boot header for {0} separately. Analyze the cartridge again and check the game layout.", game.Title));
             addresses.Add((uint)address);
         }
         return addresses.ToArray();
@@ -45,7 +45,7 @@ public static class GbaWorkspaceClearPlan
     private static int GetHeadEraseSectorSize(NorGeometryInfo geometry)
     {
         // GBA CFI 将最小扇区大小记在 SectorSizeBytes，混合几何不能用该值确认首扇区大小。
-        if (geometry.IsCfiWindowBlank || geometry.SectorSizeBytes <= 0 ||
+        if (geometry.SectorSizeBytes <= 0 ||
             geometry.SectorSizeBytes > WaterCartScanner.BucketSizeBytes ||
             geometry.SectorSizeBytes > geometry.DeviceSizeBytes ||
             geometry.RegionCount != 1 && geometry.LargestSectorSizeBytes != geometry.SectorSizeBytes)
@@ -92,8 +92,13 @@ public static class GbaWorkspaceClearPlan
         int start = hasSystemArea ? WaterCartScanner.BucketSizeBytes : 0;
         if (start > capacity || start % sector != 0)
             throw new InvalidOperationException(ClientText.T("client", "system_sector_unaligned", "The menu system area is not aligned to NOR sectors. The game area cannot be cleared."));
-        int menuEnd = hasSystemArea ? checked(scan.MenuConfig.Status.StatusAddress + scan.MenuConfig.Status.SectorSize) : 0;
-        if (hasSystemArea && (!scan.MenuConfig.IsDetected || menuEnd <= 0 || menuEnd > start || menuEnd % sector != 0))
+        MenuFlashStatusInfo status = scan.MenuConfig.Status;
+        if (hasSystemArea && !scan.MenuConfig.IsDetected)
+            status = scan.WlMapping.IsDetected || scan.IsChm1
+                ? WaterMagicUpgradeBuilder.NormalizeWlStatus(status)
+                : WaterLegacyMenuRepairBuilder.CreateWriteStatus(scan.Geometry, false);
+        int menuEnd = hasSystemArea ? checked(status.StatusAddress + status.SectorSize) : 0;
+        if (hasSystemArea && (menuEnd <= 0 || menuEnd > start || menuEnd % sector != 0))
             throw new InvalidOperationException(ClientText.T("client", "menu_config_bounds_invalid", "The menu and configuration boundaries are invalid. Analyze the cartridge configuration first."));
         bool clearMapping = scan.WlMapping.IsDetected;
         if (clearMapping && (WaterWlMappingCodec.Offset % sector != 0 || WaterWlMappingCodec.SectorSize % sector != 0))

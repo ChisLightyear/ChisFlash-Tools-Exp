@@ -21,12 +21,20 @@ public static class LegacyGbaRomWriter
         Func<long>? startSectorErase = null,
         Action<long, int>? finishSectorErase = null,
         Action<int>? beginErase = null,
-        Action? beginProgram = null)
+        Action? beginProgram = null,
+        (int Capacity, int SectorSize, int BufferSize)? writeLayout = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var (bufferBytes, deviceBytes) = ReadSize(writeWord, readRom);
         // 原版随后通过 gba_isMultiCard 再查询一次容量；1.0V 为单卡，保留相同事务。
         ReadSize(writeWord, readRom);
+        int layoutSector = 0;
+        if (deviceBytes <= 1 && writeLayout is { } layout)
+        {
+            deviceBytes = layout.Capacity > 1 ? layout.Capacity : image.Length;
+            bufferBytes = layout.BufferSize;
+            layoutSector = layout.SectorSize;
+        }
         if (image.Length > deviceBytes) throw new InvalidOperationException(ClientText.T("client", "flash_no_space", "Not enough flash space."));
 
         TimeSpan eraseTime = TimeSpan.Zero;
@@ -40,7 +48,8 @@ public static class LegacyGbaRomWriter
         if (first.Any(value => value != 0xFF))
         {
             long start = Stopwatch.GetTimestamp();
-            int[] sectorAddresses = ReadSectors(writeWord, readRom);
+            int[] sectorAddresses = layoutSector == 0 ? ReadSectors(writeWord, readRom)
+                : Enumerable.Range(0, (image.Length + layoutSector - 1) / layoutSector).Select(i => i * layoutSector).ToArray();
             int last = -1;
             for (int index = 0; index < sectorAddresses.Length; index++)
             {
@@ -68,7 +77,8 @@ public static class LegacyGbaRomWriter
                     status = BitConverter.ToUInt16(readRom(address, 2), 0);
                     delay(20);
                 } while (status != 0xFFFF);
-                int sectorEnd = index + 1 < sectorAddresses.Length ? sectorAddresses[index + 1] : deviceBytes;
+                int sectorEnd = layoutSector > 0 ? sectorAddresses[index] + layoutSector :
+                    index + 1 < sectorAddresses.Length ? sectorAddresses[index + 1] : deviceBytes;
                 finishSectorErase?.Invoke(eraseStart, sectorEnd - sectorAddresses[index]);
             }
             eraseTime += Stopwatch.GetElapsedTime(start);

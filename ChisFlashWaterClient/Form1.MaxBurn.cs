@@ -175,7 +175,6 @@ public partial class Form1
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        EnsureCfiWindowAllowsBurn(initialScan.Geometry);
         if (!clearConfigArea && !allowEmptyWorkspace)
         {
             ValidateBeggarMaxWorkspaceSnapshot(workspaceSnapshot, burnProfileMode, gbcMenuLanguage);

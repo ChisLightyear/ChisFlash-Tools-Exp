@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Buffers.Binary;
 using System.IO.Ports;
 using System.Text;
@@ -24,11 +25,11 @@ internal sealed class GbFlashTransport(SerialPort port, Action<int>? transferObs
         port.Open();
         port.DiscardInBuffer();
         Send([0xA1]);
-        if (port.ReadByte() != 8) throw new IOException("未收到 GBFlash 的 LK 身份响应。");
+        if (port.ReadByte() != 8) throw new IOException(ClientText.T("client", "gbflash_lk_response", "GBFlash did not return the expected LK identification response."));
         byte[] identity = new byte[8];
         ReadExact(identity);
         firmware = BinaryPrimitives.ReadUInt16BigEndian(identity.AsSpan(1, 2));
-        if (identity[0] != (byte)'L') throw new IOException("此串口返回的固件不是 FlashGBX LK。");
+        if (identity[0] != (byte)'L') throw new IOException(ClientText.T("client", "gbflash_lk_firmware", "The firmware on this port did not identify itself as FlashGBX LK."));
         if (firmware >= 12)
         {
             byte[] name = new byte[port.ReadByte()];
@@ -37,11 +38,11 @@ internal sealed class GbFlashTransport(SerialPort port, Action<int>? transferObs
             ReadExact(capabilities);
             supportsCartPower = (capabilities[0] & 1) != 0;
             if (!Encoding.UTF8.GetString(name).Trim('\0', ' ').Equals("GBFlash", StringComparison.OrdinalIgnoreCase))
-                throw new IOException("此串口返回的设备型号不是 GBFlash。");
+                throw new IOException(ClientText.T("client", "gbflash_model", "The device on this port did not identify itself as GBFlash."));
         }
         else if (identity[3] is not (5 or 12 or 13))
         {
-            throw new IOException("无法确认此串口的 GBFlash 板型。");
+            throw new IOException(ClientText.T("client", "gbflash_board", "Could not identify the GBFlash board on this port."));
         }
         port.ReadTimeout = 5000;
     }
@@ -107,7 +108,7 @@ internal sealed class GbFlashTransport(SerialPort port, Action<int>? transferObs
         Prepare(gb);
         int unit = gb ? 1 : 2;
         if (data.Length % unit != 0 || address % unit != 0)
-            throw new InvalidOperationException("GBFlash 总线写入地址和长度须对齐。");
+            throw new InvalidOperationException(ClientText.T("client", "gbflash_bus_alignment", "The GBFlash bus write address and length must be aligned."));
         nextRomTransfer = null;
         var command = new byte[5 + unit];
         command[0] = gb ? (byte)0xB2 : (byte)0xC2;
@@ -134,7 +135,7 @@ internal sealed class GbFlashTransport(SerialPort port, Action<int>? transferObs
         if (gb) SetGbWriteCsPulse(false);
         int unit = gb ? 1 : 2;
         if (address % unit != 0 || data.Length % unit != 0)
-            throw new InvalidOperationException("GBFlash NOR 编程地址和长度须对齐。");
+            throw new InvalidOperationException(ClientText.T("client", "gbflash_nor_alignment", "The GBFlash NOR programming address and length must be aligned."));
         ushort page = (ushort)Math.Min((int)bufferWriteBytes, WriteLimit);
         if (flashConfiguration != (gb, page))
         {
@@ -211,7 +212,7 @@ internal sealed class GbFlashTransport(SerialPort port, Action<int>? transferObs
     {
         Send(command);
         if (ack && port.ReadByte() is int response && response != 1)
-            throw new IOException($"GBFlash 命令 0x{command[0]:X2} 返回 ACK 0x{response:X2}。");
+            throw new IOException(ClientText.Tf("client", "gbflash_ack", "GBFlash command 0x{0:X2} returned ACK 0x{1:X2}.", command[0], response));
     }
 
     private void ReadExact(byte[] data) => ReadExact(data, 0, data.Length);

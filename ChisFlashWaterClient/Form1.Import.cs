@@ -1,4 +1,5 @@
 using ClientText = ChisFlashWaterClient.Services.LocalizedText;
+using System.Diagnostics;
 using System.Globalization;
 using System.Drawing;
 using System.Text;
@@ -152,7 +153,6 @@ public partial class Form1
     private async Task AddPendingRomFilesAsync(IEnumerable<string> filePaths)
     {
         if (SupportsGbaCardMode() && !appendingGbaListGames) { await ImportGbaListFilesAsync(filePaths); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_import_invalid", "A mapping table was found, but the directory is invalid. Games cannot be imported."));
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(filePaths); return; }
         if (IsChisFlash10Mode()) { await AddChisFlash10FilesAsync(filePaths); return; }
         if (IsGbcRawImageMode()) { await AddGbcImageFilesAsync(filePaths); return; }
@@ -459,7 +459,8 @@ public partial class Form1
 
     private void ShowWorkspaceCapacityWarningIfExceeded()
     {
-        if (isAnalyzingQueueImports || currentScanResult is null || IsWorkspaceModificationLocked())
+        if (isAnalyzingQueueImports || currentScanResult is null || IsWorkspaceModificationLocked() ||
+            (SupportsGbaCardMode() && !currentScanResult.MenuConfig.IsDetected && !IsGbaConversionDraft()))
         {
             return;
         }
@@ -719,9 +720,9 @@ public partial class Form1
     private IEnumerable<WaterCartEntry> GetWorkspaceBaseEntries(WaterCartScanResult scanResult)
     {
         if (HasPendingGbaWorkspaceClear() && ReferenceEquals(gbaWorkspaceClearSource, scanResult)) return [];
-        if (SupportsGbaCardMode() && !IsGbaMulticartUnavailable() && !HasGbaListMenu() && !IsGbaDirectoryDamaged())
+        if (SupportsGbaCardMode() && !IsGbaMulticartUnavailable() && !HasGbaListMenu())
             return GetGbaSingleGame() is { } head ? [head] : [];
-        if (IsGbaConversionDraft()) return gbaKeepCurrentGame?.Checked == true && GetGbaSingleGame() is { } single ? [single] : [];
+        if (IsGbaConversionDraft()) return gbaIncludeCartGameInDraft && GetGbaSingleGame() is { } single ? [single] : [];
         IEnumerable<WaterCartEntry> baseEntries = scanResult.Entries
             .Where(entry => !entry.IsMenu);
 
@@ -834,7 +835,9 @@ public partial class Form1
             }
             if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null)
             {
-                gridRow.Cells["AllocSize"].Value = GetCurrentSingleGameLength() > 0 ? FormatMiBSize(GetCurrentSingleGameLength()) : ClientText.T("client", "size_unknown", "Not determined");
+                string allocation = FormatMiBSize(GetGbaPreservationLength());
+                gridRow.Cells["AllocSize"].Value = KnownGbaSourceLength(row.CartEntry) > 0 ? allocation :
+                    ShellText($"预留 {allocation}", $"Reserved {allocation}");
                 gridRow.Cells["SaveType"].Value = ClientText.T("client", "save_unanalyzed", "Not analyzed");
                 gridRow.Cells["PatchStatus"].Value = ClientText.T("client", "keep_pending", "Pending preservation; read and move to the game area when burned");
             }
@@ -1000,9 +1003,7 @@ public partial class Form1
     private bool HasWorkspaceChanges(IReadOnlyList<WorkspaceListRow> workspaceSnapshot)
     {
         if (currentScanResult is null)
-        {
-            return false;
-        }
+            return gbaDraftMenu is not null || workspaceSnapshot.Any(row => row.IsPending);
 
         if (HasPendingGbaWorkspaceClear() || removedGbaGames.Count > 0) return true;
         if (IsGbcFreeWorkspace() &&
@@ -1068,6 +1069,9 @@ public partial class Form1
     }
 
     private bool TryValidateWorkspaceCapacity(IReadOnlyList<WorkspaceListRow> workspaceSnapshot, out string errorMessage)
+        => TryValidateWorkspaceCapacity(workspaceSnapshot, gbaIncludeCartGameInDraft, out errorMessage);
+
+    private bool TryValidateWorkspaceCapacity(IReadOnlyList<WorkspaceListRow> workspaceSnapshot, bool keepCurrent, out string errorMessage)
     {
         errorMessage = string.Empty;
         try
@@ -1081,11 +1085,10 @@ public partial class Form1
         {
             long bytes = 0x400000L + workspaceSnapshot.Where(row => row.PendingItem is not null)
                 .Sum(row => ((GetEstimatedPreparedRomLengthBytes(row.PendingItem!, row.PendingItem!.FileSizeBytes, GetSelectedBurnProfileMode()) + 0x3fffffL) / 0x400000) * 0x400000);
-            if (gbaKeepCurrentGame?.Checked == true)
+            if (keepCurrent)
             {
-                var source = GetGbaSingleGame();
-                bytes += source is not null && (source.FoundInMenuConfig || source.FoundInWlMapping)
-                    ? (long)source.LogicalBucketCount * WaterCartScanner.BucketSizeBytes : Math.Max(0x400000, GetCurrentSingleGameLength());
+                long reserved = GetGbaPreservationLength();
+                bytes += (reserved + 0x3fffff) / 0x400000 * 0x400000;
             }
             // 盖中盖口径：容量读数为 0 时不用它当上限，避免读数失败卡住合卡烧录；
             // 读到正数容量时才做真实的空间边界检查。
@@ -1308,7 +1311,7 @@ public partial class Form1
         await ImportRomFilesAsync(CreateWorkspaceSnapshot());
     }
 
-    private async Task ImportRomFilesAsync(IReadOnlyList<WorkspaceListRow> workspaceSnapshot)
+    private async Task ImportRomFilesAsync(IReadOnlyList<WorkspaceListRow> workspaceSnapshot, bool conversionConfirmed = false)
     {
         if(HasUnreadyPlatformImports(workspaceSnapshot)){AppendLog(ClientText.T("client", "platform_mode_required", "The list contains games for another platform or an unavailable core. Select the matching mode before burning."));return;}
         if (isBusy)
@@ -1366,11 +1369,10 @@ public partial class Form1
         }
 
         bool emptyGbcDirectory = IsGbcFreeWorkspace() && HasGbcFreeMenu() && workspaceSnapshot.Count == 0;
-        EnsureCfiWindowAllowsBurn(currentScanResult!.Geometry);
         bool updatesGbaMenu = HasGbaMenuSelectionChanges(currentScanResult);
         ProgrammerKind programmerKind = GetRequiredSelectedProgrammerKind();
         bool applyWaitcntPatch = workspaceSnapshot.Any(row => row.WaitcntPatchForBurn ?? row.PendingItem?.ApplyWaitcntPatch ?? false) && !IsGbcWorkspaceMode();
-        if (!TryValidateWorkspaceCapacity(workspaceSnapshot, out string capacityErrorMessage))
+        if (!TryValidateWorkspaceCapacity(workspaceSnapshot, !conversionConfirmed && gbaIncludeCartGameInDraft, out string capacityErrorMessage))
         {
             AppendLog(Tf(
                 "log",
@@ -1501,16 +1503,14 @@ public partial class Form1
         if (!eraseGbcMenu && !burnGbcSingle && IsGbcFreeWorkspace()) message += MaxSaveMigrationNotice(workspaceSnapshot);
         if (!IsGbcWorkspaceMode()) message += GbaMappedHeadEraseNotice(currentScanResult);
 
-        DialogResult confirm = MessageBox.Show(
+        if (!conversionConfirmed && MessageBox.Show(
             this,
             message,
             metadataOnly
                 ? T("dialog", "apply_workspace_confirm_title", "Apply Workspace Changes")
                 : T("dialog", "import_rom_confirm_title", "Import ROMs"),
             MessageBoxButtons.OKCancel,
-            MessageBoxIcon.Warning);
-
-        if (confirm != DialogResult.OK)
+            MessageBoxIcon.Warning) != DialogResult.OK)
         {
             return;
         }
@@ -1975,7 +1975,7 @@ public partial class Form1
         cancellationToken.ThrowIfCancellationRequested();
         PrepareWorkspaceImportWriteSegments(plannedImports, pendingPreparations, scanResult.Geometry, cancellationToken);
         uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scanResult, plannedImports.SelectMany(import => import.WriteSegments));
-        if (HasPendingGbaWorkspaceClear() && metadataPlan.StatusSector is { } updatedStatus && headAreaRewritePlan is null)
+        if (scanResult.MenuConfig.IsDetected && HasPendingGbaWorkspaceClear() && metadataPlan.StatusSector is { } updatedStatus && headAreaRewritePlan is null)
         {
             byte[] originalStatus = ReadRomRangeFromDevice(protocol, programmerKind,
                 (uint)metadataPlan.MenuConfig.Status.StatusAddress, updatedStatus.Length);
@@ -2047,7 +2047,7 @@ public partial class Form1
                 headAreaRewritePlan.UsesWlMode,
                 headAreaRewritePlan.HeadAreaLabel,
                 cancellationToken);
-            CompleteMeasuredProgress(operationTitle);
+            CompleteGbaRomProgress(protocol);
             return;
         }
 
@@ -2060,7 +2060,7 @@ public partial class Form1
             T("value", "final_metadata_label", "final metadata"),
             cancellationToken);
 
-        CompleteMeasuredProgress(operationTitle);
+        CompleteGbaRomProgress(protocol);
     }
 
     private long CountWorkspaceMetadataPlanWorkBytes(WorkspaceMetadataPlan metadataPlan, NorGeometryInfo geometry) =>
@@ -2252,16 +2252,24 @@ public partial class Form1
         }
 
         bool preserveConfig = HasPendingGbaWorkspaceClear() && initialScan.MenuConfig.IsDetected;
-        int itemListAddress = preserveConfig ? initialScan.MenuConfig.Status.ItemListAddress : usesWlMode
+        MenuFlashStatusInfo sourceStatus = initialScan.MenuConfig.Status;
+        if (!initialScan.MenuConfig.IsDetected)
+        {
+            sourceStatus = usesWlMode
+                ? WaterMagicUpgradeBuilder.NormalizeWlStatus(new() { LastBootMenuIndex = 0xFFFF })
+                : WaterLegacyMenuRepairBuilder.CreateWriteStatus(initialScan.Geometry,
+                    IsBatteryPresentForSelectedMode(burnProfileMode), gbaDraftMenu?.Length);
+        }
+        int itemListAddress = preserveConfig ? sourceStatus.ItemListAddress : usesWlMode
             ? WaterMagicUpgradeBuilder.WlItemListOffset
-            : initialScan.MenuConfig.Status.ItemListAddress;
+            : sourceStatus.ItemListAddress;
         List<MenuItemConfigInfo> indexedItems = WaterMenuConfigCodec.ReindexItems(finalItems, itemListAddress);
         MenuFlashStatusInfo status = preserveConfig ? ClearWorkspaceLastBootSelection(initialScan.MenuConfig.Status)
-            : CreateWorkspaceStatusForBurn(initialScan.MenuConfig.Status, burnProfileMode);
+            : CreateWorkspaceStatusForBurn(sourceStatus, burnProfileMode);
         if (UsesChm1Mode(burnProfileMode) && !status.BatteryPresent)
             foreach (var item in indexedItems) { item.SaveType = 0; item.SaveIndex = 0; }
 
-        if (!usesWlMode && status.BatteryPresent && !initialScan.IsChm1)
+        if (!usesWlMode && status.BatteryPresent)
         {
             NormalizeLegacyWorkspaceSaveSlots(indexedItems, initialScan.Geometry, status);
         }
@@ -2287,7 +2295,7 @@ public partial class Form1
                 SramBankType = menuConfig.Status.SramBankType,
             });
         }
-        if (!preserveConfig && (UsesChm1Mode(burnProfileMode) || (initialScan.IsChm1 && !usesWlMode && status.BatteryPresent)))
+        if (!preserveConfig && UsesChm1Mode(burnProfileMode))
         {
             menuConfig.Status = Chm1MenuBuilder.CreateStatus(status, indexedItems, usesWlMode, status.BatteryPresent);
         }
@@ -2747,6 +2755,7 @@ public partial class Form1
             sectorCount));
 
         BeginMeasuredProgressPhase(sectorCount, true, BuildProgressDetailText(segment.Label, "progress_phase_erase", "Erase"));
+        long erasePhaseStart = Stopwatch.GetTimestamp();
         if (segment.EraseOnly)
         {
 
@@ -2790,6 +2799,7 @@ public partial class Form1
                     BuildProgressDetailText(segment.Label, "progress_phase_erase", "Erase"));
                 cancellationToken.ThrowIfCancellationRequested();
             }
+            protocol.RomTiming.FinishErase(erasePhaseStart);
             return;
         }
 
@@ -2842,7 +2852,10 @@ public partial class Form1
             cancellationToken.ThrowIfCancellationRequested();
         }
 
+        protocol.RomTiming.FinishErase(erasePhaseStart);
         BeginMeasuredProgressPhase(sectorCount, false, BuildProgressDetailText(segment.Label, "progress_phase_write", "Write"));
+        long writePhaseStart = Stopwatch.GetTimestamp();
+        long programmedBytes = 0;
         for (int sectorIndex = 0; sectorIndex < sectorCount; sectorIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2854,6 +2867,7 @@ public partial class Form1
             {
                 ProgramNorSectorChunks(protocol, programmerKind, sectorAddress, sectorData, bufferWriteBytes,
                     segment.Label, sectorOffset, emitLogs: false, cancellationToken, ref selectedBucket);
+                programmedBytes += sectorData.Length;
 
                 cancellationToken.ThrowIfCancellationRequested();
             }
@@ -2874,6 +2888,7 @@ public partial class Form1
                 BuildProgressDetailText(segment.Label, "progress_phase_write", "Write"));
             cancellationToken.ThrowIfCancellationRequested();
         }
+        protocol.RomTiming.FinishProgram(writePhaseStart, segment.Data.LongLength, programmedBytes);
     }
 
     private void DataGridViewRoms_MouseDown(object? sender, MouseEventArgs e)

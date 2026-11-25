@@ -18,7 +18,11 @@ public partial class Form1
     private static bool IsGbaSingleProfile(BurnProfileMode mode) => GbaSingleProfileOrder.Contains(mode);
 
     private bool IsGbaSingleProfileSelected() => GetSelectedBeggarCartMode() == BeggarCartMode.Gba && IsGbaSingleProfile(GetSelectedBurnProfileMode());
-    private bool IsGbaMulticartUnavailable() => IsGbaSingleGameOnlyHardware() || IsGbaSingleProfileSelected();
+    private bool HasManualGbaProfile() => manualGbaBurnProfile is { PortName: not null } manual &&
+        GetSelectedBeggarCartMode() == BeggarCartMode.Gba &&
+        string.Equals(manual.PortName, GetSelectedPortName(), StringComparison.OrdinalIgnoreCase);
+
+    private bool IsGbaMulticartUnavailable() => IsGbaSingleProfileSelected();
 
     private IEnumerable<BurnProfileModeOption> GetGbaSingleProfileOptions()
     {

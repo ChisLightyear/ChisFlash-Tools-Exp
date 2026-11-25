@@ -1,3 +1,4 @@
+using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 using System.Drawing;
 using System.Windows.Forms;
 using GbaMultiMenuBuilder.Services;
@@ -262,6 +263,7 @@ public partial class Form1
         foreach (ToolStripMenuItem item in new[] { menuUpdateMenu, menuReplaceMenuFile, menuRepairMenu, menuUpdateBackground, menuEraseConfig, menuDetectMagic, menuUnlockPpb, menuPendingGbaCovers, menuDeleteSelectedMapping, menuItemDeleteMapping, menuExportSelectedSave, menuImportSelectedSave, menuClearSelectedSave, menuExportChipSave, menuImportChipSave, menuClearChipSave, menuItemExportSave, menuItemImportSave, menuItemClearSave, menuItemExportChipSaveContext, menuItemImportChipSaveContext, menuItemClearChipSaveContext, menuFragmentTest })
             item.Enabled = false;
         menuEraseEntireNor.Enabled = idle && CanEraseEntireNorCurrentScan(out _);
+        menuUnlockPpb.Enabled = idle && CanUnlockPpbCurrentScan(out _);
         menuRefreshPorts.Enabled = menuExit.Enabled = idle;
         if (menuFcTools is not null) menuFcTools.Visible = false;
         comboBoxBurnProfileMode.Enabled = idle && burnProfileModeOptions.Count > 0;
@@ -492,17 +494,14 @@ public partial class Form1
 
     private void WriteGbcImageOnDevice(string port, WaterCartScanResult expected, byte[] image, CancellationToken cancellationToken)
     {
-        // expected 仅为调用点兼容保留：盖中盖口径下烧录不复用扫描缓存。
-        _ = expected;
         cancellationToken.ThrowIfCancellationRequested();
         using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-        // 盖中盖口径：写入时现场重读 CFI，容量 / 写缓冲 / 逐扇区表全部取自这一次读，
-        // 直接使用本次读数进行原版的镜像空间检查。
-        GbcCfiBurnGeometry burn = ReadGbcBurnGeometry(protocol);
+        // 现场读数为空时，按所选镜像的布局擦写。
+        GbcCfiBurnGeometry burn = ReadGbcBurnGeometry(protocol, expected.Geometry, image.Length);
         // 盖中盖用 CFI 解析出的容量判断是否有足够的 Flash 空间。
         if (image.Length > burn.DeviceSizeBytes)
-            throw new InvalidOperationException("Flash 空间不足：镜像长度超过现场读到的 NOR 容量。");
+            throw new InvalidOperationException(ClientText.T("client", "gb_image_exceeds_nor", "The image is larger than the available NOR capacity."));
 
         IReadOnlyList<(int Offset, int Size)> sectors = burn.Sectors;
         const string title = "GB/GBC NOR";

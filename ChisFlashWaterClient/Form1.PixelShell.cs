@@ -5,7 +5,7 @@ public partial class Form1
     private string? confirmedPort;
     private string lastProgrammerPort = Services.AppConfigService.LoadLastProgrammerPort();
     private string? analyzedPort;
-    private bool WorkspaceUnlocked => analyzedPort is not null && analyzedPort == GetSelectedPortName();
+    private bool WorkspaceUnlocked => HasManualGbaProfile() || analyzedPort is not null && analyzedPort == GetSelectedPortName();
     private bool keepMulticartList;
     private bool analyzingShellCard;
 

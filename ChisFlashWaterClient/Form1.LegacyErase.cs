@@ -17,7 +17,7 @@ public partial class Form1
         for (int target = 0; target < targetCount; target++)
         {
             int start = target * TargetBytes;
-            int length = Math.Min(TargetBytes, scan.Geometry.DeviceSizeBytes - start);
+            int length = targetCount == 1 ? Math.Max(0, scan.Geometry.DeviceSizeBytes) : TargetBytes;
             AppendLog(Tf("log", "erase_entire_nor_target_start",
                 "Erase NOR target {0}: 0x{1:X8}-0x{2:X8}.", target, start, start + length - 1));
 

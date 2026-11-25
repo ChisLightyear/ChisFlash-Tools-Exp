@@ -1283,8 +1283,7 @@ public partial class Form1 : DpiAwareForm
             return fallbackMode;
         if (programmerKind != ProgrammerKind.WaterLink &&
             (GetSelectedBeggarCartMode() == BeggarCartMode.Gb || scanResult?.IsBeggarMaxGbcMode == true))
-            return GetGbcProfileModes(scanResult?.Geometry is { IsCfiWindowBlank: false, DeviceSizeBytes: > 0 } geometry
-                ? geometry.DeviceSizeBytes : GetGbcProfileCapacity()).Contains(fallbackMode)
+            return GetGbcProfileModes().Contains(fallbackMode)
                 ? fallbackMode : BurnProfileMode.GbcUnselected;
         if (IsBeggarCompatibleProgrammer(programmerKind) && scanResult?.IsChm1 == true &&
             (scanResult.WlMapping.IsDetected || !scanResult.MenuConfig.IsDetected || UsesChm1Mode(fallbackMode)))

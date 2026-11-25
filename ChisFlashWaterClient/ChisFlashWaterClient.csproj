@@ -9,11 +9,37 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.26</FileVersion>
-    <InformationalVersion>2.046 r26</InformationalVersion>
+    <FileVersion>2.0.46.27</FileVersion>
+    <InformationalVersion>2.046 r27</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(ClientSingleExe)' == 'true'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <DefineConstants>$(DefineConstants);CLIENT_SINGLE_EXE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(ClientSingleExe)' == 'true'">
+    <Content Include="..\LICENSES\NOTICE.txt" Link="LICENSES\NOTICE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\GbaMultiMenuBuilder\Fc\Mesen-LICENSE" Link="LICENSES\Mesen-LICENSE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\LICENSES\GBA-menu-GPL-3.0.txt" Link="LICENSES\GBA-menu-GPL-3.0.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\LICENSES\Fusion-Pixel-OFL-1.1.txt" Link="LICENSES\Fusion-Pixel-OFL-1.1.txt" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="BundleRuntimeNotices" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(ClientSingleExe)' == 'true'">
+    <ItemGroup>
+      <_CoreRuntime Include="@(ResolvedRuntimePack)" Condition="'%(FrameworkName)' == 'Microsoft.NETCore.App'" />
+      <_DesktopRuntime Include="@(ResolvedRuntimePack)" Condition="'%(FrameworkName)' == 'Microsoft.WindowsDesktop.App'" />
+      <ResolvedFileToPublish Include="@(_CoreRuntime->'%(PackageDirectory)\LICENSE.TXT')" RelativePath="LICENSES\dotnet-runtime-LICENSE.txt" />
+      <ResolvedFileToPublish Include="@(_CoreRuntime->'%(PackageDirectory)\THIRD-PARTY-NOTICES.TXT')" RelativePath="LICENSES\dotnet-runtime-THIRD-PARTY-NOTICES.txt" />
+      <ResolvedFileToPublish Include="@(_DesktopRuntime->'%(PackageDirectory)\LICENSE')" RelativePath="LICENSES\windowsdesktop-runtime-LICENSE.txt" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <Compile Remove="_build_*/**/*.cs" />
@@ -71,14 +97,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="covers\cover_index.csv;covers\cover_overrides.csv" Condition="'$(ExcludeCoverCatalog)' != 'true'">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </Content>
-    <Content Include="covers\original\*.png" Condition="'$(ExcludeCoverCatalog)' != 'true'">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
+    <None Remove="covers\**\*" />
     <Content Include="Assets\lk_multimenu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -108,6 +127,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory Condition="'$(ClientSingleExe)' == 'true'">Never</CopyToPublishDirectory>
     </Content>
     <Content Include="save_types.ini">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -124,4 +144,7 @@
     <Compile Include="..\GbaMultiMenuBuilder\Snes\*.cs" Link="Snes\%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\GbaMultiMenuBuilder\Fc\MesenNesDB.csv" LogicalName="ChisFlash.Fc.MesenNesDB" />
   </ItemGroup>
+  <Target Name="CreateExternalCoverFolder" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)/covers" />
+  </Target>
 </Project>

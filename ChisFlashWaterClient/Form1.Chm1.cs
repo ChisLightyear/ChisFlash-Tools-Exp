@@ -4,8 +4,8 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
-    private bool CanManageChm1() => currentScanResult?.IsChm1 == true &&
-        !currentScanResult.NoCartridgeDetected &&
+    private bool CanManageChm1() => (UsesChm1Mode(GetSelectedBurnProfileMode()) ||
+        !HasManualGbaProfile() && currentScanResult?.IsChm1 == true) &&
         EnsureSelectedPortHasActiveScan(out _) && EnsureCurrentScanIsWritable(out _);
 
     private bool NeedsChm1LayoutChange() => currentScanResult is not null &&
@@ -14,8 +14,12 @@ public partial class Form1
     private async Task InstallChm1MenuAsync(string? suppliedMenuPath = null, bool allowEmptyDirectory = false)
     {
         if (!CanManageChm1()) throw new InvalidOperationException(T("error", "chm1_scan_required", "Read and identify the 01G/02G fragment management cartridge first."));
-        var scan = currentScanResult!;
+        var source = currentScanResult!;
+        int capacity = source.Geometry.DeviceSizeBytes > 0 ? source.Geometry.DeviceSizeBytes :
+            Math.Max(WaterWlMappingCodec.MinimumBucketCount, (int)source.WlMapping.Header.BucketOwnerCount) * Chm1Layout.BucketBytes;
+        var scan = source.WithWriteGeometry(Math.Min(capacity, Chm1Layout.MaxCapacity), Chm1Layout.SectorBytes);
         string portName = GetSelectedPortName()!;
+        var programmerKind = GetRequiredSelectedProgrammerKind();
         bool magic = UsesChm1Mode(GetSelectedBurnProfileMode());
         bool battery = IsBatteryPresentForSelectedMode(GetSelectedBurnProfileMode());
         GbaMenuSelection selection = GetSelectedGbaMenuSelection();
@@ -28,9 +32,8 @@ public partial class Form1
             var prepared = await Task.Run(() =>
             {
                 using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
-                OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
-                const ProgrammerKind programmerKind = ProgrammerKind.BeggarLegacy;
-                bool keepSaveAreaInPlace = Chm1MenuBuilder.CanKeepSaveAreaInPlace(scan, magic, battery);
+                OpenProgrammerProtocol(protocol, programmerKind);
+                bool keepSaveAreaInPlace = !scan.MenuConfig.IsDetected || Chm1MenuBuilder.CanKeepSaveAreaInPlace(scan, magic, battery);
                 byte[] original = keepSaveAreaInPlace
                     ? new byte[Chm1Layout.BucketBytes]
                     : ReadRomRangeFromDevice(protocol, programmerKind, 0, Chm1Layout.BucketBytes);
@@ -58,6 +61,8 @@ public partial class Form1
             });
             string confirmation = prepared.RebuildEmptyDirectory ? EmptyMenuDirectoryConfirmation() : T("dialog", "chm1_menu_confirm",
                 "Update the 01G/02G fragment management menu and layout? Game ROMs are preserved. Existing NOR saves are moved to their corresponding slots.");
+            if (GetHeadAreaGame() is { } headGame)
+                confirmation += ShellText($"\n地址 0 处的游戏《{headGame.Title}》将被覆盖。", $"\nThe game at address zero ({headGame.Title}) will be overwritten.");
             if (MessageBox.Show(this, confirmation,
                     T("ui", "update_menu", "Update Menu"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             const string label = "01G/02G fragment management menu";
@@ -70,16 +75,16 @@ public partial class Form1
             await Task.Run(() =>
             {
                 using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
-                OpenProgrammerProtocol(protocol, ProgrammerKind.BeggarLegacy);
+                OpenProgrammerProtocol(protocol, programmerKind);
                 BeginMeasuredProgress(T("ui", "update_menu", "Update Menu"),
                     segments.Sum(segment => CountRewriteRangeProgressWorkBytes(segment.Data, scan.Geometry)),
                     segments.Sum(segment => CountRewriteRangeProgressUnits(segment.Data, scan.Geometry)));
                 var sectors = segments.SelectMany(segment =>
                     BuildNorSectorWriteBatch(segment.StartAddress, segment.Data, Chm1Layout.SectorBytes, segment.Label)).ToList();
-                RewriteNorSectorBatch(protocol, sectors, scan.Geometry, ProgrammerKind.BeggarLegacy);
-                CompleteMeasuredProgress(T("ui", "update_menu", "Update Menu"));
+                RewriteNorSectorBatch(protocol, sectors, source.Geometry, programmerKind);
+                CompleteGbaRomProgress(protocol);
             });
-            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(scan, headImage: prepared.Head));
+            ApplyScanResult(WaterCartScanner.RebuildCachedGbaMenuResult(source, headImage: prepared.Head));
             AppendLog(T("log", "chm1_menu_done", "01G/02G fragment management menu and save layout updated."));
         }
         finally

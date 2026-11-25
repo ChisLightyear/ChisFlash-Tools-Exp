@@ -25,6 +25,10 @@ static class Program
         };
 
         ApplicationConfiguration.Initialize();
+#if CLIENT_SINGLE_EXE
+        // 用户单独复制 EXE 时也预留本地封面目录。
+        GbaCoverCatalog.FindCatalogDirectory();
+#endif
         Application.Run(new Form1());
     }
 

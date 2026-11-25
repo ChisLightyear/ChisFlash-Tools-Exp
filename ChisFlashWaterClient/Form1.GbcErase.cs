@@ -14,8 +14,7 @@ public partial class Form1
         WaterCartScanResult scan)
     {
         int capacity = scan.Geometry.DeviceSizeBytes;
-        if (capacity <= 0 || capacity > 512 * 1024 * 1024)
-            throw new ArgumentOutOfRangeException(nameof(capacity));
+        capacity = Math.Max(0, capacity);
 
         using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
         OpenProgrammerProtocol(protocol, programmerKind);

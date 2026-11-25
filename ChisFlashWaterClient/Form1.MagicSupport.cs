@@ -56,19 +56,14 @@ public partial class Form1
         return true;
     }
 
-    /// <summary>
-    /// 盖中盖口径（11-18 定案）：读数失败不设失败状态。CFI / NOR ID 读不到、容量 0、
-    /// 判定无卡、写保护、01G/02G 硬件未确认，一律不再让界面进入「容量无效 / 只读」，
-    /// GBA / GBC / MIX 三类卡都一样：扫描结果照样可用、按钮照样可点、擦写照跑。
-    /// 保留的只有下面的内容分流（MD / NES 内容必须走各自工作区），那不是读数失败。
-    /// </summary>
+    // 容量读数只用于布局计算。设备是否响应使用原始 NOR ID 判断。
     private bool IsCurrentScanCapacityInvalid() => false;
 
-    private static void EnsureCfiWindowAllowsBurn(NorGeometryInfo geometry)
+    private bool HasWritableNor(WaterCartScanResult? scan, out string reason)
     {
-        // 全 00 和全 FF 的 CFI 按盖中盖的容量判断无法容纳 ROM 镜像。
-        if (geometry.IsCfiWindowBlank)
-            throw new InvalidOperationException(ClientText.T("client", "flash_no_space", "Not enough flash space."));
+        reason = scan?.HasNorId == true ? string.Empty : ShellText(
+            "未读到 NOR ID，或 ID 全为 FF／00。", "No NOR ID was read, or the ID is all FF or all 00.");
+        return reason.Length == 0;
     }
 
     private bool EnsureCurrentScanCapacityValid(out string reason)
@@ -79,14 +74,7 @@ public partial class Form1
 
     private bool EnsureCurrentScanIsWritable(out string reason, bool allowLayoutReset = false)
     {
-        if(currentScanResult?.IsMdMbcxContent == true){reason=ClientText.T("client", "md_use_mode", "This cartridge contains MD games. Use MD multicart programming; GB menu operations are disabled.");return false;}
-        if(currentScanResult?.IsFcMbcxContent == true)
-        {
-            reason=T("fc","use_nes_workspace","This card contains NES games. Use the MIX workspace; GB menu actions are disabled.");
-            return false;
-        }
-        reason = string.Empty;
-        return true;
+        return EnsureSelectedPortHasActiveScan(out reason) && HasWritableNor(currentScanResult, out reason);
     }
 
     private bool EnsureSelectedProgrammerSupportsMagicUpgradeOrInstall(out string reason)
@@ -122,9 +110,7 @@ public partial class Form1
             return false;
         }
 
-        // 盖中盖口径：判定「无卡」也不再阻止 PPB 解锁。
-        reason = string.Empty;
-        return true;
+        return HasWritableNor(currentScanResult, out reason);
     }
 
     private bool CanEraseEntireNorCurrentScan(out string reason)
@@ -141,9 +127,7 @@ public partial class Form1
             return false;
         }
 
-        // 盖中盖口径：无卡 / 写保护 / 容量非法（含读数为 0 与超上限）全部不拦全片擦除。
-        reason = string.Empty;
-        return true;
+        return HasWritableNor(scan, out reason);
     }
 
     private bool CanUpgradeCurrentScan(out string reason)
@@ -375,52 +359,16 @@ public partial class Form1
 
     private bool IsWorkspaceModificationLocked()
     {
-        if (IsGbaConversionDraft()) return false;
+        if (HasManualGbaProfile() || IsGbaConversionDraft()) return false;
         // 盖中盖口径：无卡 / 容量读不到都不再锁工作区编辑。
         return !HasActiveScanResult() || currentScanResult is null;
     }
 
     private string GetWorkspaceLockedMessage()
     {
-        if (NeedsChm1LayoutChange()) return T("log", "chm1_convert_first", "Update the menu to convert the cartridge layout before editing its game list.");
-        if (string.IsNullOrWhiteSpace(GetSelectedPortName()))
-        {
-            return T(
-                "log",
-                "select_port_first",
-                "Please select a serial port first.");
-        }
-
-        if (!HasActiveScanResult())
-        {
-            return T(
-                "log",
-                "workspace_locked_scan_first",
-                "The current cart has not been identified yet. Please click 'Read Cart ROMs' first.");
-        }
-
-        if (!EnsureCurrentScanCapacityValid(out string reason))
-        {
-            return reason;
-        }
-
-        if (currentScanResult?.IsBeggarMaxGbcMode == true)
-        {
-            return T(
-                "log",
-                "workspace_locked_beggar_max_missing_scan",
-                "MAX was identified, but no valid MBCX game directory is available yet. Please read the cart again or reburn a new MBCX menu image.");
-        }
-
-        return UsesSelectedMagicTargetMode()
-            ? T(
-                "log",
-                "workspace_locked_no_menu_wl",
-                "The current cart has no menu config yet. ROM list editing is locked until you click 'Rebuild Menu'.")
-            : T(
-                "log",
-                "workspace_locked_no_menu",
-                "The current cart has no menu config yet. ROM list editing is locked until you click 'Repair Menu'.");
+        return string.IsNullOrWhiteSpace(GetSelectedPortName())
+            ? T("log", "select_port_first", "Please select a serial port first.")
+            : T("log", "workspace_locked_scan_first", "Please read the current cartridge first.");
     }
 
     private WaterCartEntry? GetHeadAreaGame()
@@ -428,9 +376,8 @@ public partial class Form1
         DetectedNorGameInfo? headGame = currentScanResult?.Games
             .FirstOrDefault(game => !game.IsMenu && game.StartBucket == 0);
 
-        return headGame is null
-            ? null
-            : new WaterCartEntry
+        return headGame is null ? null :
+            currentScanResult!.Entries.FirstOrDefault(entry => ReferenceEquals(entry.HeaderGame, headGame)) ?? new WaterCartEntry
             {
                 HeaderGame = headGame,
             };
@@ -465,16 +412,6 @@ public partial class Form1
             return false;
         }
 
-        if (currentScanResult.Geometry.SectorSizeBytes != WaterWlMappingCodec.SectorSize)
-        {
-            reason = Tf(
-                "error",
-                "magic_sector_size_unsupported",
-                "Current NOR sector size is 0x{0:X}; one-click migration is not supported.",
-                currentScanResult.Geometry.SectorSizeBytes);
-            return false;
-        }
-
         reason = string.Empty;
         return true;
     }
@@ -506,32 +443,7 @@ public partial class Form1
             return false;
         }
 
-        if (!IsSelectedBeggarProgrammer())
-        {
-            reason = T(
-                "error",
-                "legacy_menu_update_requires_beggar",
-                "Updating to the bundled legacy menu is exposed only on the Beggar programmer path.");
-            return false;
-        }
-
-        if (currentScanResult is null)
-        {
-            reason = T("error", "select_and_scan_first", "Please select and scan the current cart first.");
-            return false;
-        }
-
-        if (!currentScanResult.MenuConfig.IsDetected)
-        {
-            reason = T(
-                "error",
-                "update_menu_requires_existing_menu",
-                "No menu config was detected. Use 'Repair Menu' first.");
-            return false;
-        }
-
-        reason = string.Empty;
-        return true;
+        return TryGetSelectedProgrammerKind(out _, out reason);
     }
 
     private bool CanUpdateBeggarMaxMenuCurrentScan(out string reason)

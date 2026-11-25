@@ -47,7 +47,7 @@ public partial class Form1
         public FcCardSnapshot RebuildConfiguration(FcCardSnapshot expected,CancellationToken ct,IProgress<FcProgress> progress)
         {
             using var io = new FcIo(owner, port, ct);
-            io.EnsureBurnSpace();
+            io.EnsureNorPresent();
             return FcCardEngine.RebuildConfiguration(io, expected, ct, progress);
         }
         public IReadOnlyList<FcGame> LoadGames(FcCardSnapshot expected,IReadOnlyList<FcGame> games,CancellationToken ct,IProgress<FcProgress> progress)
@@ -61,7 +61,7 @@ public partial class Form1
         public FcCardSnapshot Write(FcCardSnapshot expected,IReadOnlyList<FcGame> games,bool convert,CancellationToken ct,IProgress<FcProgress> progress)
         {
             using var io = new FcIo(owner, port, ct);
-            io.EnsureBurnSpace();
+            io.EnsureNorPresent();
             return FcCardEngine.Write(io, expected, games, convert, ct, progress);
         }
     }
@@ -90,7 +90,10 @@ public partial class Form1
             }
             catch{protocol.Dispose();throw;}
         }
-        public void EnsureBurnSpace() => EnsureCfiWindowAllowsBurn(device.Geometry);
+        public void EnsureNorPresent()
+        {
+            if (!owner.HasWritableNor(device, out string reason)) throw new InvalidOperationException(reason);
+        }
 
         public byte[] Read(int address,int length,CancellationToken ct)
         {

@@ -5,10 +5,7 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
-    private FlowLayoutPanel? gbaConversionOptions;
-
-    private CheckBox? gbaKeepCurrentGame;
-    private ComboBox? gbaCurrentGameLength;
+    private bool gbaIncludeCartGameInDraft;
 
     private bool updatingGbaCardMode;
     private bool rebuildingGbaSingleGrid;
@@ -26,41 +23,24 @@ public partial class Form1
 
     private static bool IsSingleGameOnlyGbaScan(WaterCartScanResult? scan) => scan is { NoCartridgeDetected: false, IsBeggarMaxGbcMode: false, IsChm1: false, IsChwq: false, StandardWaterLinkId: null } &&
         WaterCartScanner.IsSingleGameGbaNor(scan.NorId);
-    private bool IsGbaSingleGameOnlyHardware() => GetSelectedBeggarCartMode() == BeggarCartMode.Gba && HasActiveScanResult() && IsSingleGameOnlyGbaScan(currentScanResult);
 
     private bool IsGbaSingleCardMode() => SupportsGbaCardMode() && IsGbaMulticartUnavailable();
 
     private bool IsGbaConversionDraft() => SupportsGbaCardMode() && !IsGbaMulticartUnavailable() && gbaDraftMenu is not null &&
-        (gbaMenuRemoved || currentScanResult?.MenuConfig.IsDetected != true) && !IsGbaDirectoryDamaged();
+        (gbaMenuRemoved || !HasScannedGbaMulticart());
 
     private string GbaCardText(string key, string chinese, string english) =>
         T("gba_card", key, language.Code.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? chinese : english);
 
-    private void BuildGbaCardModeControls(FlowLayoutPanel toolbar)
-    {
-        gbaConversionOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(4), Visible = false };
-        components.Add(gbaConversionOptions);
-        gbaKeepCurrentGame = new CheckBox { AutoSize = true, Margin = new Padding(4, 7, 8, 4) };
-        gbaCurrentGameLength = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 125 };
-        gbaCurrentGameLength.Items.AddRange(new object[] { ClientText.T("client", "select_length", "Select length"), "4 MiB", "8 MiB", "16 MiB", "32 MiB" });
-        gbaCurrentGameLength.SelectedIndex = 0;
-        gbaKeepCurrentGame.CheckedChanged += (_, _) => UpdateActionButtons(isBusy);
-        gbaCurrentGameLength.SelectedIndexChanged += (_, _) => UpdateActionButtons(isBusy);
-        gbaConversionOptions.Controls.Add(gbaKeepCurrentGame);
-        gbaConversionOptions.Controls.Add(gbaCurrentGameLength);
-    }
-
     private void RefreshGbaCardModeUi()
     {
-        if (updatingGbaCardMode || gbaConversionOptions is null || workspaceLayout is null) return;
+        if (updatingGbaCardMode || workspaceLayout is null || dataGridViewRoms is null || gbaAddMenuArrow is null) return;
         updatingGbaCardMode = true;
         try
         {
             bool single = IsGbaSingleCardMode();
             bool conversion = IsGbaConversionDraft();
             // 两种模式共用原表格和工具栏，不移除或替换工作区控件。
-            gbaCurrentGameLength!.Items[0] = ClientText.T("client", "select_length", "Select length");
-            gbaKeepCurrentGame!.Text = GbaCardText("keep", "保留当前游戏", "Keep current game");
             if (single)
             {
                 RefreshSingleGbaGrid();
@@ -189,8 +169,6 @@ public partial class Form1
         {
             byte[] bytes = await File.ReadAllBytesAsync(files[0]);
             if (!WaterCartScanner.HasValidGbaHeader(bytes)) throw new InvalidDataException(ClientText.T("client", "gba_header_invalid", "No valid GBA header was found. Check the ROM file."));
-            if (HasActiveScanResult() && currentScanResult!.Geometry is { IsCfiWindowBlank: false } geometry && bytes.Length > geometry.DeviceSizeBytes)
-                throw new InvalidDataException(ClientText.T("client", "game_exceeds_nor", "The game exceeds the detected NOR capacity."));
             var save = ChisFlash10Image.Analyze(bytes);
             singleGbaPatchItem = await Task.Run(() => AnalyzeSinglePatchItem(bytes, files[0], save));
             void Apply() { gbaSingleReplacementCapacityBytes = 0; gbaSingleRom = bytes; gbaSingleRomPath = Path.GetFullPath(files[0]); gbaSingleRomName = Path.GetFileName(files[0]); gbaSingleRomSave = save; gbaSingleWaitcntPatch = defaultWaitcntPatchEnabled; gbaSingleGameRemoved = false; RefreshGbaCardModeUi(); }
@@ -211,30 +189,79 @@ public partial class Form1
         RefreshGbaCardModeUi();
     }
 
-    private int GetCurrentSingleGameLength() => gbaCurrentGameLength?.SelectedIndex is > 0
-        ? (1 << (gbaCurrentGameLength.SelectedIndex + 1)) * 1024 * 1024 : 0;
+    private static int KnownGbaSourceLength(WaterCartEntry? source)
+    {
+        if (source?.MenuItem is { RomSizeBlocks: > 0 } item)
+            return item.RomSizeBlocks * WaterRomImportPlanner.BlockSizeBytes;
+        if (source?.WlRecord is { } record)
+            return record.LogicalBucketCount * GbaCardWritePlan.HeadBytes;
+        return source?.AllocatedSizeBytesOverride ?? 0;
+    }
+
+    private int GetGbaPreservationLength()
+    {
+        var source = GetGbaSingleGame();
+        if (source is null) return 0;
+        int known = KnownGbaSourceLength(source);
+        if (known > 0) return known;
+        // 裸 GBA 头没有长度字段。按单游戏寻址窗口预留，到下一游戏头或已知卡尾为止。
+        int limit = ChisFlash10Image.CapacityBytes;
+        if (currentScanResult is { } scan)
+        {
+            if (!scan.Geometry.IsCfiWindowBlank && scan.Geometry.DeviceSizeBytes > 0)
+                limit = Math.Min(limit, scan.Geometry.DeviceSizeBytes);
+            foreach (var game in scan.Games)
+                if (game.StartBucket > 0)
+                    limit = (int)Math.Min(limit, (long)game.StartBucket * GbaCardWritePlan.HeadBytes);
+        }
+        return limit;
+    }
 
     private async Task ExportSingleGbaAsync()
     {
         if (isBusy || IsSelectedGbaMenuRow() || IsSelectedGbaDisabledGameRow() || !HasActiveScanResult() || GetGbaSingleGame() is not { } head) return;
+        await ExportCartGbaGameAsync(head);
+    }
+
+    private async Task<bool> ExportCartGbaGameAsync(WaterCartEntry head)
+    {
         using var lengthDialog = new Form { Text = ClientText.T("client", "read_length_title", "Select ROM Read Length"), Width = 340, Height = 155, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var length = new ComboBox { Left = 18, Top = 18, Width = 280, DropDownStyle = ComboBoxStyle.DropDownList };
-        length.Items.AddRange(new object[] { "4 MiB", "8 MiB", "16 MiB", "32 MiB" }); length.SelectedIndex = 2;
+        int[] sizes = [512 * 1024, 1 << 20, 2 << 20, 4 << 20, 8 << 20, 16 << 20, 32 << 20];
+        foreach (int size in sizes) length.Items.Add(size < 1 << 20 ? "512 KiB" : $"{size >> 20} MiB");
+        int knownIndex = Array.IndexOf(sizes, KnownGbaSourceLength(head));
+        length.SelectedIndex = knownIndex >= 0 ? knownIndex : 3;
         var ok = new Button { Text = ClientText.T("client", "ok", "OK"), DialogResult = DialogResult.OK, Left = 210, Top = 58 };
-        lengthDialog.Controls.AddRange([length, ok]); lengthDialog.AcceptButton = ok;
+        var cancel = new Button { Text = ClientText.T("client", "cancel", "Cancel"), DialogResult = DialogResult.Cancel, Left = 124, Top = 58 };
+        lengthDialog.Controls.AddRange([length, ok, cancel]); lengthDialog.AcceptButton = ok; lengthDialog.CancelButton = cancel;
         bool mapped = head.FoundInMenuConfig || head.FoundInWlMapping;
-        if (!mapped && lengthDialog.ShowDialog(this) != DialogResult.OK) return;
-        int bytes = mapped ? checked(head.LogicalBucketCount * WaterCartScanner.BucketSizeBytes) : (4 << length.SelectedIndex) * 1024 * 1024;
-        if (bytes > currentScanResult!.Geometry.DeviceSizeBytes) throw new InvalidDataException(ClientText.T("client", "read_exceeds_nor", "The read length exceeds the detected NOR capacity."));
-        using var destination = new SaveFileDialog { Filter = "GBA ROM (*.gba)|*.gba", FileName = head.Title + ".gba" };
-        if (destination.ShowDialog(this) != DialogResult.OK) return;
+        if (!mapped && lengthDialog.ShowDialog(this) != DialogResult.OK) return false;
+        int bytes = mapped ? checked(head.LogicalBucketCount * WaterCartScanner.BucketSizeBytes) : sizes[length.SelectedIndex];
+        if (currentScanResult?.Geometry is { IsCfiWindowBlank: false, DeviceSizeBytes: > 0 } geometry && bytes > geometry.DeviceSizeBytes)
+            throw new InvalidDataException(ClientText.T("client", "read_exceeds_nor", "The read length exceeds the detected NOR capacity."));
+        using var destination = new SaveFileDialog { Filter = "GBA ROM (*.gba)|*.gba", FileName = SanitizeSaveFileName(head.Title) + ".gba" };
+        if (destination.ShowDialog(this) != DialogResult.OK) return false;
         string port = GetSelectedPortName()!;
         var kind = GetRequiredSelectedProgrammerKind();
         SetBusy(true, ClientText.T("client", "single_exporting", "Exporting single-game ROM…"));
         try
         {
-            byte[] data = await Task.Run(() => { using var protocol = new WaterDeviceProtocol(port); OpenProgrammerProtocol(protocol, kind); return ReadGbaSingleSource(protocol, kind, bytes); });
-            await File.WriteAllBytesAsync(destination.FileName, data);
+            byte[] data = await Task.Run(() =>
+            {
+                using var protocol = new WaterDeviceProtocol(port, ReportTransferredBytes);
+                OpenProgrammerProtocol(protocol, kind);
+                return mapped ? ReadMappedGbaRomFromDevice(protocol, kind, head) : ReadRomRangeFromDevice(protocol, kind, head.StartAddress, bytes);
+            });
+            string path = Path.GetFullPath(destination.FileName);
+            string temp = Path.Combine(Path.GetDirectoryName(path)!, $".chis-export-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                await File.WriteAllBytesAsync(temp, data);
+                File.Move(temp, path, overwrite: true);
+            }
+            finally { File.Delete(temp); }
+            AppendLog(ClientText.Tf("client", "single_game_exported", "Exported {0} ({1}) to {2}.", head.Title, FormatMiBSize(bytes), path));
+            return true;
         }
         finally { SetBusy(false, ClientText.T("client", "rom_export_ended", "ROM export ended")); }
     }

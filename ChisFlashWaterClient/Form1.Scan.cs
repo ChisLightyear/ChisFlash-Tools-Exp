@@ -54,9 +54,12 @@ public partial class Form1
         {
             if (!sameDevice || resetAnalysisState)
             {
-                if (!sameDevice) confirmedPort = null;
+                if (!sameDevice)
+                {
+                    confirmedPort = null;
+                    manualGbaBurnProfile = null;
+                }
                 keepMulticartList = false;
-                manualGbaBurnProfile = null;
                 ClearGbcProfileCapacity();
                 ResetCurrentCartAnalysisView();
             }
@@ -197,6 +200,7 @@ public partial class Form1
             if (attempt.Result is not WaterCartScanResult result)
             {
                 ResetCurrentCartAnalysisView();
+                RebuildWorkspaceRows();
                 AppendLog(Tf("log", "scan_failed", "Read failed: {0}", attempt.FailureMessage));
                 SetBusy(false, T("status", "scan_failed", "Read failed"));
                 return;
@@ -210,8 +214,10 @@ public partial class Form1
             }
             confirmedPort = activePortName;
             ApplyScanResultCore(result, appendUpgradeHint: true, isUserAnalysis: true);
-            if (result.NoCartridgeDetected)
+            if (!result.HasNorId)
             {
+                HasWritableNor(result, out string reason);
+                AppendLog(reason);
                 SetBusy(false, T("status", "scan_failed", "Read failed"));
                 return;
             }
@@ -351,6 +357,7 @@ public partial class Form1
 
         return await Task.Run(() =>
         {
+            WaterCartScanResult? hardware = null;
             try
             {
                 using var protocol = new WaterDeviceProtocol(portName, ReportTransferredBytes);
@@ -359,8 +366,7 @@ public partial class Form1
                 if (programmerKind == ProgrammerKind.WaterLink &&
                     burnProfileMode != BurnProfileMode.ChisFlash10)
                 {
-                    if (!protocol.TryReadLocalMagicId(out localIdentifier))
-                        throw new IOException(T("error", "magic_capability_read_failed", "Unable to read the device capability report."));
+                    if (!protocol.TryReadLocalMagicId(out localIdentifier)) localIdentifier = [];
                 }
                 bool isChwq = WaterDeviceProtocol.IsChwqIdentifier(localIdentifier);
                 WaterCartScanResult result;
@@ -394,7 +400,7 @@ public partial class Form1
                             "Beggar cart mode is set to GBA. Using the legacy NOR scan."));
                         result = WaterCartScanner.ScanLegacyBeggar(protocol, AppendLog,
                             scanContent: analyzeConfiguration, scanGameHeaders: !analyzeConfiguration,
-                            readLocalIdentity: burnProfileMode != BurnProfileMode.ChisFlash10);
+                            readLocalIdentity: burnProfileMode != BurnProfileMode.ChisFlash10, onNorRead: probe => hardware = probe);
                         isChwq = result.IsChwq;
                         if (result.UsesChm1Layout)
                             result.MenuConfig.Status.ExplicitSaveAreaAddress = Chm1Layout.SaveAreaOffset;
@@ -409,10 +415,12 @@ public partial class Form1
                         scanContent: analyzeConfiguration,
                         scanGameHeaders: !analyzeConfiguration && beggarCartMode == BeggarCartMode.Gba,
                         isChwq: isChwq,
-                        standardWaterLinkId: WaterDeviceProtocol.GetStandardWaterLinkId(localIdentifier));
+                        standardWaterLinkId: WaterDeviceProtocol.GetStandardWaterLinkId(localIdentifier),
+                        onNorRead: probe => hardware = probe);
                 }
 
                 result.IsChwq = isChwq;
+                hardware = result;
                 if (result.StandardWaterLinkId is string boardId) AppendLog(StandardWaterLinkName(boardId));
                 if (isChwq) AppendLog(T("log", "chwq_detected", "CHWQ: Chimera cartridge identified."));
 
@@ -431,6 +439,11 @@ public partial class Form1
             }
             catch (Exception ex)
             {
+                if (hardware?.HasNorId == true)
+                {
+                    AppendLog(GetFriendlyScanFailureMessage(ex, portName));
+                    return new ScanReadAttempt(hardware, string.Empty);
+                }
                 return new ScanReadAttempt(null, GetFriendlyScanFailureMessage(ex, portName));
             }
         });
@@ -1382,7 +1395,7 @@ public partial class Form1
         BeggarCartMode beggarCartMode = GetSelectedBeggarCartMode();
 
         burnProfileModeOptions = programmerKind != ProgrammerKind.WaterLink && beggarCartMode == BeggarCartMode.Gb
-            ? GetGbcProfileModes(GetGbcProfileCapacity()).Select(mode => new BurnProfileModeOption(GetBurnProfileModeDisplayName(mode), mode)).ToList()
+            ? GetGbcProfileModes().Select(mode => new BurnProfileModeOption(GetBurnProfileModeDisplayName(mode), mode)).ToList()
             :
             [
                 new BurnProfileModeOption(GetBurnProfileModeDisplayName(BurnProfileMode.WaterLinkSram), BurnProfileMode.WaterLinkSram),
@@ -1398,13 +1411,11 @@ public partial class Form1
         if (beggarCartMode == BeggarCartMode.Gba)
         {
             burnProfileModeOptions.AddRange(GetGbaSingleProfileOptions());
-            if (!HasActiveScanResult() || currentScanResult?.NoCartridgeDetected == true)
+            if (HasManualGbaProfile())
+                preferredMode = manualGbaBurnProfile!.Value.Mode;
+            else if (!HasActiveScanResult() || currentScanResult?.NoCartridgeDetected == true)
             {
-                if (manualGbaBurnProfile is { } manual &&
-                    string.Equals(manual.PortName, GetSelectedPortName(), StringComparison.OrdinalIgnoreCase))
-                    preferredMode = manual.Mode;
-                else
-                    analysisPrompt = new BurnProfileModeOption(WorkspaceUnlocked
+                analysisPrompt = new BurnProfileModeOption(WorkspaceUnlocked
                         ? ShellText("请选择卡带类型", "Select cartridge type")
                         : T("ui", "analyze_cart_first", "Please analyze the cartridge"), defaultMode);
             }
@@ -1488,10 +1499,18 @@ public partial class Form1
             return;
         }
 
-        // 新扫描结果按实际菜单重新建立工作区；同一结果的界面刷新保留草稿。
+        // 主动分析只刷新卡内内容，保留用户已选的本地菜单。
         if (!ReferenceEquals(currentScanResult, result))
         {
+            var menu = gbaDraftMenu;
+            string menuName = gbaDraftMenuName;
             ResetGbaMenuDraft();
+            if (isUserAnalysis && menu is not null)
+            {
+                gbaDraftMenu = menu;
+                gbaDraftMenuName = menuName;
+                // 后续分析发现的原单卡不自动加入合卡；写入前给用户导出机会。
+            }
             ResetGbcFreeMenuDraft();
         }
         RememberGbcProfileCapacity(result);
@@ -1653,41 +1672,18 @@ public partial class Form1
             }
         }
 
-        bool hasDetectedMenuHeader = result.Games.Any(game => game.IsMenu);
-
-        if (result.IsChm1 && (NeedsChm1LayoutChange() || !result.MenuConfig.IsDetected))
+        if (SupportsGbaCardMode() && !result.MenuConfig.IsDetected)
         {
-            AppendLog(T("log", "chm1_convert_first", "Update the menu to convert the cartridge layout before editing its game list."));
+            AppendLog(T("log", "gba_menu_config_unrecognized", "No menu directory was recognized. The ROM workspace is editable."));
         }
-        else if (!result.MenuConfig.IsDetected && CanRepairMenuCurrentScan(out _))
+        else if (result.IsChm1 && NeedsChm1LayoutChange())
         {
-            AppendLog(T(
-                "log",
-                UsesSelectedWaterLinkTargetMode() ? "missing_menu_install_hint_wl" : "missing_menu_install_hint_legacy",
-                UsesSelectedWaterLinkTargetMode()
-                    ? "No menu config was detected. ROM list editing is locked. Click 'Repair Menu' in the workspace toolbar to erase the head 4 MiB, install the WL menu, and generate a WaterLink multicart."
-                    : "No menu config was detected. ROM list editing is locked. Click 'Repair Menu' in the workspace toolbar to erase the head 4 MiB, install the legacy menu, and generate a Chis legacy multicart."));
-
-            WaterCartEntry? headGame = GetHeadAreaGame();
-            if (headGame is not null)
-            {
-                AppendLog(Tf(
-                    "log",
-                    "head_game_overwrite_warn",
-                    "The head 4 MiB area is currently occupied by {0}. Repairing/installing the menu will overwrite that game.",
-                    headGame.Title));
-            }
+            AppendLog(T("log", "chm1_layout_differs", "The cartridge layout differs from the selected mode."));
         }
-        else if (!result.MenuConfig.IsDetected && hasDetectedMenuHeader)
+        else if (result.IsBeggarMaxGbcMode && !result.MenuConfig.IsDetected &&
+            result.Games.Any(game => game.IsMenu) && CanUpdateBeggarMaxMenuCurrentScan(out _))
         {
-            AppendLog(T(
-                "log",
-                result.IsBeggarMaxGbcMode && CanUpdateBeggarMaxMenuCurrentScan(out _)
-                    ? "beggar_max_update_menu_hint"
-                    : "menu_header_without_config_hint",
-                result.IsBeggarMaxGbcMode && CanUpdateBeggarMaxMenuCurrentScan(out _)
-                    ? "还没有识别到有效的 MBCX 目录，但 NOR 芯片和 MAX 槽位头部已经识别成功。点击“更新菜单”即可重写自带 MAX 菜单，并按当前识别到的槽位重建索引。"
-                    : "头部区域检测到菜单 ROM 头，但尚未识别到菜单条目/状态区。找到有效修复路径前，修复菜单功能会保持不可用。"));
+            AppendLog(T("log", "beggar_max_update_menu_hint", "Use Update Menu to rebuild the MAX index from the detected slots."));
         }
         else if (CanRepairLegacyBatterySaveMetadataCurrentScan(out _))
         {

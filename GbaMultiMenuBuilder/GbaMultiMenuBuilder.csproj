@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -18,28 +18,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\menus\GBA_MultiMenu_extended-main\rom_builder\lk_multimenu.gba"
-          Link="Assets\lk_multimenu.gba"
+    <None Include="Assets\lk_multimenu.gba"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\menus\GBA_MultiMenu_extended_WL\rom_builder\lk_multimenu_wl.gba"
-          Link="Assets\lk_multimenu_wl.gba"
+    <None Include="Assets\lk_multimenu_wl.gba"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\menus\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba"
-          Link="Assets\universal_menu.gba"
+    <None Include="Assets\universal_menu.gba"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\menus\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba"
-          Link="Assets\simplified_ns_menu.gba"
+    <None Include="Assets\simplified_ns_menu.gba"
           CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\menus\GBA_MultiMenu_extended_NEW\rom_builder\covers\cover_index.csv;..\..\menus\GBA_MultiMenu_extended_NEW\rom_builder\covers\cover_overrides.csv"
-          Condition="'$(ExcludeCoverCatalog)' != 'true'"
-          Link="covers\%(Filename)%(Extension)"
-          CopyToOutputDirectory="Always"
-          CopyToPublishDirectory="Always" />
-    <None Include="..\..\menus\GBA_MultiMenu_extended_NEW\rom_builder\covers\original\*.png"
-          Condition="'$(ExcludeCoverCatalog)' != 'true'"
-          Link="covers\original\%(Filename)%(Extension)"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest" />
     <None Include="Assets\menu_zh.gb"
           Link="Assets\menu_zh.gb"
           CopyToOutputDirectory="PreserveNewest" />
@@ -84,4 +70,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Fc\MesenNesDB.csv" LogicalName="ChisFlash.Fc.MesenNesDB" />
   </ItemGroup>
+  <Target Name="CreateExternalCoverFolder" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)/covers" />
+  </Target>
 </Project>

@@ -685,7 +685,6 @@ public partial class Form1
         }
 
         BuildWorkspaceGrid();
-        BuildGbaCardModeControls(settingsPanel);
 
         listLayout.Controls.Add(settingsPanel, 0, 0);
         listLayout.Controls.Add(dataGridViewRoms, 0, 1);

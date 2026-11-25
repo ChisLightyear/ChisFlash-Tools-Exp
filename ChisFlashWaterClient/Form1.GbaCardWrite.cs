@@ -7,6 +7,35 @@ namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    // 未取得卡内配置时只为本次写入准备寻址范围，分析面板仍保留原始读数。
+    private async Task BurnWithManualGbaLayoutAsync()
+    {
+        var target = currentScanResult!;
+        var measured = target.Geometry;
+        int bucket = WaterCartScanner.BucketSizeBytes;
+        long required = bucket + workspaceRows.Sum(row => (long)Math.Max(1,
+            (GetWorkspaceRowAllocatedSizeBytes(row) + (long)bucket - 1) / bucket) * bucket);
+        long mappedEnd = target.Entries.SelectMany(entry => entry.PhysicalBuckets)
+            .Select(block => ((long)block + 1) * bucket).DefaultIfEmpty(0).Max();
+        int sector = !measured.IsCfiWindowBlank && measured.SectorSizeBytes > 0 ? measured.SectorSizeBytes : WaterWlMappingCodec.SectorSize;
+        int capacity = !measured.IsCfiWindowBlank && measured.DeviceSizeBytes > 0 ? measured.DeviceSizeBytes :
+            IsGbaSingleProfileSelected() ? ChisFlash10Image.CapacityBytes :
+            checked((int)Math.Max(Math.Max(required, mappedEnd), (long)WaterWlMappingCodec.MinimumBucketCount * bucket));
+        var layout = measured.CopyForWrite(capacity, sector);
+        target.Geometry = layout;
+        try { await ApplyQueueActionAsync(); }
+        finally
+        {
+            target.Geometry = measured;
+            if (ReferenceEquals(currentScanResult?.Geometry, layout))
+            {
+                currentScanResult!.Geometry = measured;
+                labelCapacityValue.Text = BuildCapacityValueText(currentScanResult);
+                labelSectorInfoValue.Text = FormatSectorSummary(measured);
+            }
+        }
+    }
+
     private WaterCartScanResult GbaScanAfterWrite(byte[] image, WaterCartScanResult hardware)
     {
         var result = WaterCartScanner.ScanOfflineRomImage(image);
@@ -35,9 +64,9 @@ public partial class Form1
         if (!EnsureSelectedPortHasActiveScan(out string scanReason)) throw new InvalidOperationException(scanReason);
         if (!EnsureCurrentScanIsWritable(out string reason)) throw new InvalidOperationException(reason);
         var scan = currentScanResult!;
-        if (scan.IsNorProbeOnly) throw new InvalidOperationException(ClientText.T("client", "single_analyze_first", "Analyze the cartridge contents before burning a single-game ROM."));
+
         var kind = GetRequiredSelectedProgrammerKind();
-        if (kind != ProgrammerKind.BeggarLegacy) EnsureCfiWindowAllowsBurn(scan.Geometry);
+
         var patchItem = queued ?? singleGbaPatchItem;
         if (sourceRom is not null && patchItem is not null)
             sourceRom = await PrepareSelectedGamePatchesAsync(patchItem, sourceRom, scan, patch);
@@ -84,7 +113,8 @@ public partial class Form1
                             () => EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token),
                         startSectorErase: StartLandscapeErase, finishSectorErase: FinishLegacyRomSectorErase,
                         beginErase: count => BeginMeasuredProgressPhase(count, true, BuildProgressDetailText(title, "progress_phase_erase", "Erase")),
-                        beginProgram: () => BeginMeasuredProgressPhase(writeUnits, false, BuildProgressDetailText(title, "progress_phase_write", "Write"), image.Length));
+                        beginProgram: () => BeginMeasuredProgressPhase(writeUnits, false, BuildProgressDetailText(title, "progress_phase_write", "Write"), image.Length),
+                        writeLayout: (scan.Geometry.DeviceSizeBytes, ResolveGbaPpbSectorSizeBytes(scan), scan.Geometry.BufferWriteBytes));
                     CompleteLegacyGbaRomProgress(image.Length, timing);
                 }
                 else
@@ -97,7 +127,7 @@ public partial class Form1
                     BeginMeasuredProgress(ClientText.T("client", "single_rom", "Single-game ROM"), CountSegmentProgressWorkBytes(segment, scan.Geometry) + (long)clearSectors.Length * sector, CountSegmentProgressUnits(segment, scan.Geometry) + clearSectors.Length);
                     EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token);
                     ProgramNorSegments(protocol, kind, scan.Geometry, [segment], cancellation.Token);
-                    CompleteMeasuredProgress(ClientText.T("client", "single_rom", "Single-game ROM"));
+                    CompleteGbaRomProgress(protocol);
                 }
             });
             var refreshed = GbaScanAfterWrite(image, scan);
@@ -146,30 +176,39 @@ public partial class Form1
             batteryless && !alreadyPatched, alreadyPatched, needsExpansion, (BuilderSaveKind)(int)save.Kind,
             false, false, 1, cover);
 
-    private async Task BurnGbaConversionAsync()
+    private async Task BurnGbaConversionAsync(bool repackMappedGames = false)
     {
         EnsureGbaMulticartSupported();
         if (activeBurnCancellation is not null) { RequestActiveBurnCancellation(); return; }
-        if (isBusy || !IsGbaConversionDraft()) return;
+        if (isBusy || !repackMappedGames && !IsGbaConversionDraft()) return;
         if (!EnsureSelectedPortHasActiveScan(out string scanReason)) throw new InvalidOperationException(scanReason);
         if (!EnsureCurrentScanIsWritable(out string reason)) throw new InvalidOperationException(reason);
         var scan = currentScanResult!;
         var rows = workspaceRows.Where(row => row.PendingItem is not null).ToArray();
-        if (scan.IsNorProbeOnly) throw new InvalidOperationException(ClientText.T("client", "multicart_analyze_first", "Analyze the cartridge contents before burning a multicart."));
-        EnsureCfiWindowAllowsBurn(scan.Geometry);
-        if (UsesChm1Mode(GetSelectedBurnProfileMode()) && !scan.IsChm1) throw new InvalidOperationException(ClientText.T("client", "chm1_hardware_required", "01G/02G fragment-management hardware has not been identified. The CHM1 multicart layout cannot be written."));
-        if (!ConfirmGbaConversion(rows.Length, GbaMappedHeadEraseNotice(scan))) return;
-        bool keep = gbaKeepCurrentGame!.Checked && GetGbaSingleGame() is not null;
+        string eraseNotice = GbaMappedHeadEraseNotice(scan);
+        bool keep = false;
+        if (repackMappedGames)
+        {
+            string message = ShellText("所选旧菜单使用连续游戏区。将按工作区顺序重排游戏并写入菜单，覆盖原游戏布局和头部菜单区。",
+                "The selected legacy menu uses contiguous games. Write the workspace games in order and replace the current game layout and menu area?");
+            if (MessageBox.Show(this, message + eraseNotice, buttonQueueBurn.Text, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+        }
+        else
+        {
+            var decision = ConfirmGbaConversion(rows.Length, eraseNotice);
+            if (!decision.HasValue) return;
+            keep = decision.Value;
+        }
         int keptGameIndex = keep ? workspaceRows.FindIndex(row => row.CartEntry is not null && row.PendingItem is null) : -1;
-        bool mappedSource = GetGbaSingleGame() is { } source && (source.FoundInMenuConfig || source.FoundInWlMapping);
-        int keepBytes = keep ? mappedSource ? GetGbaSingleGame()!.LogicalBucketCount * WaterCartScanner.BucketSizeBytes : GetCurrentSingleGameLength() : 0;
-        // 盖中盖口径：容量读到 0 时不拿它当上限，避免读数失败卡住合卡烧录；
-        // keepBytes 是本就要用户给的合法读取长度，仍须为正。
-        if (keep && (keepBytes <= 0 || (scan.Geometry.DeviceSizeBytes > 0 && keepBytes > scan.Geometry.DeviceSizeBytes))) throw new InvalidDataException(ClientText.T("client", "current_length_required", "Specify a valid read length for the current game."));
-        if (!keep && rows.Length == 0) return;
+        bool mappedSource = GetGbaSingleGame() is { } current && (current.FoundInMenuConfig || current.FoundInWlMapping);
+        int keepBytes = keep ? GetGbaPreservationLength() : 0;
+        if (!repackMappedGames && !keep && rows.Length == 0) { await ImportRomFilesAsync([], conversionConfirmed: true); return; }
         if (rows.Any(row => row.PendingItem!.ImportedPlatform is not (null or RomPlatform.Gba))) throw new InvalidDataException(ClientText.T("client", "gba_games_only", "A GBA multicart list can only contain GBA games."));
-        if (!TryValidateWorkspaceCapacity(rows, out reason)) throw new InvalidDataException(reason);
+        if (!repackMappedGames && !TryValidateWorkspaceCapacity(rows, keep, out reason)) throw new InvalidDataException(reason);
         var mode = GetSelectedBurnProfileMode();
+        bool moveHead = keep && !mappedSource && GetGbaSingleGame()!.StartBucket == 0;
+        bool fragmented = UsesWlTargetPlanningMode(mode);
+        byte[]? retainedData = null;
         byte[] menu = LoadSelectedGbaMenuRom(UsesWlTargetPlanningMode(mode), out _);
         string port = GetSelectedPortName()!;
         var kind = GetRequiredSelectedProgrammerKind();
@@ -186,9 +225,37 @@ public partial class Form1
             var games = rows.Select((row, index) => GbaConversionGame(PrepareGbaConversionWaitcnt(row.PendingItem!, staging, index), GetWorkspaceRowDisplayTitle(row),
                 row.PendingItem!.SaveTypeInfo, row.PendingItem.WantsSram(mode), row.PendingItem.WantsBatteryless(mode),
                 row.PendingItem.BatterylessAlreadyPatched, row.PendingItem.BatterylessCanExpand, row.PendingItem.CoverPath)).ToList();
+            if (repackMappedGames)
+            {
+                var retained = workspaceRows.Select((row, index) => (row, index))
+                    .Where(pair => pair.row.PendingItem is null && pair.row.CartEntry is not null)
+                    .Select(pair => (Entry: pair.row.CartEntry!, Title: GetWorkspaceRowDisplayTitle(pair.row), pair.index)).ToList();
+                await Task.Run(() =>
+                {
+                    using var protocol = new WaterDeviceProtocol(port);
+                    OpenProgrammerProtocol(protocol, kind);
+                    foreach (var (entry, title, index) in retained)
+                    {
+                        cancellation.Token.ThrowIfCancellationRequested();
+                        var original = ReadMappedGbaRomFromDevice(protocol, kind, entry);
+                        string path = Path.Combine(staging, $"retained-{index}.gba");
+                        File.WriteAllBytes(path, original);
+                        games.Insert(index, GbaConversionGame(path, title, ChisFlash10Image.Analyze(original), false, false));
+                    }
+                });
+            }
             if (keep)
             {
-                byte[] original = await Task.Run(() => { using var protocol = new WaterDeviceProtocol(port); OpenProgrammerProtocol(protocol, kind); return ReadGbaSingleSource(protocol, kind, keepBytes); });
+                int readLength = moveHead && fragmented ? Math.Min(keepBytes, GbaCardWritePlan.HeadBytes) : keepBytes;
+                var source = GetGbaSingleGame()!;
+                byte[] original = await Task.Run(() =>
+                {
+                    using var protocol = new WaterDeviceProtocol(port);
+                    OpenProgrammerProtocol(protocol, kind);
+                    return mappedSource ? ReadMappedGbaRomFromDevice(protocol, kind, source)
+                        : ReadRomRangeFromDevice(protocol, kind, source.StartAddress, readLength);
+                });
+                if (moveHead) retainedData = original;
                 string originalPath = Path.Combine(staging, "current-game.gba");
                 File.WriteAllBytes(originalPath, original);
                 var save = ChisFlash10Image.Analyze(original);
@@ -198,7 +265,8 @@ public partial class Form1
                     File.WriteAllBytes(Path.ChangeExtension(originalPath, ".sav"), sram);
                 }
                 games.Insert(keptGameIndex, GbaConversionGame(originalPath, GetGbaSingleGame()!.Title, save,
-                    save.Kind is not (DetectedSaveTypeKind.None or DetectedSaveTypeKind.Unknown or DetectedSaveTypeKind.Sram), UsesBatterylessPatch(mode)));
+                    !moveHead && save.Kind is not (DetectedSaveTypeKind.None or DetectedSaveTypeKind.Unknown or DetectedSaveTypeKind.Sram),
+                    !moveHead && UsesBatterylessPatch(mode)));
             }
             var request = CreateGbaConversionRequest(scan, mode, menuPath, Path.Combine(staging, "multicart.gba"), games);
             byte[] image = await Task.Run(() =>
@@ -211,8 +279,15 @@ public partial class Form1
             var refreshed = GbaScanAfterWrite(image, scan);
             for (int index = 0; index < rows.Length; index++)
                 if (rows[index].PendingItem is { ReplacementCapacityBytes: > 0 } item)
-                    EnsureReplacementRomFits(item, checked(refreshed.MenuConfig.Items[index + (keep && index >= keptGameIndex ? 1 : 0)].RomSizeBlocks * WaterRomImportPlanner.BlockSizeBytes));
-            var segments = GbaCardWritePlan.Multicart(image, scan.Geometry.DeviceSizeBytes, scan.Geometry.SectorSizeBytes);
+                    EnsureReplacementRomFits(item, checked(refreshed.MenuConfig.Items[repackMappedGames ? workspaceRows.IndexOf(rows[index]) : index + (keep && index >= keptGameIndex ? 1 : 0)].RomSizeBlocks * WaterRomImportPlanner.BlockSizeBytes));
+            IReadOnlyList<WaterNorWriteSegment> segments;
+            if (retainedData is not null)
+            {
+                var compiled = refreshed;
+                (segments, refreshed) = await Task.Run(() => GbaCardWritePlan.RelocateHead(image, compiled, scan,
+                    keptGameIndex, keepBytes, retainedData, fragmented, UsesChm1Mode(mode)), cancellation.Token);
+            }
+            else segments = GbaCardWritePlan.Multicart(image, scan.Geometry.DeviceSizeBytes, scan.Geometry.SectorSizeBytes);
             uint[] clearSectors = PendingGbaWorkspaceEraseSectors(scan, segments);
             bool directLegacyErase = UseDirectGbaWorkspaceErase(scan, mode);
             await Task.Run(() =>
@@ -223,10 +298,10 @@ public partial class Form1
                 writeStarted = true;
                 EraseGbaWorkspaceSectors(protocol, kind, scan, clearSectors, directLegacyErase, cancellation.Token);
                 ProgramNorSegments(protocol, kind, scan.Geometry, segments, cancellation.Token);
-                CompleteMeasuredProgress(ClientText.T("client", "conversion_title", "Convert to Multicart"));
+                CompleteGbaRomProgress(protocol);
             });
             pendingImportItems.Clear(); workspaceRows.Clear();
-            gbaKeepCurrentGame.Checked = false;
+            gbaIncludeCartGameInDraft = false;
             ApplyScanResult(refreshed, false);
             succeeded = true;
             AppendLog(ClientText.T("client", "multicart_write_log", "Multicart menu and games written without additional ROM readback verification."));
@@ -241,9 +316,16 @@ public partial class Form1
         }
     }
 
-    private bool ConfirmGbaConversion(int pendingGames, string headEraseNotice)
+    private bool? ConfirmGbaConversion(int pendingGames, string headEraseNotice)
     {
-        using var dialog = new Form { Text = ClientText.T("client", "conversion_title", "Convert to Multicart"), Font = Font, Width = LogicalToDeviceUnits(600), Height = LogicalToDeviceUnits(320), StartPosition = FormStartPosition.CenterParent,
+        bool keep = false;
+        using var dialog = CreateGbaConversionDialog(pendingGames, headEraseNotice, preserve => keep = preserve);
+        return dialog.ShowDialog(this) == DialogResult.OK ? keep : null;
+    }
+
+    private Form CreateGbaConversionDialog(int pendingGames, string headEraseNotice, Action<bool> confirm)
+    {
+        var dialog = new Form { Text = ClientText.T("client", "conversion_title", "Convert to Multicart"), Font = Font, Width = LogicalToDeviceUnits(600), Height = LogicalToDeviceUnits(320), StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 4 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -255,36 +337,44 @@ public partial class Form1
         menuRow.Controls.Add(new Label { Text = ClientText.T("client", "multicart_menu_prefix", "Multicart menu:") + " " + gbaDraftMenuName, AutoSize = true, Padding = new Padding(0, 5, 6, 0) });
         layout.Controls.Add(menuRow, 0, 0);
         WaterCartEntry? currentGame = GetGbaSingleGame();
-        bool keepCurrentGame = gbaKeepCurrentGame!.Checked && currentGame is not null;
-        bool needsReadLength = keepCurrentGame && currentGame is { FoundInMenuConfig: false, FoundInWlMapping: false };
-        gbaConversionOptions!.Visible = keepCurrentGame;
-        gbaKeepCurrentGame.Enabled = false;
-        gbaCurrentGameLength!.Visible = needsReadLength;
-        gbaCurrentGameLength.Enabled = needsReadLength;
-        layout.Controls.Add(gbaConversionOptions, 0, 1);
-        var note = new Label { Dock = DockStyle.Fill, Text = HasPendingGbaWorkspaceClear() ? GbaWorkspaceClearConfirmation() : ClientText.Tf("client", "conversion_confirm", "Write {0} new game(s).\nThe multicart menu will overwrite the first 4 MiB. To keep the current game, select it and specify the read length.\nAfter preparation, games are written first and the menu directory last.", pendingGames), AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
-        note.Text += headEraseNotice;
+        bool canKeep = currentGame is not null && gbaIncludeCartGameInDraft &&
+            workspaceRows.Any(row => row.CartEntry is not null && row.PendingItem is null);
+        var options = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Visible = canKeep };
+        var preserve = new CheckBox { AutoSize = true, Checked = canKeep, Text = ShellText(
+            $"保留卡内游戏《{currentGame?.Title}》", $"Keep {currentGame?.Title} on the cartridge") };
+        options.Controls.Add(preserve);
+        layout.Controls.Add(options, 0, 1);
+        var note = new Label { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
+        void ShowChoice()
+        {
+            string detail = !preserve.Checked ? ShellText("旧游戏不加入新菜单。", "The old game will be omitted.") :
+                currentGame!.StartBucket == 0 && UsesWlTargetPlanningMode(GetSelectedBurnProfileMode())
+                ? ShellText("只搬移旧游戏的首个 4 MiB 块，其余块原位保留。", "Move only the first 4 MiB block. The remaining blocks stay in place.")
+                : ShellText("整个旧游戏将搬到连续游戏区。", "Move the entire old game to a contiguous range.");
+            if (preserve.Checked && KnownGbaSourceLength(currentGame) == 0)
+            {
+                string range = FormatMiBSize(GetGbaPreservationLength());
+                detail += ShellText($" 旧 ROM 长度未知，自动预留 {range}。", $" Original ROM length unknown; reserving {range}.");
+            }
+            note.Text = ShellText($"将加入 {pendingGames} 个新游戏。", $"Add {pendingGames} new game(s).") +
+                (canKeep ? "\n" + detail : "") + "\n" +
+                ShellText("先写游戏，最后覆盖前 4 MiB 写入菜单。未保留的旧内容可能被覆盖。",
+                    "Games are written first, then the menu replaces the first 4 MiB. Other existing content may be overwritten.") +
+                (HasPendingGbaWorkspaceClear() ? "\n" + GbaWorkspaceClearConfirmation() : "") + headEraseNotice;
+        }
+        preserve.CheckedChanged += (_, _) => ShowChoice();
+        ShowChoice();
         layout.Controls.Add(note, 0, 2);
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var ok = new Button { Text = ClientText.T("client", "start_burn", "Start Burn"), AutoSize = true };
         var cancel = new Button { Text = ClientText.T("client", "cancel", "Cancel"), DialogResult = DialogResult.Cancel, AutoSize = true };
         ok.Click += (_, _) =>
         {
-            if (needsReadLength && GetCurrentSingleGameLength() <= 0)
-            {
-                note.Text = ClientText.T("client", "current_length_select", "Select the read length for the current game.");
-                return;
-            }
-            if (pendingGames == 0 && !keepCurrentGame)
-            {
-                note.Text = ClientText.T("client", "add_games_first", "Add games to the list first.");
-                return;
-            }
+            confirm(preserve.Checked);
             dialog.DialogResult = DialogResult.OK;
         };
         buttons.Controls.Add(ok); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 3);
         dialog.Controls.Add(layout); dialog.AcceptButton = ok; dialog.CancelButton = cancel;
-        try { return dialog.ShowDialog(this) == DialogResult.OK; }
-        finally { layout.Controls.Remove(gbaConversionOptions); gbaConversionOptions.Visible = false; }
+        return dialog;
     }
 }

@@ -1,7 +1,7 @@
 using ClientText = ChisFlashWaterClient.Services.LocalizedText;
 namespace ChisFlashWaterClient;
 
-public static class GbaCardWritePlan
+public static partial class GbaCardWritePlan
 {
     public const int HeadBytes = 0x400000;
 

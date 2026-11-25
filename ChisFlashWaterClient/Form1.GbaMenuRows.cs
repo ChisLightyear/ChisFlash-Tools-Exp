@@ -51,17 +51,16 @@ public partial class Form1
     {
         if (isBusy || isAnalyzingQueueImports) return;
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_edit_invalid", "The directory is invalid. The game list cannot be edited."));
         if (IsGbaSingleCardMode()) { await AddSingleGbaFilesAsync(paths); return; }
         appendingGbaListGames = true;
         try { await AddPendingRomFilesAsync(paths); }
         finally { appendingGbaListGames = false; }
     }
 
-    private bool IsGbaDirectoryDamaged() => SupportsGbaCardMode() && !IsGbaMulticartUnavailable() &&
-        currentScanResult is { MenuConfig.IsDetected: false, WlMapping.IsDetected: true };
+    private bool HasScannedGbaMulticart() => currentScanResult is { } scan &&
+        (scan.MenuConfig.IsDetected || scan.WlMapping.IsDetected || scan.Games.Any(game => game.IsMenu && game.StartBucket == 0));
     private bool HasGbaListMenu() => !IsGbaMulticartUnavailable() && (gbaDraftMenu is not null ||
-        (!gbaMenuRemoved && currentScanResult?.MenuConfig.IsDetected == true));
+        (!gbaMenuRemoved && HasScannedGbaMulticart()));
     private bool IsSelectedGbaMenuRow() => SupportsGbaCardMode() &&
         dataGridViewRoms.SelectedRows.Count > 0 && ReferenceEquals(dataGridViewRoms.SelectedRows[0].Tag, GbaMenuRowTag);
     private bool IsGbaDisabledGameRow(int index) => SupportsGbaCardMode() && index >= 0 && index < dataGridViewRoms.Rows.Count &&
@@ -102,10 +101,14 @@ public partial class Form1
     private int GridIndexFromWorkspace(int index) => index < 0 ? -1 :
         index + (HasGbcFreeMenu() || SupportsGbaCardMode() && HasGbaListMenu() ? 1 : 0);
 
+    private WaterCartScanResult? gbaAcknowledgedMenuOverwrite;
+
     private void ResetGbaMenuDraft()
     {
+        gbaAcknowledgedMenuOverwrite = null;
         gbaWorkspaceClearSource = null;
         removedGbaGames.Clear();
+        gbaIncludeCartGameInDraft = false;
         gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = false;
         gbaSingleGameRemoved = false; gbaSingleCartSource = null; gbaSingleNeedsRelocation = false;
         if (gbaSingleRom is null) gbaSingleReplacementCapacityBytes = 0;
@@ -115,16 +118,14 @@ public partial class Form1
 
     private void AddGbaMenuGridRow()
     {
-        bool damaged = IsGbaDirectoryDamaged();
         bool pending = gbaDraftMenu is not null;
         bool unread = !pending && currentScanResult?.IsNorProbeOnly == true;
-        string state = unread ? GbaCardText("config_unread", "待分析卡带", "Cart not analyzed") : damaged ? GbaCardText("directory_damaged", "目录异常", "Invalid directory")
+        string state = unread ? GbaCardText("config_unread", "待分析卡带", "Cart not analyzed")
             : pending ? GbaCardText("pending_menu", "待写入", "Pending") : HasGbaListMenu() ? T("value", "row_state_cart", "On Cart") : GbaCardText("menu_not_added", "未添加", "Not added");
         string title = pending ? gbaDraftMenuName : HasGbaListMenu()
             ? currentScanResult!.Games.FirstOrDefault(game => game.IsMenu)?.Title ?? GbaCardText("menu", "菜单", "Menu")
             : unread ? GbaCardText("read_config_first", "请先分析卡带", "Analyze the cart first") : GbaCardText("select_menu_hint", "双击选择菜单", "Double-click to select a menu");
         string hint = unread ? GbaCardText("read_config_hint", "请点击“分析卡带”读取目录", "Use Analyze Cart to read the directory")
-            : damaged ? GbaCardText("invalid_directory_hint", "已识别碎片表，但缺少有效目录；请先处理目录异常", "A mapping table was found without a valid directory")
             : GbaCardText("menu_row_hint", "双击选择菜单，点击“开始烧录”后写入。", "Double-click to select a menu. Start Burn writes it to the cartridge.");
         int index = dataGridViewRoms.Rows.Add(GbaCardText("menu", "菜单", "Menu"), state, pending ? T("value", "source_file", "File") : HasGbaListMenu() ? "NOR" : "—", GbaCardText("menu", "菜单", "Menu"), title,
             pending ? WaterCartScanner.DecodeGbaHeaderTitle(gbaDraftMenu!) : string.Empty,
@@ -178,7 +179,6 @@ public partial class Form1
     {
         EnsureGbaMulticartSupported();
         if (isBusy || isAnalyzingQueueImports) return;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "mapping_directory_invalid", "A mapping table was found, but the directory is invalid. Resolve the directory error before creating a multicart."));
         using var dialog = new Form { Text = GbaCardText("select_menu", "选择菜单", "Select Menu"), Font = Font,
             AutoScaleMode = AutoScaleMode.Dpi, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
@@ -228,16 +228,36 @@ public partial class Form1
         await StageGbaMenuAsync(bytes, Path.GetFileName(files[0]));
     }
 
-    private Task StageGbaMenuAsync(byte[] bytes, string name)
+    private Task StageGbaMenuAsync(byte[] bytes, string name) =>
+        StageGbaMenuCoreAsync(bytes, name, ConfirmSingleGameExportAsync);
+
+    private async Task<bool> ConfirmSingleGameExportAsync(WaterCartEntry head)
+    {
+        var choice = MessageBox.Show(this,
+            ClientText.Tf("client", "export_single_before_menu", "Burning this menu will overwrite the single game {0} at address zero. Export it first?\n\nYes: select the ROM size and save a .gba file.\nNo: add the menu without exporting.\nCancel: keep the current workspace.", head.Title),
+            ClientText.T("client", "export_single_before_menu_title", "Export existing game?"),
+            MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1);
+        return choice == DialogResult.No || choice == DialogResult.Yes && await ExportCartGbaGameAsync(head);
+    }
+
+    private WaterCartEntry? GetSingleGameAtRisk() =>
+        HasActiveScanResult() && !HasScannedGbaMulticart() ? GetHeadAreaGame() : null;
+
+    private async Task StageGbaMenuCoreAsync(byte[] bytes, string name, Func<WaterCartEntry, Task<bool>> confirmExport)
     {
         EnsureGbaMulticartSupported();
-        if (isBusy || isAnalyzingQueueImports) return Task.CompletedTask;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_draft_invalid", "The directory is invalid. A multicart draft cannot be created."));
-        if (bytes.Length > 0x400000 || !WaterCartScanner.HasValidGbaHeader(bytes) ||
-            (!GbaMenuRomService.SupportsCovers(bytes) && !TryResolveMenuBackgroundRegion(bytes, false, out _)))
+        if (isBusy || isAnalyzingQueueImports) return;
+        if (bytes.Length > 0x400000 || !WaterCartScanner.HasValidGbaHeader(bytes))
             throw new InvalidDataException(ClientText.T("client", "menu_compatible_required", "Select a compatible GBA multicart menu ROM."));
         int selectedIndex = WorkspaceIndexFromGrid(dataGridViewRoms.CurrentCell?.RowIndex ?? -1);
         bool conversion = !HasGbaListMenu();
+        var scan = currentScanResult;
+        var head = GetSingleGameAtRisk();
+        if (head is not null && !ReferenceEquals(scan, gbaAcknowledgedMenuOverwrite))
+        {
+            if (!await confirmExport(head) || !ReferenceEquals(scan, currentScanResult)) return;
+            gbaAcknowledgedMenuOverwrite = scan;
+        }
         updatingGbaMenuDraft = true;
         try
         {
@@ -246,26 +266,42 @@ public partial class Form1
             comboBoxGbaMenu.SelectedItem = comboBoxGbaMenu.Items.Cast<GbaMenuSelectionOption>().First(option => option.Selection == selection);
             gbaDraftMenu = bytes.ToArray(); gbaDraftMenuName = name;
             if (conversion)
-                gbaKeepCurrentGame!.Checked = workspaceRows.Any(row => row.CartEntry is not null && row.PendingItem is null);
+            {
+                gbaIncludeCartGameInDraft = head is null && workspaceRows.Any(row =>
+                    row.CartEntry is { } entry && (entry.FoundInMenuConfig || entry.FoundInWlMapping) && row.PendingItem is null);
+                if (!gbaIncludeCartGameInDraft)
+                {
+                    foreach (var row in workspaceRows.Where(row => row.CartEntry?.StartBucket == 0).ToArray())
+                    {
+                        if (row.PendingItem is { } replacement)
+                        {
+                            if (!pendingImportItems.Contains(replacement)) pendingImportItems.Add(replacement);
+                        }
+                        else workspaceRows.Remove(row);
+                    }
+                }
+            }
             RefreshWorkspaceGrid(selectedIndex);
         }
         finally { updatingGbaMenuDraft = false; }
         UpdateMenuBackgroundPreview(currentScanResult);
         UpdateActionButtons(isBusy);
-        return Task.CompletedTask;
     }
 
     private void RemoveGbaListSelection()
     {
         if (isBusy || isAnalyzingQueueImports) return;
         if (IsSelectedGbaDisabledGameRow()) { ShowGbaDisabledGameHint(); return; }
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_edit_invalid", "The directory is invalid. The game list cannot be edited."));
         if (IsSelectedGbaMenuRow())
         {
             if (gbaDraftMenu is not null)
             {
+                bool restoreHead = gbaAcknowledgedMenuOverwrite is not null && !gbaSingleGameRemoved;
+                gbaAcknowledgedMenuOverwrite = null;
                 gbaDraftMenu = null;
                 gbaDraftMenuName = string.Empty;
+                if (restoreHead && GetSingleGameAtRisk() is { } head && !workspaceRows.Any(row => row.CartEntry?.StartBucket == 0))
+                    workspaceRows.Insert(0, new WorkspaceListRow { CartEntry = head });
                 RefreshWorkspaceGrid();
                 UpdateMenuBackgroundPreview(currentScanResult);
                 return;
@@ -286,9 +322,9 @@ public partial class Form1
             gbaDraftMenuName = string.Empty;
             gbaMenuRemoved = true;
             gbaSingleCartSource = first?.CartEntry;
-            gbaSingleNeedsRelocation = first?.CartEntry is not null && first.PendingItem is null && currentScanResult?.MenuConfig.IsDetected == true;
+            gbaSingleNeedsRelocation = first?.CartEntry is { } source && first.PendingItem is null && (source.FoundInMenuConfig || source.FoundInWlMapping);
             gbaSingleGameRemoved = first?.CartEntry is null;
-            gbaKeepCurrentGame!.Checked = false;
+            gbaIncludeCartGameInDraft = false;
             RefreshWorkspaceGrid();
             return;
         }
@@ -301,7 +337,7 @@ public partial class Form1
         }
         if (!TryGetSelectedWorkspaceRow(out var row, out int index) || row is null) return;
         if (row.PendingItem is not null) pendingImportItems.Remove(row.PendingItem);
-        if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null) gbaKeepCurrentGame!.Checked = false;
+        if (IsGbaConversionDraft() && row.CartEntry is not null && row.PendingItem is null) gbaIncludeCartGameInDraft = false;
         if (row.CartEntry is { } entry)
         {
             if (entry.FoundInMenuConfig || entry.FoundInWlMapping)
@@ -320,15 +356,15 @@ public partial class Form1
     private void ClearGbaList()
     {
         if (isBusy || isAnalyzingQueueImports) return;
-        if (IsGbaDirectoryDamaged()) throw new InvalidOperationException(ClientText.T("client", "directory_range_invalid", "The directory is invalid, so the game area cannot be determined. Resolve the directory error first."));
         StageGbaWorkspaceClear();
+        gbaAcknowledgedMenuOverwrite = null;
         gbaSingleReplacementCapacityBytes = 0;
         pendingImportItems.Clear(); workspaceRows.Clear();
         gbaDraftMenu = null; gbaDraftMenuName = string.Empty; gbaMenuRemoved = true;
         gbaSingleRom = null; gbaSingleRomName = string.Empty; gbaSingleRomSave = null;
         gbaSingleRomPath = string.Empty; gbaSingleCartSource = null;
         gbaSingleGameRemoved = true; gbaSingleNeedsRelocation = false; gbaSingleGridActive = false;
-        gbaKeepCurrentGame!.Checked = false;
+        gbaIncludeCartGameInDraft = false;
         RefreshWorkspaceGrid();
         labelStatus.Text = HasPendingGbaWorkspaceClear()
             ? GbaClearActionText() + ShellText("：待烧录", " (pending)")
@@ -361,7 +397,7 @@ public partial class Form1
         {
             // 移除后工作区已经隐藏了原条目，这里对照扫描结果判断是否仍有删除待办。
             bool removedFromCard = HasPendingGbaHeadRemoval()
-                || gbaMenuRemoved && currentScanResult?.MenuConfig.IsDetected == true;
+                || gbaMenuRemoved && HasScannedGbaMulticart();
             SetStartBurnEnabled(idle && (removedFromCard || removedGbaGames.Count > 0 || gbaSingleNeedsRelocation ||
                 pendingImportItems.Count > 0 || gbaDraftMenu is not null || HasWorkspaceChanges()));
         }
@@ -375,10 +411,6 @@ public partial class Form1
         {
             menuExportSelectedRom.Enabled = menuItemExportRom.Enabled = false;
             foreach (var item in new[] { menuExportSelectedSave, menuImportSelectedSave, menuClearSelectedSave, menuItemExportSave, menuItemImportSave, menuItemClearSave, menuDeleteSelectedMapping, menuItemDeleteMapping }) item.Enabled = false;
-        }
-        if (IsGbaDirectoryDamaged())
-        {
-            groupBoxList.Text = ClientText.T("client", "workspace_directory_invalid", "ROM Workspace (Invalid Directory)");
         }
         dataGridViewRoms.Enabled = !busy;
         if (disabled && !busy) ShowGbaDisabledGameHint();
