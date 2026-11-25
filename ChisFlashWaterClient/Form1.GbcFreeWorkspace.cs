@@ -6,7 +6,7 @@ public partial class Form1
     private GbcMenuLanguageMode? gbcFreeMenuDraft;
     private bool gbcFreeMenuHidden;
 
-    private bool IsGbcFreeWorkspace() => GetSelectedBurnProfileMode() == BurnProfileMode.BeggarMaxSram;
+    private bool IsGbcFreeWorkspace() => IsBeggarMaxMode(GetSelectedBurnProfileMode());
 
     private bool HasGbcFreeMenu() => IsGbcFreeWorkspace() &&
         (gbcFreeMenuDraft.HasValue || !gbcFreeMenuHidden && currentScanResult?.HasBeggarMaxDirectoryHeaders == true);

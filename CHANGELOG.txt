@@ -1,3 +1,24 @@
+2.046 r28 / 0.92.6 - 2026-11-25
+
+This preview adds Legacy Free Multicart to ChisFlash Water Client 2.046 r28 and Chis Multicart Builder 0.92.6. Choose it for older MAX/MBCX cartridges that map up to 64 KiB of dedicated SRAM per game using eight 8 KiB banks.
+
+- The client preserves existing fragmented save-bank order and allocates new saves from unused banks. The builder can generate an image with the matching legacy directory and menu.
+- English and Chinese legacy menus are included. For a 128 KiB save on supported MBC5 hardware, choose the existing Free Multicart profile.
+- Download the ZIP for the tool you need and extract it before running the executable. Both Windows x64 packages include the .NET runtime. The optional covers/ folder is empty. Supply your own compatible 12 px font for Chinese GBC menu builds that require one.
+
+Verified offline with noncontiguous SRAM mappings and generated 64 KiB and 128 KiB save layouts.
+
+
+中文
+
+上位机 2.046 r28 和合卡器 0.92.6 同步新增 旧自由合卡。适用于每款游戏以 8 个 8 KiB bank 映射最多 64 KiB 独占 SRAM 的旧款 MAX/MBCX 卡带。
+
+- 上位机保留原有碎片存档的 bank 顺序，新存档使用空闲 bank；合卡器可生成配套旧目录和菜单的镜像。
+- 包含中英文旧菜单。支持 128 KiB 存档的 MBC5 卡带和游戏请选原有的自由合卡配置。
+- 按需下载并解压对应工具。两个 Windows x64 包均自带 .NET 运行时，covers/ 为空。构建需要中文字库的 GBC 菜单时，请自备兼容的 12 px 字体。
+
+已离线验证非连续 SRAM 映射、64 KiB 旧版及 128 KiB 新版存档布局。
+
 2.046 r27 - 2026-11-25
 
 ChisFlash Water Client 2.046 r27 is a Windows x64 preview. Extract the ZIP and run ChisFlashWaterClient.exe. The .NET runtime is included. The empty covers/ folder is for your own artwork.

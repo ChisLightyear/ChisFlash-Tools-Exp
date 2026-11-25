@@ -67,6 +67,7 @@ public partial class Form1 : DpiAwareForm
         ChisFlash11VRealClock,
         ChisFlash11VVirtualClock,
         ChisFlash12V,
+        BeggarMaxLegacyFree,
     }
 
     private enum GbcMenuLanguageMode
@@ -965,7 +966,7 @@ public partial class Form1 : DpiAwareForm
         burnProfileMode is BurnProfileMode.WaterLinkSram or BurnProfileMode.WaterLinkMultiNor;
 
     private static bool IsBeggarMaxMode(BurnProfileMode burnProfileMode) =>
-        burnProfileMode == BurnProfileMode.BeggarMaxSram;
+        burnProfileMode is BurnProfileMode.BeggarMaxSram or BurnProfileMode.BeggarMaxLegacyFree;
 
     private bool UsesSelectedWaterLinkTargetMode() =>
         UsesWaterLinkTargetMode(GetSelectedBurnProfileMode());
@@ -1358,7 +1359,7 @@ public partial class Form1 : DpiAwareForm
         IsMbc5FixedSlotMode() ||
         GetSelectedBeggarCartMode() == BeggarCartMode.Gb ||
         currentScanResult?.IsBeggarMaxGbcMode == true ||
-        GetSelectedBurnProfileMode() == BurnProfileMode.BeggarMaxSram;
+        IsBeggarMaxMode(GetSelectedBurnProfileMode());
 
     private string GetRomOpenFileDialogFilter() =>
         IsGbcWorkspaceMode()
@@ -1483,6 +1484,7 @@ public partial class Form1 : DpiAwareForm
             BurnProfileMode.BeggarNoBattery => T("value", "burn_profile_beggar_no_battery", "ChisFlash 1.0G · Ordinary Card (Batteryless)"),
             BurnProfileMode.BeggarFram => T("value", "burn_profile_beggar_fram", "ChisFlash 1.0G · Ordinary Card (With Battery)"),
             BurnProfileMode.BeggarWithBattery => T("value", "burn_profile_beggar_with_battery", "ChisFlash 1.0G · Ordinary Card (With Battery)"),
+            BurnProfileMode.BeggarMaxLegacyFree => T("gbc_profile", "free_legacy", "32M · MAX/MBCX · Legacy Free Multicart"),
             BurnProfileMode.BeggarMaxSram => T("gbc_profile", "free", "32M · MAX/MBCX · Free Multicart"),
             BurnProfileMode.GbcUnselected => T("gbc_profile", GetGbcProfileCapacity() is null ? "pending" : "choose", GetGbcProfileCapacity() is null ? "Capacity not read · choose cartridge type" : "Choose cartridge type"),
             BurnProfileMode.Mbc5EightMiB => T("gbc_profile", "fixed_8m", "8M · MBC5 · 3-in-1 / 4-in-1"),

@@ -42,10 +42,10 @@ public sealed class CompilationBuilder
     private const int GbcMaxGames = 99;
     public const int GbcMaxGameSramBanks = 16;
 
-    public static void ValidateGbcSaveBankCount(byte mbcType, int count, bool dedicated)
+    public static void ValidateGbcSaveBankCount(byte mbcType, int count, bool dedicated, bool legacy = false)
     {
         int limit = !dedicated ? GbcFixedSharedSramBanks :
-            mbcType is 0x19 or 0x1A or 0x1B ? GbcMaxGameSramBanks : 8;
+            !legacy && (mbcType is 0x19 or 0x1A or 0x1B) ? GbcMaxGameSramBanks : 8;
         if (count < 0 || count > limit)
             throw new InvalidOperationException($"MAX/MBCX SRAM: MBC 0x{mbcType:X2}, {count} banks (max {limit}).");
     }
@@ -210,7 +210,7 @@ public sealed class CompilationBuilder
 
         for (var i = 0; i < includedGames.Count; i++)
         {
-            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu);
+            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu, request.FlashCartMode);
             Buffer.BlockCopy(entryBytes, 0, fixedRegion, entryOffset + (i * GbcRomEntrySize), entryBytes.Length);
         }
 
@@ -305,7 +305,7 @@ public sealed class CompilationBuilder
 
         for (var i = 0; i < includedGames.Count; i++)
         {
-            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu);
+            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu, request.FlashCartMode);
             Buffer.BlockCopy(entryBytes, 0, fixedRegion, entryOffset + (i * GbcRomEntrySize), entryBytes.Length);
         }
 
@@ -510,7 +510,7 @@ public sealed class CompilationBuilder
 
         ValidateGbcRequest(request, textResolver);
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
         var includedGames = new List<PreparedGbcGame>(preparedGames.Length);
         long currentOffset = GbcFixedMapReservedBytes;
         var accessibleFlashSize = GetGbcAccessibleFlashSize(request.Cartridge);
@@ -558,7 +558,7 @@ public sealed class CompilationBuilder
 
         ValidateGbcRequest(request, textResolver);
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
         var includedGames = new List<PreparedGbcGame>(preparedGames.Length);
         long currentOffset = GbcFixedMapReservedBytes;
         var accessibleFlashSize = GetGbcAccessibleFlashSize(request.Cartridge);
@@ -774,7 +774,7 @@ public sealed class CompilationBuilder
         var useChineseMenu = IsGbcChineseMenuBuild(request);
         var gamesPerPage = GetGbcMenuGamesPerPage(languageCode);
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
         var accessibleFlashSize = GetGbcAccessibleFlashSize(request.Cartridge);
         var includedGames = new List<PreparedGbcGame>(preparedGames.Length);
         long currentOffset = GbcFixedMapReservedBytes;
@@ -975,7 +975,7 @@ public sealed class CompilationBuilder
         var menuRomLength = new FileInfo(request.BaseMenuPath).Length;
         var accessibleFlashSize = GetGbcAccessibleFlashSize(request.Cartridge);
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
 
         var includedGames = new List<PreparedGbcGame>(preparedGames.Length);
         var skippedTitles = new List<string>();
@@ -1013,7 +1013,7 @@ public sealed class CompilationBuilder
         var entryBytes = GC.AllocateUninitializedArray<byte>(includedGames.Count * GbcRomEntrySize);
         for (var i = 0; i < includedGames.Count; i++)
         {
-            var buffer = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu);
+            var buffer = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu, request.FlashCartMode);
             Buffer.BlockCopy(buffer, 0, entryBytes, i * GbcRomEntrySize, buffer.Length);
         }
 
@@ -1605,7 +1605,7 @@ public sealed class CompilationBuilder
 
     private static bool IsGbcMaxBuild(BuildRequest request) =>
         request.Family == CompilationFamily.Gbc &&
-        request.FlashCartMode == FlashCartMode.GbcMaxMbcx512K;
+        request.FlashCartMode.IsGbcFreeMode();
 
     private static string GetGbcBuildLanguageCode(BuildRequest request) =>
         IsGbcChineseMenuBuild(request) ? LanguageService.DefaultLanguageCode : "en_US";
@@ -1643,7 +1643,7 @@ public sealed class CompilationBuilder
     {
         ValidateGbcRequest(request, textResolver);
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
         var accessibleFlashSize = GetGbcAccessibleFlashSize(request.Cartridge);
         var usedPayloadBytes = checked((int)preparedGames.Sum(static game => game.AllocatedBytes));
         var usedBytes = checked(GbcFixedMapReservedBytes + usedPayloadBytes);
@@ -1706,7 +1706,7 @@ public sealed class CompilationBuilder
 
         var inputGames = request.Games.Where(static game => game.Enabled).ToList();
         progress?.Report(new BuildProgressInfo(10, Tf(textResolver, "build", "preparing_rom_entries", "Preparing {0} ROM entries.", inputGames.Count)));
-        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, textResolver);
+        var preparedGames = PrepareGbcGames(inputGames, request.MinRomSize, request.FlashCartMode, textResolver);
 
         var includedGames = new List<PreparedGbcGame>(preparedGames.Length);
         var skippedTitles = new List<string>();
@@ -1759,7 +1759,7 @@ public sealed class CompilationBuilder
 
         for (var i = 0; i < includedGames.Count; i++)
         {
-            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu);
+            var entryBytes = BuildGbcDirectoryEntry(includedGames[i], useChineseMenu, request.FlashCartMode);
             Buffer.BlockCopy(entryBytes, 0, compilation, entryOffset + (i * GbcRomEntrySize), entryBytes.Length);
         }
 
@@ -1875,6 +1875,7 @@ public sealed class CompilationBuilder
     private static PreparedGbcGame[] PrepareGbcGames(
         IReadOnlyList<BuildGameEntry> inputGames,
         int minRomSize,
+        FlashCartMode mode,
         Func<string, string, string, string>? textResolver)
     {
         var preparedGames = new PreparedGbcGame[inputGames.Count];
@@ -1928,8 +1929,8 @@ public sealed class CompilationBuilder
                         title));
             }
 
-            ValidateGbcSaveBankCount(metadata.CartridgeType, ramBankCount, usesDedicatedSaveAllocation);
-            var sramBankMap = Enumerable.Repeat((byte)0xFF, GbcMaxGameSramBanks).ToArray();
+            ValidateGbcSaveBankCount(metadata.CartridgeType, ramBankCount, usesDedicatedSaveAllocation, mode == FlashCartMode.GbcLegacyFree);
+            var sramBankMap = Enumerable.Repeat((byte)0xFF, mode == FlashCartMode.GbcLegacyFree ? 8 : GbcMaxGameSramBanks).ToArray();
             if (usesDedicatedSaveAllocation)
             {
                 if (nextIndependentRamBank + ramBankCount > GbcIndependentSramBankCapacity)
@@ -2087,8 +2088,9 @@ public sealed class CompilationBuilder
         return buffer;
     }
 
-    private static byte[] BuildGbcDirectoryEntry(PreparedGbcGame game, bool useChineseMenu)
+    private static byte[] BuildGbcDirectoryEntry(PreparedGbcGame game, bool useChineseMenu, FlashCartMode mode)
     {
+        ValidateGbcSaveBankCount(game.MbcType, game.RamBankCount, game.UsesDedicatedSaveAllocation, mode == FlashCartMode.GbcLegacyFree);
         var buffer = GC.AllocateUninitializedArray<byte>(GbcRomEntrySize);
         Array.Fill(buffer, (byte)0xFF);
         WriteUInt16(buffer, 0, checked((ushort)game.RomIndex));
@@ -2122,7 +2124,7 @@ public sealed class CompilationBuilder
             }
         }
 
-        for (var i = 0; i < game.SramBankMap.Length; i++)
+        for (var i = 0; i < game.RamBankCount; i++)
         {
             buffer[GbcRomSramMapOffset + i] = game.SramBankMap[i];
         }

@@ -11,10 +11,10 @@
     <RootNamespace>GbaMultiMenuBuilder</RootNamespace>
     <Product>Chis合卡制作器</Product>
     <AssemblyTitle>Chis合卡制作器</AssemblyTitle>
-    <Version>0.92.5</Version>
-    <AssemblyVersion>0.92.5.0</AssemblyVersion>
-    <FileVersion>0.92.5.0</FileVersion>
-    <InformationalVersion>0.92.5 complete gallery titles</InformationalVersion>
+    <Version>0.92.6</Version>
+    <AssemblyVersion>0.92.6.0</AssemblyVersion>
+    <FileVersion>0.92.6.0</FileVersion>
+    <InformationalVersion>0.92.6</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +26,7 @@
           CopyToOutputDirectory="PreserveNewest" />
     <None Include="Assets\simplified_ns_menu.gba"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\menu_legacy_zh.gb;Assets\menu_legacy_en.gb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="Assets\menu_zh.gb"
           Link="Assets\menu_zh.gb"
           CopyToOutputDirectory="PreserveNewest" />
@@ -56,13 +57,7 @@
              Link="Assets\zpix.bdf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="CHANGELOG.md">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="save_types.ini">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="save_type_overrides.ini">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

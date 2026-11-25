@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.27</FileVersion>
-    <InformationalVersion>2.046 r27</InformationalVersion>
+    <FileVersion>2.0.46.28</FileVersion>
+    <InformationalVersion>2.046 r28</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -116,6 +116,7 @@
     <Content Include="Assets\batteryless_payload_flash4_compat.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Assets\menu_legacy_zh.gb;Assets\menu_legacy_en.gb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\menu_zh.gb">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

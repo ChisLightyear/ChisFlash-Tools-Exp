@@ -3349,6 +3349,9 @@ public partial class Form1
 
     private string MaxSaveMigrationNotice(IReadOnlyList<WorkspaceListRow> rows)
     {
+        if (GetSelectedBurnProfileMode() == BurnProfileMode.BeggarMaxLegacyFree)
+            return ShellText("\n\n旧版按 8 KiB bank 保留碎片存档映射，每款游戏最多 64 KiB。",
+                "\n\nLegacy mode preserves fragmented 8 KiB SRAM banks, up to 64 KiB per game.");
         string notice = ShellText("\n\n重建目录时，需搬移的存档会先备份到电脑，再写回连续 SRAM。",
             "\n\nSaves that need relocation will be backed up to the computer before being moved.");
         if (rows.Any(row => (row.PendingItem?.GameBoyEffectiveRamBankCount ?? row.CartEntry?.RamBankCount) > 8))

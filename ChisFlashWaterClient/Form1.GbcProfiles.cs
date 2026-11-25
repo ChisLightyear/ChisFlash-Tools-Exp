@@ -33,7 +33,7 @@ public partial class Form1
 
     private static IReadOnlyList<BurnProfileMode> GetGbcProfileModes() =>
         [BurnProfileMode.GbcUnselected, BurnProfileMode.Mbc5EightMiB, BurnProfileMode.MbcxRtcEightMiB,
-         BurnProfileMode.GbcSixteenInOne, BurnProfileMode.MbcxRtcThirtyTwoMiB, BurnProfileMode.BeggarMaxSram, BurnProfileMode.FcMbcx];
+         BurnProfileMode.GbcSixteenInOne, BurnProfileMode.MbcxRtcThirtyTwoMiB, BurnProfileMode.BeggarMaxSram, BurnProfileMode.BeggarMaxLegacyFree, BurnProfileMode.FcMbcx];
 
     private static bool MatchesGbcFreeMulticart(WaterCartScanResult scan) => scan is
     {

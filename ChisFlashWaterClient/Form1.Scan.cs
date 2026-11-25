@@ -430,7 +430,7 @@ public partial class Form1
                     if (result.IsBeggarMaxGbcMode && result.Geometry.DeviceSizeBytes == fixedCapacity)
                         result.Mbc5FixedSlotRomImage = ReadMbc5ImageFromDevice(protocol, fixedCapacity);
                 }
-                else if (analyzeConfiguration && !IsSingleGameOnlyGbaScan(result) && (!result.IsBeggarMaxGbcMode || burnProfileMode == BurnProfileMode.BeggarMaxSram) && !result.IsFcMbcxContent && !result.IsMdMbcxContent)
+                else if (analyzeConfiguration && !IsSingleGameOnlyGbaScan(result) && (!result.IsBeggarMaxGbcMode || IsBeggarMaxMode(burnProfileMode)) && !result.IsFcMbcxContent && !result.IsMdMbcxContent)
                 {
                     PopulateSavePresenceForScan(protocol, result, programmerKind);
                     PopulateMenuBackgroundPreviewForScan(protocol, result, programmerKind);

@@ -14,7 +14,7 @@ public partial class Form1 : DpiAwareForm
 {
     private const string SequenceColumnName = "sequence";
     private const string DefaultOutputFileName = "LK_MULTIMENU_OUTPUT.gba";
-    private const string AppVersion = "v0.92.3";
+    private const string AppVersion = "v0.92.6";
     private const string AppAuthor = "chisflash@mori";
     private const long BytesPerMiB = 1024L * 1024L;
     private static readonly Size DefaultWindowSize = new(1184, 761);
@@ -209,7 +209,7 @@ public partial class Form1 : DpiAwareForm
             : FlashCartMode.WaterlineVirtualIron;
 
     private static CompilationFamily GetCompilationFamilyForMode(FlashCartMode mode) =>
-        mode == FlashCartMode.GbcMaxMbcx512K
+        mode.IsGbcFreeMode()
             ? CompilationFamily.Gbc
             : CompilationFamily.Gba;
 
@@ -297,6 +297,7 @@ public partial class Form1 : DpiAwareForm
         ? [new FlashCartModeOption(T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual Iron)"), FlashCartMode.WaterlineVirtualIron)]
         : Array.Empty<FlashCartModeOption>()),
     new FlashCartModeOption(T("ui", "flashcart_gbc_max_mbcx_512k", "GBC | MAX/MBCX (512K)"), FlashCartMode.GbcMaxMbcx512K),
+    new FlashCartModeOption(T("ui", "flashcart_gbc_free_legacy", "GBC | Legacy Free Multicart (64 KiB SRAM per game)"), FlashCartMode.GbcLegacyFree),
     new FlashCartModeOption(T("fc", "mode", "MIX | NES + MD + SNES (MBCX)"), FlashCartMode.FcMbcx),
     ..(includeCustom
         ? [new FlashCartModeOption(T("ui", "flashcart_custom", "Custom"), FlashCartMode.Custom)]
@@ -419,7 +420,7 @@ private void BindUiDataSources()
     {
         if (_currentCompilationFamily == CompilationFamily.Gbc)
         {
-            return FlashCartMode.GbcMaxMbcx512K;
+            return GetSelectedFlashCartMode() == FlashCartMode.GbcLegacyFree ? FlashCartMode.GbcLegacyFree : FlashCartMode.GbcMaxMbcx512K;
         }
 
         if (GetEffectiveBatteryPresent())
@@ -439,7 +440,7 @@ private void BindUiDataSources()
 
         if (_currentCompilationFamily == CompilationFamily.Gbc)
         {
-            RefreshFlashCartModeOptions(FlashCartMode.GbcMaxMbcx512K);
+            RefreshFlashCartModeOptions(GetCurrentPresetMatch());
             return;
         }
 
@@ -1499,7 +1500,7 @@ private void BindUiDataSources()
     {
         if (family == CompilationFamily.Gbc)
         {
-            return GetGbcDefaultBaseMenuCandidates(AppConfigService.LoadLanguageCode() ?? LanguageService.DefaultLanguageCode);
+            return GetGbcDefaultBaseMenuCandidates(AppConfigService.LoadLanguageCode() ?? LanguageService.DefaultLanguageCode, flashCartMode);
         }
 
         if (gbaMenuType == GbaMenuType.NsMenu)
@@ -1539,6 +1540,9 @@ private void BindUiDataSources()
 
     private static IEnumerable<string> GetAllDefaultBaseMenuCandidates()
     {
+        foreach (var candidate in GetGbcDefaultBaseMenuCandidates("en_US", FlashCartMode.GbcLegacyFree))
+            yield return candidate;
+
         foreach (var candidate in GetGbcDefaultBaseMenuCandidates(LanguageService.DefaultLanguageCode))
         {
             yield return candidate;
@@ -1573,7 +1577,7 @@ private void BindUiDataSources()
         var resolvedMode = flashCartMode is FlashCartMode.WaterlineVirtualIron or FlashCartMode.Chm1 or FlashCartMode.Chm1NoBattery
             ? flashCartMode
             : FlashCartMode.NoBattery;
-        return GetDefaultBaseMenuCandidates(family, resolvedMode, gbaMenuType).FirstOrDefault(File.Exists);
+        return GetDefaultBaseMenuCandidates(family, family == CompilationFamily.Gbc ? flashCartMode : resolvedMode, gbaMenuType).FirstOrDefault(File.Exists);
     }
 
     private static bool ShouldUseDefaultBaseMenuPath(string? baseMenuPath)
@@ -2762,14 +2766,14 @@ private void BindUiDataSources()
         AutoAdjustGameGridColumns();
     }
 
-    private static IEnumerable<string> GetGbcDefaultBaseMenuCandidates(string? languageCode)
+    private static IEnumerable<string> GetGbcDefaultBaseMenuCandidates(string? languageCode, FlashCartMode mode = FlashCartMode.GbcMaxMbcx512K)
     {
         var useChineseMenu = string.Equals(
             string.IsNullOrWhiteSpace(languageCode) ? LanguageService.DefaultLanguageCode : languageCode.Trim(),
             LanguageService.DefaultLanguageCode,
             StringComparison.OrdinalIgnoreCase);
-        var primaryAssetName = useChineseMenu ? "menu_zh.gb" : "menu_en.gb";
-        var fallbackAssetName = useChineseMenu ? "menu_en.gb" : "menu_zh.gb";
+        var primaryAssetName = mode.GbcMenuFileName(useChineseMenu);
+        var fallbackAssetName = mode.GbcMenuFileName(!useChineseMenu);
 
         return
         [
@@ -3185,6 +3189,7 @@ private void BindUiDataSources()
                 FlashCartMode.WaterlineVirtualIron => T("ui", "flashcart_waterline_virtual_iron", "GBA | Waterline (Virtual Iron)"),
                 FlashCartMode.Chm1 => T("ui", "flashcart_chm1", "GBA | 01G/02G Fragment Management (Battery / FRAM)"),
                 FlashCartMode.Chm1NoBattery => T("ui", "flashcart_chm1_no_battery", "GBA | 01G/02G Fragment Management (Batteryless)"),
+                FlashCartMode.GbcLegacyFree => T("ui", "flashcart_gbc_free_legacy", "GBC | Legacy Free Multicart (64 KiB SRAM per game)"),
                 FlashCartMode.GbcMaxMbcx512K => T("ui", "flashcart_gbc_max_mbcx_512k", "GBC | MAX/MBCX (512K)"),
                 FlashCartMode.Custom => T("ui", "flashcart_custom", "Custom"),
                 _ => option.Name,
@@ -6363,7 +6368,8 @@ private void BindUiDataSources()
 
     private void ApplyFlashCartPreset(FlashCartMode mode)
     {
-        if (mode == FlashCartMode.Custom || mode == FlashCartMode.GbcMaxMbcx512K)
+        if (mode.IsGbcFreeMode()) SyncBaseMenuPathWithSelectedGbaOptions();
+        if (mode == FlashCartMode.Custom || mode.IsGbcFreeMode())
         {
             return;
         }
@@ -7252,7 +7258,7 @@ private void BindUiDataSources()
 
     private static long EstimatePendingImportPayloadBytes(PendingImportFile pendingImport, BuildRequest request)
     {
-        if (request.FlashCartMode == FlashCartMode.GbcMaxMbcx512K &&
+        if (request.FlashCartMode.IsGbcFreeMode() &&
             GameBoyRomHeaderService.TryRead(pendingImport.Candidate.RomPath, out var metadata))
         {
             return EstimateImportedRomPayloadBytes(

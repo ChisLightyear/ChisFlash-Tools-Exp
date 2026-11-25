@@ -81,7 +81,7 @@ public partial class Form1
 
         foreach (BeggarMaxWorkspaceRowPlan plan in plans)
         {
-            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave);
+            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave, burnProfileMode == BurnProfileMode.BeggarMaxLegacyFree);
             if (plan.UsesDedicatedSave)
             {
                 dedicatedBankCursor += plan.RamBankCount;
@@ -269,7 +269,7 @@ public partial class Form1
                 gbcMenuLanguage);
         cancellationToken.ThrowIfCancellationRequested();
         AllocateBeggarMaxRomBanks(rowPlans);
-        AllocateBeggarMaxSaveBanks(rowPlans);
+        AllocateBeggarMaxSaveBanks(rowPlans, burnProfileMode);
 
         for (int i = 0; i < rowPlans.Count; i++)
         {
@@ -277,7 +277,8 @@ public partial class Form1
         }
 
         CartridgeDefinition cartridge = ResolveBeggarMaxCartridge(initialScan);
-        string baseMenuPath = ResolveBeggarMaxBaseMenuPath(gbcMenuLanguage);
+        var flashMode = burnProfileMode == BurnProfileMode.BeggarMaxLegacyFree ? FlashCartMode.GbcLegacyFree : FlashCartMode.GbcMaxMbcx512K;
+        string baseMenuPath = ResolveBeggarMaxBaseMenuPath(gbcMenuLanguage, flashMode);
         BuildRequest request = new(
             baseMenuPath,
             Path.Combine(Path.GetTempPath(), "unused_max_fixed_map.gbc"),
@@ -285,7 +286,7 @@ public partial class Form1
             gbcFontPath,
             cartridge,
             GameBoyRomHeaderService.RomBankSize,
-            FlashCartMode.GbcMaxMbcx512K,
+            flashMode,
             GbaMenuType.Classic,
             true,
             false,
@@ -545,7 +546,7 @@ public partial class Form1
         }
     }
 
-    private void AllocateBeggarMaxSaveBanks(List<BeggarMaxWorkspaceRowPlan> rowPlans)
+    private void AllocateBeggarMaxSaveBanks(List<BeggarMaxWorkspaceRowPlan> rowPlans, BurnProfileMode burnProfileMode)
     {
         bool[] used = new bool[BeggarMaxIndependentSaveBankCapacity];
         var dedicated = rowPlans.Where(plan => plan.UsesDedicatedSave && plan.RamBankCount > 0).ToList();
@@ -556,7 +557,7 @@ public partial class Form1
 
         foreach (var plan in rowPlans)
         {
-            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave);
+            CompilationBuilder.ValidateGbcSaveBankCount(plan.MbcType, plan.RamBankCount, plan.UsesDedicatedSave, burnProfileMode == BurnProfileMode.BeggarMaxLegacyFree);
             if (!plan.UsesDedicatedSave && plan.RamBankCount > 0)
             {
                 plan.FinalSaveBankMap = BuildBeggarMaxSharedSaveMap(plan.RamBankCount);
@@ -565,12 +566,26 @@ public partial class Form1
         }
 
         bool[] originalUsed = new bool[BeggarMaxIndependentSaveBankCapacity];
-        foreach (var plan in rowPlans.Where(plan => plan.ReuseExistingSaveLayout))
+        foreach (var plan in dedicated.Where(plan => plan.ReuseExistingSaveLayout))
         {
             if (plan.ExistingEntry is not { HasBattery: true, UsesSharedSave: false, RamBankCount: > 0 } entry) continue;
             if (!ValidateBeggarMaxDedicatedSaveMap(entry.SaveBankMap, entry.RamBankCount, originalUsed, out string error))
                 throw new InvalidDataException($"{plan.DisplayTitle}: {error}");
             foreach (byte bank in entry.SaveBankMap.Take(entry.RamBankCount)) originalUsed[bank] = true;
+        }
+
+        if (burnProfileMode == BurnProfileMode.BeggarMaxLegacyFree)
+        {
+            foreach (var plan in dedicated.Where(plan => plan.ReuseExistingSaveLayout && plan.ExistingEntry is { UsesSharedSave: false }))
+            {
+                var banks = plan.ExistingEntry!.SaveBankMap;
+                for (int i = 0; i < plan.RamBankCount; i++) plan.FinalSaveBankMap[i] = banks[i];
+            }
+            var free = new Queue<byte>(Enumerable.Range(0, originalUsed.Length)
+                .Where(bank => !originalUsed[bank]).Select(bank => (byte)bank));
+            foreach (var plan in dedicated.Where(plan => plan.FinalSaveBankMap[0] == 0xFF))
+                for (int i = 0; i < plan.RamBankCount; i++) plan.FinalSaveBankMap[i] = free.Dequeue();
+            return;
         }
 
         // 原位保留连续独占区，尚未分配的游戏优先使用连续空洞。
@@ -1299,11 +1314,9 @@ public partial class Form1
             BuildProgressDetailText(label, "progress_phase_write", "Write"));
     }
 
-    private string ResolveBeggarMaxBaseMenuPath(GbcMenuLanguageMode menuLanguage)
+    private string ResolveBeggarMaxBaseMenuPath(GbcMenuLanguageMode menuLanguage, FlashCartMode mode)
     {
-        string preferredFileName = menuLanguage == GbcMenuLanguageMode.Chinese
-            ? "menu_zh.gb"
-            : "menu_en.gb";
+        string preferredFileName = mode.GbcMenuFileName(menuLanguage == GbcMenuLanguageMode.Chinese);
 
         string[] candidatePaths =
         [
