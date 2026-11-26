@@ -1,3 +1,9 @@
+2.046 r29 / 0.92.7 - 2026-11-26
+
+The client and builder now use menu_NS.gba for NS and menu_NSLite.gba for NS Lite. Both menu ROMs support Ausar CHDR game lists and covers. Select the desired menu in the existing GBA menu selector.
+
+上位机和合卡器的内置 NS 菜单文件名同步为 menu_NS.gba 和 menu_NSLite.gba。两款菜单均支持 Ausar CHDR 游戏列表与封面，可在原有 GBA 菜单选择器中选择。
+
 2.046 r28 / 0.92.6 - 2026-11-25
 
 This preview adds Legacy Free Multicart to ChisFlash Water Client 2.046 r28 and Chis Multicart Builder 0.92.6. Choose it for older MAX/MBCX cartridges that map up to 64 KiB of dedicated SRAM per game using eight 8 KiB banks.

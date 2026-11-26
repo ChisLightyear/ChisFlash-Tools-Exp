@@ -5,8 +5,8 @@ namespace ChisFlashWaterClient;
 
 public static class GbaMenuRomService
 {
-    private const string UniversalMenuFileName = "universal_menu.gba";
-    private const string SimplifiedNsMenuFileName = "simplified_ns_menu.gba";
+    private const string UniversalMenuFileName = "menu_NS.gba";
+    private const string SimplifiedNsMenuFileName = "menu_NSLite.gba";
     private const int CoverTrailerOffset = 0x0AFFF0;
     private const int CoverTrailerSize = 16;
     private const int PreparedMenuLength = 0x0B0000;
@@ -32,7 +32,7 @@ public static class GbaMenuRomService
             LocalizedText.T(
                 "error",
                 "universal_menu_not_found",
-                "The new GBA menu ROM was not found. Make sure Assets\\universal_menu.gba is installed with the client."));
+                "The new GBA menu ROM was not found. Make sure Assets\\menu_NS.gba is installed with the client."));
     }
 
     public static bool HasUniversalMenuSignature(ReadOnlySpan<byte> menuRomBytes) =>
@@ -72,7 +72,7 @@ public static class GbaMenuRomService
             LocalizedText.T(
                 "error",
                 "simplified_ns_menu_not_found",
-                "The Simplified NS Menu ROM was not found. Make sure Assets\\simplified_ns_menu.gba is installed with the client."));
+                "The Simplified NS Menu ROM was not found. Make sure Assets\\menu_NSLite.gba is installed with the client."));
     }
 
     public static void ValidateUniversalMenuRom(byte[] menuRomBytes)

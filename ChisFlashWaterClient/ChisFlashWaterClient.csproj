@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.28</FileVersion>
-    <InformationalVersion>2.046 r28</InformationalVersion>
+    <FileVersion>2.0.46.29</FileVersion>
+    <InformationalVersion>2.046 r29</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -104,10 +104,10 @@
     <Content Include="Assets\wl_magic_menu.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Assets\universal_menu.gba">
+    <Content Include="Assets\menu_NS.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Assets\simplified_ns_menu.gba">
+    <Content Include="Assets\menu_NSLite.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\batteryless_payload.bin">

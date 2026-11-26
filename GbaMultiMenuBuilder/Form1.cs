@@ -14,7 +14,7 @@ public partial class Form1 : DpiAwareForm
 {
     private const string SequenceColumnName = "sequence";
     private const string DefaultOutputFileName = "LK_MULTIMENU_OUTPUT.gba";
-    private const string AppVersion = "v0.92.6";
+    private const string AppVersion = "v0.92.7";
     private const string AppAuthor = "chisflash@mori";
     private const long BytesPerMiB = 1024L * 1024L;
     private static readonly Size DefaultWindowSize = new(1184, 761);
@@ -1507,7 +1507,7 @@ private void BindUiDataSources()
         {
             return
             [
-                Path.Combine(AppContext.BaseDirectory, "Assets", "universal_menu.gba"),
+                Path.Combine(AppContext.BaseDirectory, "Assets", "menu_NS.gba"),
                 Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_extended_NEW\GBA_MultiMenu_extended_NEW.gba")),
             ];
         }
@@ -1516,7 +1516,7 @@ private void BindUiDataSources()
         {
             return
             [
-                Path.Combine(AppContext.BaseDirectory, "Assets", "simplified_ns_menu.gba"),
+                Path.Combine(AppContext.BaseDirectory, "Assets", "menu_NSLite.gba"),
                 Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\GBA_MultiMenu_Simplified_NS\GBA_MultiMenu_Simplified_NS.gba")),
             ];
         }
@@ -1540,6 +1540,10 @@ private void BindUiDataSources()
 
     private static IEnumerable<string> GetAllDefaultBaseMenuCandidates()
     {
+        // 旧设置中保存的内置路径仍按默认菜单处理。
+        yield return Path.Combine(AppContext.BaseDirectory, "Assets", "universal_menu.gba");
+        yield return Path.Combine(AppContext.BaseDirectory, "Assets", "simplified_ns_menu.gba");
+
         foreach (var candidate in GetGbcDefaultBaseMenuCandidates("en_US", FlashCartMode.GbcLegacyFree))
             yield return candidate;
 
