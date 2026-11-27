@@ -1,12 +1,53 @@
+using System.Net.Http;
+using System.Text.Json;
 using ChisFlashWaterClient.Services;
 
 namespace ChisFlashWaterClient;
 
 public partial class Form1
 {
+    private CancellationTokenSource? automaticGbaMenuSync;
+
+    private async Task ToggleGbaMenuAutoSyncAsync()
+    {
+        bool enabled = !menuAutoSyncGbaMenu.Checked;
+        AppConfigService.SaveGbaMenuAutoSync(enabled);
+        menuAutoSyncGbaMenu.Checked = enabled;
+        if (enabled)
+            await AutoSyncGbaMenuAsync();
+        else
+            automaticGbaMenuSync?.Cancel();
+    }
+
+    private async Task AutoSyncGbaMenuAsync()
+    {
+        if (!menuAutoSyncGbaMenu.Checked || automaticGbaMenuSync is { IsCancellationRequested: false }) return;
+
+        using var cancellation = new CancellationTokenSource();
+        automaticGbaMenuSync = cancellation;
+        try
+        {
+            var release = await GbaMenuSync.SyncLatestAsync(cancellationToken: cancellation.Token);
+            if (release is not null && !IsDisposed && !Disposing)
+                AppendLog(Tf("ui", "sync_gba_menu_done", "Menu sync complete: {0}", release.Tag));
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException
+            or JsonException or InvalidOperationException or KeyNotFoundException or UnauthorizedAccessException)
+        {
+            if (!IsDisposed && !Disposing)
+                AppendLog(Tf("ui", "auto_sync_gba_menu_failed", "Automatic menu sync failed: {0}", ex.Message));
+        }
+        finally
+        {
+            if (automaticGbaMenuSync == cancellation) automaticGbaMenuSync = null;
+        }
+    }
+
     private async Task SyncGbaMenuAsync()
     {
         if (isBusy || isAnalyzingQueueImports) return;
+        automaticGbaMenuSync?.Cancel();
         string status = T("ui", "sync_gba_menu_ready", "Ready");
         SetBusy(true, T("ui", "sync_gba_menu_fetching", "Reading menu releases from GitHub…"));
         try
@@ -26,7 +67,8 @@ public partial class Form1
             {
                 Left = 16, Top = 16, Width = 448,
                 Text = Tf("ui", "sync_gba_menu_current", "Current: {0}",
-                    GbaMenuSync.GetActiveTag() ?? T("ui", "sync_gba_menu_bundled", "Bundled menus")),
+                    GbaMenuSync.GetActiveTag() ?? GbaMenuSync.GetBundledTag() ??
+                    T("ui", "sync_gba_menu_bundled", "Bundled menus")),
             };
             var prompt = new Label
             {

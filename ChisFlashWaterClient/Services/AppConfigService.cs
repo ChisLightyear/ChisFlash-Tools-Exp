@@ -52,6 +52,17 @@ public static class AppConfigService
         document.Save(ConfigPath);
     }
 
+    internal static bool LoadGbaMenuAutoSync() =>
+        !IniDocument.Load(ConfigPath).Get(PathsGbaSection, "auto_sync_menu", "true")
+            .Equals("false", StringComparison.OrdinalIgnoreCase);
+
+    internal static void SaveGbaMenuAutoSync(bool enabled)
+    {
+        var document = IniDocument.Load(ConfigPath);
+        document.Set(PathsGbaSection, "auto_sync_menu", enabled ? "true" : "false");
+        document.Save(ConfigPath);
+    }
+
     public static string? LoadGbcFontName()
     {
         var document = IniDocument.Load(ConfigPath);

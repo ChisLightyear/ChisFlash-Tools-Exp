@@ -11,6 +11,7 @@ public partial class Form1
     private ToolStripMenuItem menuHelp = null!;
     private ToolStripMenuItem menuCheckForUpdates = null!;
     private ToolStripMenuItem menuSyncGbaMenu = null!;
+    private ToolStripMenuItem menuAutoSyncGbaMenu = null!;
     private ClientReleaseUpdate? availableUpdate;
     private bool checkingForUpdates;
 
@@ -21,7 +22,9 @@ public partial class Form1
         menuCheckForUpdates.Click += async (_, _) => await CheckForUpdatesAsync(showResult: true);
         menuSyncGbaMenu = new ToolStripMenuItem();
         menuSyncGbaMenu.Click += async (_, _) => await RunUiActionSafelyAsync(SyncGbaMenuAsync);
-        menuHelp.DropDownItems.AddRange([menuCheckForUpdates, menuSyncGbaMenu]);
+        menuAutoSyncGbaMenu = new ToolStripMenuItem { Checked = AppConfigService.LoadGbaMenuAutoSync() };
+        menuAutoSyncGbaMenu.Click += async (_, _) => await RunUiActionSafelyAsync(ToggleGbaMenuAutoSyncAsync);
+        menuHelp.DropDownItems.AddRange([menuCheckForUpdates, menuSyncGbaMenu, menuAutoSyncGbaMenu]);
         mainMenuStrip.Items.Add(menuHelp);
     }
 
@@ -34,6 +37,7 @@ public partial class Form1
             ? T("updates", "checking", "Checking for updates…")
             : T("updates", "check", "Check for Updates…");
         menuSyncGbaMenu.Text = T("ui", "sync_gba_menu", "Sync Menus…");
+        menuAutoSyncGbaMenu.Text = T("ui", "auto_sync_gba_menu", "Automatically Sync Menus");
     }
 
     private async Task CheckForUpdatesAsync(bool showResult)

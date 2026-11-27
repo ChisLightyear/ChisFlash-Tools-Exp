@@ -9,8 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>2.0.46</Version>
     <AssemblyVersion>2.0.46.0</AssemblyVersion>
-    <FileVersion>2.0.46.31</FileVersion>
-    <InformationalVersion>2.046 r31</InformationalVersion>
+    <FileVersion>2.0.46.32</FileVersion>
+    <InformationalVersion>2.046 r32</InformationalVersion>
     <AssemblyName>ChisFlashWaterClient</AssemblyName>
     <RootNamespace>ChisFlashWaterClient</RootNamespace>
   </PropertyGroup>
@@ -110,6 +110,7 @@
     <Content Include="Assets\menu_NSLite.gba">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Assets\menu-version.txt" Condition="Exists('Assets\menu-version.txt')" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\batteryless_payload.bin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

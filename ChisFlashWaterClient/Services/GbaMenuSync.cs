@@ -37,12 +37,23 @@ internal static class GbaMenuSync
         return tag is null ? null : Path.Combine(CacheRoot, tag);
     }
 
-    internal static async Task<List<GbaMenuRelease>> GetReleasesAsync()
+    internal static string? GetBundledTag()
     {
-        using var response = await Client.GetAsync($"https://api.github.com/repos/{Repository}/releases?per_page=20").ConfigureAwait(false);
+        string path = Path.Combine(AppContext.BaseDirectory, "Assets", "menu-version.txt");
+        return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+    }
+
+    private static Version? ParseVersion(string? tag) =>
+        Version.TryParse(tag?.TrimStart('v').Replace("-r", "."), out var version) ? version : null;
+
+    internal static async Task<List<GbaMenuRelease>> GetReleasesAsync(
+        CancellationToken cancellationToken = default, HttpClient? client = null)
+    {
+        using var response = await (client ?? Client).GetAsync(
+            $"https://api.github.com/repos/{Repository}/releases?per_page=20", cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
         return ReadReleases(document.RootElement);
     }
 
@@ -59,10 +70,24 @@ internal static class GbaMenuSync
             if (names.Contains(NsAsset) && names.Contains(NsLiteAsset))
                 result.Add(new(tag, release.GetProperty("prerelease").GetBoolean()));
         }
-        return result;
+        return result.OrderByDescending(release => ParseVersion(release.Tag)).ToList();
     }
 
-    internal static async Task SyncAsync(GbaMenuRelease release, string? cacheRoot = null, HttpClient? client = null)
+    internal static async Task<GbaMenuRelease?> SyncLatestAsync(
+        string? cacheRoot = null, HttpClient? client = null, CancellationToken cancellationToken = default)
+    {
+        var releases = await GetReleasesAsync(cancellationToken, client).ConfigureAwait(false);
+        var latest = releases.FirstOrDefault();
+        var currentVersion = ParseVersion(GetActiveTag(cacheRoot) ?? GetBundledTag());
+        if (latest is null || ParseVersion(latest.Tag) is not Version latestVersion || latestVersion <= currentVersion)
+            return null;
+
+        await SyncAsync(latest, cacheRoot, client, cancellationToken).ConfigureAwait(false);
+        return latest;
+    }
+
+    internal static async Task SyncAsync(GbaMenuRelease release, string? cacheRoot = null, HttpClient? client = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(release.Tag);
         if (!ReleaseTag.IsMatch(release.Tag)) throw new ArgumentException("Invalid menu release tag.");
@@ -73,8 +98,8 @@ internal static class GbaMenuSync
             string download = $"https://github.com/{Repository}/releases/download/{release.Tag}";
             HttpClient http = client ?? Client;
             byte[][] menus = await Task.WhenAll(
-                http.GetByteArrayAsync($"{download}/{NsAsset}"),
-                http.GetByteArrayAsync($"{download}/{NsLiteAsset}")).ConfigureAwait(false);
+                http.GetByteArrayAsync($"{download}/{NsAsset}", cancellationToken),
+                http.GetByteArrayAsync($"{download}/{NsLiteAsset}", cancellationToken)).ConfigureAwait(false);
             GbaMenuRomService.ValidateUniversalMenuRom(menus[0]);
             GbaMenuRomService.ValidateUniversalMenuRom(menus[1]);
             if (!GbaMenuRomService.HasUniversalMenuSignature(menus[0]) ||
@@ -86,8 +111,8 @@ internal static class GbaMenuSync
             Directory.CreateDirectory(staging);
             try
             {
-                await File.WriteAllBytesAsync(Path.Combine(staging, NsAsset), menus[0]).ConfigureAwait(false);
-                await File.WriteAllBytesAsync(Path.Combine(staging, NsLiteAsset), menus[1]).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(Path.Combine(staging, NsAsset), menus[0], cancellationToken).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(Path.Combine(staging, NsLiteAsset), menus[1], cancellationToken).ConfigureAwait(false);
                 try { Directory.Move(staging, versionDirectory); }
                 catch (IOException) when (Directory.Exists(versionDirectory)) { }
             }
@@ -106,7 +131,8 @@ internal static class GbaMenuSync
         string next = Path.Combine(root, Path.GetRandomFileName());
         try
         {
-            await File.WriteAllTextAsync(next, release.Tag + "\n").ConfigureAwait(false);
+            await File.WriteAllTextAsync(next, release.Tag + "\n", cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(next, marker, overwrite: true);
         }
         finally { File.Delete(next); }

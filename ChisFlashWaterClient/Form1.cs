@@ -315,7 +315,11 @@ public partial class Form1 : DpiAwareForm
         RefreshGbaMenuOptions(ClientAppConfigService.LoadGbaMenuSelection());
         RefreshGbcFontSelectorVisibility();
         ApplyLanguage(language, refreshScanResult: false);
-        if (initializeSession) Shown += async (_, _) => await CheckForUpdatesAsync(showResult: false);
+        if (initializeSession)
+        {
+            Shown += async (_, _) => await Task.WhenAll(CheckForUpdatesAsync(showResult: false), AutoSyncGbaMenuAsync());
+            FormClosed += (_, _) => automaticGbaMenuSync?.Cancel();
+        }
         if(initializeSession)RefreshPorts();
         FormClosing += (_,e) => { if (fcWorkspace?.IsBusy == true) { fcWorkspace.Cancel(); e.Cancel=true; } };
     }
