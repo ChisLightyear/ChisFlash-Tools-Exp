@@ -10,6 +10,7 @@ public partial class Form1
 {
     private ToolStripMenuItem menuHelp = null!;
     private ToolStripMenuItem menuCheckForUpdates = null!;
+    private ToolStripMenuItem menuSyncGbaMenu = null!;
     private ClientReleaseUpdate? availableUpdate;
     private bool checkingForUpdates;
 
@@ -18,7 +19,9 @@ public partial class Form1
         menuHelp = new ToolStripMenuItem();
         menuCheckForUpdates = new ToolStripMenuItem();
         menuCheckForUpdates.Click += async (_, _) => await CheckForUpdatesAsync(showResult: true);
-        menuHelp.DropDownItems.Add(menuCheckForUpdates);
+        menuSyncGbaMenu = new ToolStripMenuItem();
+        menuSyncGbaMenu.Click += async (_, _) => await RunUiActionSafelyAsync(SyncGbaMenuAsync);
+        menuHelp.DropDownItems.AddRange([menuCheckForUpdates, menuSyncGbaMenu]);
         mainMenuStrip.Items.Add(menuHelp);
     }
 
@@ -30,6 +33,7 @@ public partial class Form1
         menuCheckForUpdates.Text = checkingForUpdates
             ? T("updates", "checking", "Checking for updates…")
             : T("updates", "check", "Check for Updates…");
+        menuSyncGbaMenu.Text = T("ui", "sync_gba_menu", "Sync Menus…");
     }
 
     private async Task CheckForUpdatesAsync(bool showResult)

@@ -309,8 +309,6 @@ public partial class Form1
             menuExit,
         ]);
 
-        menuSyncGbaMenu = new ToolStripMenuItem();
-        menuSyncGbaMenu.Click += async (_, _) => await RunUiActionSafelyAsync(SyncGbaMenuAsync);
         menuUpdateMenu = new ToolStripMenuItem();
         menuUpdateMenu.Click += async (_, _) => await RunUiActionSafelyAsync(UpdateMenuAsync);
         menuReplaceMenuFile = new ToolStripMenuItem();
@@ -332,7 +330,6 @@ public partial class Form1
         menuDetectMagic.Click += async (_, _) => await RunUiActionSafelyAsync(DetectMagicSupportAsync);
         menuCartridge.DropDownItems.AddRange(
         [
-            menuSyncGbaMenu,
             menuUpdateMenu,
             menuReplaceMenuFile,
             menuRepairMenu,
@@ -923,7 +920,6 @@ public partial class Form1
         RefreshUpdateMenuText();
         menuFragmentTest.Text = T("ui", "fragment_test", "Fragment Test");
         menuDetectMagic.Text = T("ui", "detect_magic", "Detect Magic Support");
-        menuSyncGbaMenu.Text = T("ui", "sync_gba_menu", "Sync Menus…");
         menuUpdateMenu.Text = T("ui", "update_menu", "Update Menu");
         menuReplaceMenuFile.Text = T("ui", "replace_menu_file", "Rebuild From Menu File");
         menuRepairMenu.Text = T("ui", "repair_menu", "Repair Menu");
