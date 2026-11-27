@@ -215,6 +215,7 @@ public partial class Form1 : DpiAwareForm
     private ToolStripMenuItem menuExit = null!;
     private ToolStripMenuItem menuFragmentTest = null!;
     private ToolStripMenuItem menuDetectMagic = null!;
+    private ToolStripMenuItem menuSyncGbaMenu = null!;
     private ToolStripMenuItem menuUpdateMenu = null!;
     private ToolStripMenuItem menuReplaceMenuFile = null!;
     private ToolStripMenuItem menuRepairMenu = null!;

@@ -116,12 +116,16 @@ public static class GbaMenuRomService
 
     private static IEnumerable<string> EnumerateUniversalMenuCandidates()
     {
+        if (GbaMenuSync.GetActiveMenuDirectory() is string active)
+            yield return Path.Combine(active, UniversalMenuFileName);
         yield return Path.Combine(AppContext.BaseDirectory, "Assets", UniversalMenuFileName);
         yield return Path.Combine(AppContext.BaseDirectory, UniversalMenuFileName);
     }
 
     private static IEnumerable<string> EnumerateSimplifiedNsMenuCandidates()
     {
+        if (GbaMenuSync.GetActiveMenuDirectory() is string active)
+            yield return Path.Combine(active, SimplifiedNsMenuFileName);
         yield return Path.Combine(AppContext.BaseDirectory, "Assets", SimplifiedNsMenuFileName);
         yield return Path.Combine(AppContext.BaseDirectory, SimplifiedNsMenuFileName);
     }
